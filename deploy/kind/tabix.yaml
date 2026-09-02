@@ -1,0 +1,54 @@
+# Browser SQL UI for the in-cluster ClickHouse.
+# Tabix talks to ClickHouse from the laptop, so Tilt port-forwards both
+# this UI and ClickHouse HTTP (see Tiltfile).
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tabix
+  namespace: coroot-dev
+spec:
+  selector:
+    app: tabix
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tabix
+  namespace: coroot-dev
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tabix
+  template:
+    metadata:
+      labels:
+        app: tabix
+    spec:
+      containers:
+        - name: tabix
+          image: spoonest/clickhouse-tabix-web-client:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: CH_NAME
+              value: coroot-dev
+            - name: CH_HOST
+              value: http://127.0.0.1:18123
+            - name: CH_LOGIN
+              value: default
+            - name: CH_PASSWORD
+              value: ""
+          ports:
+            - containerPort: 80
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            periodSeconds: 5
+            timeoutSeconds: 3

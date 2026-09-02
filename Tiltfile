@@ -41,6 +41,7 @@ docker_build(
 k8s_yaml([
     'deploy/kind/prometheus.yaml',
     'deploy/kind/clickhouse.yaml',
+    'deploy/kind/tabix.yaml',
     'deploy/kind/coroot.yaml',
     'deploy/kind/agents.yaml',
     'deploy/kind/demo/apps.yaml',
@@ -51,6 +52,12 @@ k8s_resource(
 )
 k8s_resource(
     'clickhouse',
+    port_forwards=['18123:8123'],
+)
+k8s_resource(
+    'tabix',
+    port_forwards=['18081:80'],
+    resource_deps=['clickhouse'],
 )
 k8s_resource(
     'coroot',

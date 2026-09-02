@@ -1,4 +1,32 @@
 apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: clickhouse-cors
+  namespace: coroot-dev
+data:
+  cors.xml: |
+    <clickhouse>
+      <http_options_response>
+        <header>
+          <name>Access-Control-Allow-Origin</name>
+          <value>*</value>
+        </header>
+        <header>
+          <name>Access-Control-Allow-Headers</name>
+          <value>origin, x-requested-with, x-clickhouse-format, x-clickhouse-user, x-clickhouse-key, Authorization</value>
+        </header>
+        <header>
+          <name>Access-Control-Allow-Methods</name>
+          <value>POST, GET, OPTIONS</value>
+        </header>
+        <header>
+          <name>Access-Control-Max-Age</name>
+          <value>86400</value>
+        </header>
+      </http_options_response>
+    </clickhouse>
+---
+apiVersion: v1
 kind: Service
 metadata:
   name: clickhouse
@@ -49,3 +77,11 @@ spec:
             periodSeconds: 5
             timeoutSeconds: 5
             failureThreshold: 30
+          volumeMounts:
+            - name: cors
+              mountPath: /etc/clickhouse-server/config.d/cors.xml
+              subPath: cors.xml
+      volumes:
+        - name: cors
+          configMap:
+            name: clickhouse-cors

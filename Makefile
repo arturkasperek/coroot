@@ -37,7 +37,7 @@ go-test:
 
 .PHONY: help
 help: ## Show common targets
-	@echo "  make dev        kind + Tilt: Coroot + demo Next.js/Express with OTEL (http://localhost:18080)"
+	@echo "  make dev        kind + Tilt: Coroot + Tabix + demo apps (Coroot http://localhost:18080, Tabix http://localhost:18081)"
 	@echo "  make dev-down   Tilt down + remove the coroot-dev namespace (keeps the cluster)"
 	@echo "  make dev-clean  Delete the kind cluster"
 	@echo "  make test       Go tests"
