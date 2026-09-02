@@ -52,7 +52,7 @@
                 </v-list>
             </v-menu>
 
-            <div v-if="query.view === 'messages'" class="logs-body">
+            <div v-if="query.view === 'messages'" ref="logsBody" class="logs-body" :style="{ height: `${logsBodyHeight}px` }">
                 <LogQuickFilters
                     :entries="entries"
                     :filters="query.filters"
@@ -180,6 +180,7 @@ export default {
             error: '',
             view: {},
             refreshInterval: 0,
+            logsBodyHeight: 0,
             query: this.makeQuery(q),
             limits: [10, 20, 50, 100, 1000],
             entry: null,
@@ -202,10 +203,20 @@ export default {
     mounted() {
         this.get();
         this.$events.watch(this, this.get, 'refresh');
+        window.addEventListener('resize', this.scheduleLogsBodyResize);
+        window.visualViewport?.addEventListener('resize', this.scheduleLogsBodyResize);
+        this.scheduleLogsBodyResize();
+    },
+
+    updated() {
+        this.scheduleLogsBodyResize();
     },
 
     beforeDestroy() {
         this.refreshInterval = 0;
+        window.removeEventListener('resize', this.scheduleLogsBodyResize);
+        window.visualViewport?.removeEventListener('resize', this.scheduleLogsBodyResize);
+        cancelAnimationFrame(this._logsBodyResizeFrame);
     },
 
     watch: {
@@ -298,6 +309,27 @@ export default {
     },
 
     methods: {
+        scheduleLogsBodyResize() {
+            cancelAnimationFrame(this._logsBodyResizeFrame);
+            this._logsBodyResizeFrame = requestAnimationFrame(() => {
+                this._logsBodyResizeFrame = 0;
+                this.updateLogsBodyHeight();
+            });
+        },
+        updateLogsBodyHeight() {
+            const body = this.$refs.logsBody;
+            if (!body) {
+                return;
+            }
+            const container = body.closest('.container');
+            const bottomPadding = container ? Number.parseFloat(getComputedStyle(container).paddingBottom) || 0 : 0;
+            const viewport = window.visualViewport;
+            const viewportBottom = viewport ? viewport.offsetTop + viewport.height : window.innerHeight;
+            const nextHeight = Math.max(0, Math.floor(viewportBottom - body.getBoundingClientRect().top - bottomPadding));
+            if (this.logsBodyHeight !== nextHeight) {
+                this.logsBodyHeight = nextHeight;
+            }
+        },
         makeQuery(q) {
             return {
                 view: q.view || 'messages',
@@ -514,7 +546,7 @@ export default {
     display: flex;
     align-items: stretch;
     gap: 16px;
-    height: clamp(420px, 65vh, 760px);
+    min-height: 0;
     overflow: hidden;
 }
 .logs-table {
