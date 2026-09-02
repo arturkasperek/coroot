@@ -16,6 +16,7 @@ need() {
 need docker  "install Docker Desktop (or a Docker Engine) and ensure the CLI is on PATH"
 need kind    "install from https://kind.sigs.k8s.io/docs/user/quick-start/#installation  (brew install kind)"
 need kubectl "install from https://kubernetes.io/docs/tasks/tools/  (brew install kubectl)"
+need helm    "install from https://helm.sh/docs/intro/install/  (brew install helm)"
 need tilt    "install from https://docs.tilt.dev/install.html  (brew install tilt)"
 
 if [ "$missing" -ne 0 ]; then

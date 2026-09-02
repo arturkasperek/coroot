@@ -54,7 +54,8 @@ dev-down: ## Tilt down + delete in-cluster dev namespace (keeps kind)
 	  tilt down --context kind-$(KIND_CLUSTER_NAME) || true; \
 	  kubectl delete namespace coroot-dev --ignore-not-found; \
 	  kubectl delete clusterrolebinding coroot-dev-cluster-agent --ignore-not-found; \
-	  kubectl delete clusterrole coroot-dev-cluster-agent --ignore-not-found
+	  kubectl delete clusterrole coroot-dev-cluster-agent --ignore-not-found; \
+	  helm uninstall metrics-server -n kube-system --ignore-not-found || true
 
 .PHONY: dev-clean
 dev-clean: ## Delete the kind cluster (wipes Prometheus/ClickHouse data)

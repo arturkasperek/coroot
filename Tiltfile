@@ -38,6 +38,25 @@ docker_build(
     dockerfile='deploy/kind/demo/nextjs/Dockerfile',
 )
 
+load('ext://helm_resource', 'helm_resource', 'helm_repo')
+
+helm_repo(
+    'metrics-server',
+    'https://kubernetes-sigs.github.io/metrics-server/',
+    resource_name='metrics-server-helm-repo',
+)
+helm_resource(
+    'metrics-server',
+    'metrics-server/metrics-server',
+    namespace='kube-system',
+    flags=[
+        '--version=3.14.0',
+        '--values=deploy/kind/metrics-server-values.yaml',
+    ],
+    deps=['deploy/kind/metrics-server-values.yaml'],
+    resource_deps=['metrics-server-helm-repo'],
+)
+
 k8s_yaml([
     'deploy/kind/prometheus.yaml',
     'deploy/kind/clickhouse.yaml',

@@ -37,6 +37,7 @@ echo
 echo "  [dev] starting Tilt — edit files locally; backend/frontend reload in-cluster."
 echo "    Tilt UI:  http://localhost:10350"
 echo "    Coroot:        http://localhost:18080"
+echo "    k9s / kubectl top: helm metrics-server in kube-system"
 echo "    Tabix:         http://localhost:18081  (ClickHouse SQL UI)"
 echo "                   host http://127.0.0.1:18123  user default  password empty"
 echo "                   samples (db default, not system):"

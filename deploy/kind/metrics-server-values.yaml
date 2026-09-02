@@ -1,0 +1,4 @@
+# Kind-only overlay for the official metrics-server chart.
+# https://github.com/kubernetes-sigs/metrics-server/tree/master/charts/metrics-server
+args:
+  - --kubelet-insecure-tls
