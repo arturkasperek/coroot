@@ -24,7 +24,7 @@ app.get('/health', (_req, res) => {
 });
 
 app.get('/api/hello', (req, res) => {
-  log.info('express hello', { path: req.path });
+  log.info(req.query.token ? `express hello ${req.query.token}` : 'express hello', { path: req.path });
   res.json({ service: 'express-demo', message: 'hello from express', ts: Date.now() });
 });
 

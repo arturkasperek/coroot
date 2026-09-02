@@ -33,7 +33,13 @@ go-imports:
 
 .PHONY: go-test
 go-test:
-	go test ./...
+	go test $$(go list ./... | grep -v '/e2e$$')
+
+.PHONY: test-e2e
+test-e2e: ## E2E tests against the running kind-coroot-dev cluster (make dev)
+	@bash scripts/dev/k8s-dev-tools.sh
+	@eval "$$(bash scripts/dev/kind-dev-kubeconfig.sh --export)"; \
+	  go test -tags e2e -count=1 -timeout 3m ./e2e/...
 
 .PHONY: help
 help: ## Show common targets
@@ -41,6 +47,7 @@ help: ## Show common targets
 	@echo "  make dev-down   Tilt down + remove the coroot-dev namespace (keeps the cluster)"
 	@echo "  make dev-clean  Delete the kind cluster"
 	@echo "  make test       Go tests"
+	@echo "  make test-e2e   E2E against the make-dev kind cluster (cluster must already be up)"
 	@echo "  make lint       Go + UI linters"
 
 .PHONY: dev
