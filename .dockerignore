@@ -4,3 +4,4 @@ docs
 data-dev
 static
 docker/coroot/.air-tmp
+deploy/kind/demo

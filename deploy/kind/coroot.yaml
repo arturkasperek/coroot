@@ -39,6 +39,8 @@ spec:
               value: "true"
             - name: STATIC_DIR
               value: /ui-static
+            - name: AUTH_ANONYMOUS_ROLE
+              value: Admin
             - name: BOOTSTRAP_PROMETHEUS_URL
               value: http://prometheus:9090
             - name: BOOTSTRAP_REFRESH_INTERVAL

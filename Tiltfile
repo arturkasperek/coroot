@@ -9,7 +9,7 @@ docker_build(
     'coroot-backend',
     '.',
     dockerfile='docker/coroot/Dockerfile.dev',
-    ignore=['front/node_modules', 'docs', 'data-dev', 'static'],
+    ignore=['front/node_modules', 'docs', 'data-dev', 'static', 'deploy/kind/demo'],
     live_update=[
         sync('.', '/app'),
     ],
@@ -26,10 +26,22 @@ docker_build(
     ],
 )
 
+# Demo apps: production images, built once on tilt up (manual trigger, no live_update).
+docker_build(
+    'deploy/kind/demo/express',
+    dockerfile='deploy/kind/demo/express/Dockerfile',
+)
+docker_build(
+    'nextjs-demo',
+    'deploy/kind/demo/nextjs',
+    dockerfile='deploy/kind/demo/nextjs/Dockerfile',
+)
+
 k8s_yaml([
     'deploy/kind/prometheus.yaml',
     'deploy/kind/clickhouse.yaml',
     'deploy/kind/coroot.yaml',
+    'deploy/kind/demo/apps.yaml',
 ])
 
 k8s_resource(
@@ -42,4 +54,22 @@ k8s_resource(
     'coroot',
     port_forwards=['18080:8080'],
     resource_deps=['prometheus', 'clickhouse'],
+)
+
+k8s_resource(
+    'express-demo',
+    port_forwards=['13001:3000'],
+    resource_deps=['coroot'],
+    trigger_mode=TRIGGER_MODE_MANUAL,
+)
+k8s_resource(
+    'nextjs-demo',
+    port_forwards=['13000:3000'],
+    resource_deps=['coroot', 'express-demo'],
+    trigger_mode=TRIGGER_MODE_MANUAL,
+)
+k8s_resource(
+    'demo-traffic',
+    resource_deps=['express-demo', 'nextjs-demo'],
+    trigger_mode=TRIGGER_MODE_MANUAL,
 )

@@ -36,7 +36,9 @@ bash "$ROOT/scripts/dev/k8s-dev-prereqs.sh"
 echo
 echo "  [dev] starting Tilt — edit files locally; backend/frontend reload in-cluster."
 echo "    Tilt UI:  http://localhost:10350"
-echo "    Coroot:   http://localhost:18080"
+echo "    Coroot:        http://localhost:18080"
+echo "    Next.js demo:  http://localhost:13000  (calls Express)"
+echo "    Express demo:  http://localhost:13001  /api/hello /api/slow /api/error"
 echo
 
 exec tilt up --context "kind-${KIND_CLUSTER_NAME}" ${TILT_ARGS:-}
