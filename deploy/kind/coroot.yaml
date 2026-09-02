@@ -41,14 +41,14 @@ spec:
               value: /ui-static
             - name: AUTH_ANONYMOUS_ROLE
               value: Admin
-            - name: BOOTSTRAP_PROMETHEUS_URL
-              value: http://prometheus:9090
-            - name: BOOTSTRAP_REFRESH_INTERVAL
+            - name: PG_CONNECTION_STRING
+              value: postgres://coroot:coroot@postgres:5432/coroot?sslmode=disable
+            - name: GLOBAL_PROMETHEUS_USE_CLICKHOUSE
+              value: "true"
+            - name: GLOBAL_REFRESH_INTERVAL
               value: 15s
             - name: BOOTSTRAP_CLICKHOUSE_ADDRESS
               value: clickhouse:9000
-            - name: BOOTSTRAP_PROMETHEUS_USE_CLICKHOUSE
-              value: "true"
           ports:
             - containerPort: 8080
               name: http

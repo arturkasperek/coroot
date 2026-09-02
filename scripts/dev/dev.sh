@@ -37,6 +37,7 @@ echo
 echo "  [dev] starting Tilt — edit files locally; backend/frontend reload in-cluster."
 echo "    Tilt UI:  http://localhost:10350"
 echo "    Coroot:        http://localhost:18080"
+echo "    Postgres:      localhost:15432  user/db/password coroot  (config DB, not telemetry)"
 echo "    k9s / kubectl top: helm metrics-server in kube-system"
 echo "    Tabix:         http://localhost:18081  (ClickHouse SQL UI)"
 echo "                   host http://127.0.0.1:18123  user default  password empty"
@@ -47,11 +48,10 @@ echo "                   traces:  SELECT Timestamp, TraceId, SpanName, ServiceNa
 echo "                            FROM default.otel_traces ORDER BY Timestamp DESC LIMIT 100"
 echo "                   metrics: SELECT Timestamp, MetricName, Labels, Value"
 echo "                            FROM default.metrics ORDER BY Timestamp DESC LIMIT 100"
-echo "                            (agents remote-write here; not Prometheus scrape)"
+echo "                            (node-agent + cluster-agent remote-write)"
 echo "    Next.js demo:  http://localhost:13000  (calls Express)"
 echo "    Express demo:  http://localhost:13001  /api/hello /api/slow /api/error"
-echo "                   Prometheus: http://localhost:13001 is app; metrics :9464/metrics"
-echo "                   PromQL: http_server_duration_count or express_demo_requests_total"
+echo "                   OTEL Prometheus scrape: pod :9464/metrics (cluster-agent)"
 echo
 
 exec tilt up --context "kind-${KIND_CLUSTER_NAME}" ${TILT_ARGS:-}

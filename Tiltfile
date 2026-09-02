@@ -58,8 +58,8 @@ helm_resource(
 )
 
 k8s_yaml([
-    'deploy/kind/prometheus.yaml',
     'deploy/kind/clickhouse.yaml',
+    'deploy/kind/postgres.yaml',
     'deploy/kind/tabix.yaml',
     'deploy/kind/coroot.yaml',
     'deploy/kind/agents.yaml',
@@ -67,11 +67,12 @@ k8s_yaml([
 ])
 
 k8s_resource(
-    'prometheus',
-)
-k8s_resource(
     'clickhouse',
     port_forwards=['18123:8123'],
+)
+k8s_resource(
+    'postgres',
+    port_forwards=['15432:5432'],
 )
 k8s_resource(
     'tabix',
@@ -81,7 +82,7 @@ k8s_resource(
 k8s_resource(
     'coroot',
     port_forwards=['18080:8080'],
-    resource_deps=['prometheus', 'clickhouse'],
+    resource_deps=['clickhouse', 'postgres'],
 )
 k8s_resource(
     'coroot-node-agent',

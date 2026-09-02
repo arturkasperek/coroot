@@ -37,7 +37,7 @@ go-test:
 
 .PHONY: help
 help: ## Show common targets
-	@echo "  make dev        kind + Tilt: Coroot + Tabix + demo apps (Coroot http://localhost:18080, Tabix http://localhost:18081)"
+	@echo "  make dev        kind + Tilt: Coroot + Postgres + Tabix + demo apps (Coroot http://localhost:18080)"
 	@echo "  make dev-down   Tilt down + remove the coroot-dev namespace (keeps the cluster)"
 	@echo "  make dev-clean  Delete the kind cluster"
 	@echo "  make test       Go tests"
@@ -58,7 +58,7 @@ dev-down: ## Tilt down + delete in-cluster dev namespace (keeps kind)
 	  helm uninstall metrics-server -n kube-system --ignore-not-found || true
 
 .PHONY: dev-clean
-dev-clean: ## Delete the kind cluster (wipes Prometheus/ClickHouse data)
+dev-clean: ## Delete the kind cluster (wipes Postgres/ClickHouse data)
 	kind delete cluster --name $(KIND_CLUSTER_NAME)
 
 .PHONY: ui-lint

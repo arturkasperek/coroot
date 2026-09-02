@@ -4,9 +4,6 @@ name: coroot-dev
 nodes:
   - role: control-plane
     extraPortMappings:
-      - containerPort: 30090
-        hostPort: 9090
-        protocol: TCP
       - containerPort: 30900
         hostPort: 9000
         protocol: TCP
