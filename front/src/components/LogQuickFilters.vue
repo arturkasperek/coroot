@@ -23,8 +23,8 @@
 
             <v-text-field
                 v-model="search"
-                placeholder="Search facets"
-                aria-label="Search facets"
+                placeholder="Search filters"
+                aria-label="Search filters"
                 dense
                 hide-details
                 outlined
@@ -79,7 +79,7 @@
                 </section>
             </div>
 
-            <div v-if="search && !visibleGroups.length" class="empty-state">No matching facets</div>
+            <div v-if="search && !visibleGroups.length" class="empty-state">No matching filters</div>
         </template>
     </aside>
 </template>
