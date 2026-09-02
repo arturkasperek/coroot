@@ -86,6 +86,71 @@ export function buildLogQuickFilters(entries, options = {}) {
         .filter((g) => g.values.length > 0);
 }
 
+export function buildStableLogQuickFilters(rawGroups, filters, catalog = {}, options = {}) {
+    const currentGroups = new Map((rawGroups || []).map((group) => [group.key, group]));
+    const hidden = new Set(options.hiddenAttributes || []);
+    const labels = {
+        Severity: 'Severity',
+        Cluster: 'Cluster',
+        'service.name': 'Application',
+        'host.name': 'Host',
+    };
+    const columns = options.columns || [];
+    const activeGroups = new Map();
+
+    for (const filter of filters || []) {
+        if (!filter || hidden.has(filter.name) || !['=', '!='].includes(filter.op)) {
+            continue;
+        }
+        const column = columns.find((item) => item && item.key === filter.name);
+        const label = labels[filter.name] || column?.label || (column && filter.name);
+        if (!label) {
+            continue;
+        }
+        if (!activeGroups.has(filter.name)) {
+            activeGroups.set(filter.name, { key: filter.name, label, values: [] });
+        }
+        const values = activeGroups.get(filter.name).values;
+        const value = String(filter.value);
+        if (!values.some((known) => known.value === value)) {
+            values.push({
+                value,
+                label: filter.name === 'service.name' ? displayServiceName(value) : value,
+                color: '',
+            });
+        }
+    }
+
+    const keys = [...Object.keys(catalog), ...(rawGroups || []).map((group) => group.key), ...activeGroups.keys()].filter(
+        (key, index, all) => all.indexOf(key) === index,
+    );
+
+    return keys.map((key) => {
+        const currentGroup = currentGroups.get(key);
+        const catalogGroup = catalog[key] || currentGroup || activeGroups.get(key);
+        const currentValues = new Map((currentGroup?.values || []).map((value) => [value.value, value]));
+        const values = [...catalogGroup.values];
+        for (const value of [...(currentGroup?.values || []), ...(activeGroups.get(key)?.values || [])]) {
+            if (!values.some((known) => known.value === value.value)) {
+                values.push(value);
+            }
+        }
+        return {
+            key,
+            label: catalogGroup.label,
+            values: values.map((value) => ({
+                ...value,
+                ...(currentValues.get(value.value) || {}),
+                count: currentValues.get(value.value)?.count || 0,
+            })),
+        };
+    });
+}
+
+export function isLogFacetActive(filters, name, op, value) {
+    return (filters || []).some((filter) => filter.name === name && filter.op === op && String(filter.value) === String(value));
+}
+
 export function formatCount(n) {
     const v = Number(n) || 0;
     if (v < 1000) {

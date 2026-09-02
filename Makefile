@@ -9,7 +9,7 @@ all: lint test
 lint: go-lint ui-lint
 
 .PHONY: test
-test: go-test
+test: go-test ui-test
 
 .PHONY: go-lint
 go-lint: go-mod go-vet go-fmt go-imports
@@ -46,7 +46,7 @@ help: ## Show common targets
 	@echo "  make dev        kind + Tilt: Coroot + Postgres + Tabix + demo apps (Coroot http://localhost:18080)"
 	@echo "  make dev-down   Tilt down + remove the coroot-dev namespace (keeps the cluster)"
 	@echo "  make dev-clean  Delete the kind cluster"
-	@echo "  make test       Go tests"
+	@echo "  make test       Go and UI unit tests"
 	@echo "  make test-e2e   E2E against the make-dev kind cluster (cluster must already be up)"
 	@echo "  make lint       Go + UI linters"
 
@@ -67,6 +67,13 @@ dev-down: ## Tilt down + delete in-cluster dev namespace (keeps kind)
 .PHONY: dev-clean
 dev-clean: ## Delete the kind cluster (wipes Postgres/ClickHouse data)
 	kind delete cluster --name $(KIND_CLUSTER_NAME)
+
+.PHONY: ui-test
+ui-test: npm-test
+
+.PHONY: npm-test
+npm-test: npm-install
+	cd $(UI_PATH) && npm run test:unit
 
 .PHONY: ui-lint
 ui-lint: npm-install npm-lint npm-fmt

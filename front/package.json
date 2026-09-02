@@ -5,8 +5,9 @@
     "build-dev": "vue-cli-service build --dest=../static --watch",
     "build-prod": "vue-cli-service build --dest=../static src/main.js",
     "lint": "vue-cli-service lint",
-    "fmt": "prettier src --write",
-    "fmt-check": "prettier src --check"
+    "test:unit": "node --test tests/unit/*.test.js",
+    "fmt": "prettier src tests --write",
+    "fmt-check": "prettier src tests --check"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.3.0",

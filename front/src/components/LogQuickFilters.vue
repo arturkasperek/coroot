@@ -85,7 +85,7 @@
 </template>
 
 <script>
-import { buildLogQuickFilters, formatCount } from '@/utils/logQuickFilters';
+import { buildLogQuickFilters, buildStableLogQuickFilters, formatCount, isLogFacetActive } from '@/utils/logQuickFilters';
 
 const PAGE = 10;
 
@@ -103,14 +103,21 @@ export default {
             extra: {},
             collapsedGroups: {},
             collapsed: false,
+            facetCatalog: {},
         };
     },
     computed: {
-        groups() {
+        rawGroups() {
             return buildLogQuickFilters(this.entries, {
                 hiddenAttributes: this.hiddenAttributes,
                 columns: this.columns,
                 severityFacets: this.severityFacets,
+            });
+        },
+        groups() {
+            return buildStableLogQuickFilters(this.rawGroups, this.filters, this.facetCatalog, {
+                hiddenAttributes: this.hiddenAttributes,
+                columns: this.columns,
             });
         },
         activeFilterCount() {
@@ -131,10 +138,39 @@ export default {
                 .filter((g) => g.values.length > 0);
         },
     },
+    watch: {
+        rawGroups: {
+            immediate: true,
+            handler(groups) {
+                for (const group of groups) {
+                    const existing = this.facetCatalog[group.key];
+                    const knownValues = existing ? [...existing.values] : [];
+                    let changed = !existing;
+                    for (const value of group.values) {
+                        if (!knownValues.some((known) => known.value === value.value)) {
+                            knownValues.push({
+                                value: value.value,
+                                label: value.label,
+                                color: value.color,
+                            });
+                            changed = true;
+                        }
+                    }
+                    if (changed) {
+                        this.$set(this.facetCatalog, group.key, {
+                            key: group.key,
+                            label: group.label,
+                            values: knownValues,
+                        });
+                    }
+                }
+            },
+        },
+    },
     methods: {
         formatCount,
         isActive(name, op, value) {
-            return (this.filters || []).some((filter) => filter.name === name && filter.op === op && filter.value === value);
+            return isLogFacetActive(this.filters, name, op, value);
         },
         isCollapsed(key) {
             return Boolean(this.collapsedGroups[key]) && !this.search;
