@@ -26,6 +26,24 @@ docker_build(
     ],
 )
 
+# Optional sibling checkout: ../coroot-node-agent (see scripts/dev/node-agent-local-dir.sh).
+# Tilt rebuilds that image on Go changes (eBPF is pre-baked into the binary; no live_update).
+_node_agent_dir = os.path.abspath('../coroot-node-agent')
+_use_local_node_agent = (
+    os.path.exists(os.path.join(_node_agent_dir, 'go.mod'))
+    and os.path.exists(os.path.join(_node_agent_dir, 'Dockerfile'))
+)
+if _use_local_node_agent:
+    print('Tilt: building node-agent from', _node_agent_dir)
+    docker_build(
+        'ghcr.io/coroot/coroot-node-agent',
+        _node_agent_dir,
+        dockerfile='docker/node-agent/Dockerfile.dev',
+        ignore=['.git', 'windows'],
+    )
+else:
+    print('Tilt: node-agent image ghcr.io/coroot/coroot-node-agent:latest (no ../coroot-node-agent)')
+
 # Demo apps: production images, built once on tilt up (manual trigger, no live_update).
 docker_build(
     'express-demo',

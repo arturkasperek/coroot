@@ -52,6 +52,11 @@ echo "                            (node-agent + cluster-agent remote-write)"
 echo "    Next.js demo:  http://localhost:13000  (calls Express)"
 echo "    Express demo:  http://localhost:13001  /api/hello /api/slow /api/error"
 echo "                   OTEL Prometheus scrape: pod :9464/metrics (cluster-agent)"
+if AGENT_SRC="$(bash "$ROOT/scripts/dev/node-agent-local-dir.sh")"; then
+  echo "    Node agent:    local $AGENT_SRC (Tilt docker_build)"
+else
+  echo "    Node agent:    ghcr.io/coroot/coroot-node-agent:latest"
+fi
 echo
 
 exec tilt up --context "kind-${KIND_CLUSTER_NAME}" ${TILT_ARGS:-}

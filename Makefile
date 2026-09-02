@@ -34,6 +34,7 @@ go-imports:
 .PHONY: go-test
 go-test:
 	go test $$(go list ./... | grep -v '/e2e$$')
+	bash scripts/dev/node-agent-local-dir.test.sh
 
 .PHONY: test-e2e
 test-e2e: ## E2E tests against the running kind-coroot-dev cluster (make dev)
@@ -43,7 +44,7 @@ test-e2e: ## E2E tests against the running kind-coroot-dev cluster (make dev)
 
 .PHONY: help
 help: ## Show common targets
-	@echo "  make dev        kind + Tilt: Coroot + Postgres + Tabix + demo apps (Coroot http://localhost:18080)"
+	@echo "  make dev        kind + Tilt (optional ../coroot-node-agent for a local node-agent image)"
 	@echo "  make dev-down   Tilt down + remove the coroot-dev namespace (keeps the cluster)"
 	@echo "  make dev-clean  Delete the kind cluster"
 	@echo "  make test       Go and UI unit tests"
