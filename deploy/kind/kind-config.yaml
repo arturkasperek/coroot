@@ -1,0 +1,15 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: coroot-dev
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: 30090
+        hostPort: 9090
+        protocol: TCP
+      - containerPort: 30900
+        hostPort: 9000
+        protocol: TCP
+      - containerPort: 30812
+        hostPort: 8123
+        protocol: TCP

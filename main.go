@@ -10,6 +10,7 @@ import (
 	"path"
 	"syscall"
 	"text/template"
+	"time"
 
 	"github.com/coroot/coroot/api"
 	"github.com/coroot/coroot/cache"
@@ -240,7 +241,7 @@ func main() {
 	}).Methods(http.MethodGet)
 
 	if cfg.DeveloperMode {
-		r.PathPrefix("/static/").Handler(http.StripPrefix(cfg.UrlBasePath+"static/", http.FileServer(http.Dir("./static"))))
+		r.PathPrefix("/static/").Handler(http.StripPrefix(cfg.UrlBasePath+"static/", http.FileServer(http.Dir(devStaticDir()))))
 	} else {
 		r.PathPrefix("/static/").Handler(http.StripPrefix(cfg.UrlBasePath, http.FileServer(utils.NewStaticFSWrapper(static))))
 	}
@@ -272,13 +273,28 @@ func main() {
 	}
 }
 
+func devStaticDir() string {
+	if d := os.Getenv("STATIC_DIR"); d != "" {
+		return d
+	}
+	return "./static"
+}
+
 func readIndexHtml(basePath, version, instanceUuid string, checkForUpdates bool, developerMode bool) []byte {
 	var (
 		err error
 		tpl *template.Template
 	)
 	if developerMode {
-		tpl, err = template.ParseFiles("./static/index.html")
+		index := path.Join(devStaticDir(), "index.html")
+		for i := 0; i < 90; i++ {
+			if _, statErr := os.Stat(index); statErr == nil {
+				break
+			}
+			klog.Infof("waiting for %s (frontend watcher)", index)
+			time.Sleep(time.Second)
+		}
+		tpl, err = template.ParseFiles(index)
 	} else {
 		tpl, err = template.ParseFS(static, "static/index.html")
 	}

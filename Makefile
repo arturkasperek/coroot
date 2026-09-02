@@ -1,4 +1,6 @@
 UI_PATH = front
+SHELL := /bin/bash
+KIND_CLUSTER_NAME := coroot-dev
 
 .PHONY: all
 all: lint test
@@ -32,6 +34,29 @@ go-imports:
 .PHONY: go-test
 go-test:
 	go test ./...
+
+.PHONY: help
+help: ## Show common targets
+	@echo "  make dev        Bootstrap kind + Tilt (in-cluster Coroot + Prometheus/ClickHouse; http://localhost:18080)"
+	@echo "  make dev-down   Tilt down + remove the coroot-dev namespace (keeps the cluster)"
+	@echo "  make dev-clean  Delete the kind cluster"
+	@echo "  make test       Go tests"
+	@echo "  make lint       Go + UI linters"
+
+.PHONY: dev
+dev: ## Bootstrap kind (if needed) + Tilt (in-cluster backend/frontend)
+	@bash scripts/dev/dev.sh
+
+.PHONY: dev-down
+dev-down: ## Tilt down + delete in-cluster dev namespace (keeps kind)
+	@bash scripts/dev/k8s-dev-tools.sh
+	@eval "$$(bash scripts/dev/kind-dev-kubeconfig.sh --export)"; \
+	  tilt down --context kind-$(KIND_CLUSTER_NAME) || true; \
+	  kubectl delete namespace coroot-dev --ignore-not-found
+
+.PHONY: dev-clean
+dev-clean: ## Delete the kind cluster (wipes Prometheus/ClickHouse data)
+	kind delete cluster --name $(KIND_CLUSTER_NAME)
 
 .PHONY: ui-lint
 ui-lint: npm-install npm-lint npm-fmt

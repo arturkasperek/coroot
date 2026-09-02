@@ -1,3 +1,6 @@
-**/.git/
-**/data/
-**/node_modules/
+front/node_modules
+docs
+.git
+data-dev
+static
+docker/coroot/.air-tmp

@@ -1,6 +1,7 @@
 /.idea/
 /static/
 /data*
+/data-dev/
 /tmp
 /.gocache/*
 /config.yaml

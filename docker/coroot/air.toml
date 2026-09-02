@@ -1,0 +1,17 @@
+root = "."
+tmp_dir = "docker/coroot/.air-tmp"
+
+[build]
+cmd = "mkdir -p docker/coroot/.air-tmp && go build -o ./docker/coroot/.air-tmp/coroot ."
+full_bin = "./docker/coroot/.air-tmp/coroot"
+include_ext = ["go"]
+exclude_dir = ["front", "docs", "data-dev", "docker", "static"]
+delay = 1000
+stop_on_error = true
+rerun = true
+rerun_delay = 2000
+send_interrupt = true
+kill_delay = "15s"
+
+[log]
+time = true
