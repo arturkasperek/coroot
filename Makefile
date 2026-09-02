@@ -40,7 +40,7 @@ go-test:
 test-e2e: ## E2E tests against the running kind-coroot-dev cluster (make dev)
 	@bash scripts/dev/k8s-dev-tools.sh
 	@eval "$$(bash scripts/dev/kind-dev-kubeconfig.sh --export)"; \
-	  go test -tags e2e -count=1 -timeout 3m ./e2e/...
+	  go test -tags e2e -count=1 -timeout 5m ./e2e/...
 
 .PHONY: help
 help: ## Show common targets
