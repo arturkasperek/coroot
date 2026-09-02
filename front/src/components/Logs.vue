@@ -52,64 +52,75 @@
                 </v-list>
             </v-menu>
 
-            <div v-if="query.view === 'messages'">
-                <v-simple-table v-if="entries" :key="entries.length" dense class="entries">
-                    <thead>
-                        <tr>
-                            <template v-for="col in columns">
-                                <th :key="col.key" class="px-2">{{ col.label }}</th>
-                            </template>
-                        </tr>
-                    </thead>
-                    <tbody class="mono">
-                        <tr v-for="(e, index) in entries" :key="`${e.timestamp}-${index}`" @click="entry = e" style="cursor: pointer">
-                            <template v-for="col in cols">
-                                <td :key="col.key" class="text-no-wrap px-2" :class="{ 'pl-0': col.key === columns[0].key }">
-                                    <div v-if="col.key === 'date'" class="d-flex gap-1">
-                                        <div class="marker" :style="{ backgroundColor: e.color }" />
-                                        <div>{{ getColumnValue(e, col) }}</div>
-                                    </div>
-                                    <v-menu v-else-if="col.key === 'application'" offset-y @click.stop>
-                                        <template #activator="{ on }">
-                                            <a v-on="on" class="nowrap" style="display: inline-block; max-width: 20ch" @click.stop>{{
-                                                getColumnValue(e, col)
-                                            }}</a>
-                                        </template>
-                                        <v-list dense>
-                                            <template v-if="e.attributes['service.name']">
-                                                <v-list-item @click="qbAdd('service.name', '=', e.attributes['service.name'])">
-                                                    <v-icon small class="mr-1">mdi-plus</v-icon>
-                                                    add to search
-                                                </v-list-item>
-                                                <v-list-item @click="qbAdd('service.name', '!=', e.attributes['service.name'])">
-                                                    <v-icon small class="mr-1">mdi-minus</v-icon>
-                                                    exclude from search
-                                                </v-list-item>
+            <div v-if="query.view === 'messages'" class="logs-body">
+                <LogQuickFilters
+                    :entries="entries"
+                    :filters="query.filters"
+                    :hidden-attributes="hiddenAttributes"
+                    :columns="columns"
+                    :severity-facets="severityFacets"
+                    @toggle="toggleQuickFilter"
+                    @clear="clearQuickFilters"
+                />
+                <div class="logs-table">
+                    <v-simple-table v-if="entries" :key="entries.length" dense class="entries">
+                        <thead>
+                            <tr>
+                                <template v-for="col in columns">
+                                    <th :key="col.key" class="px-2">{{ col.label }}</th>
+                                </template>
+                            </tr>
+                        </thead>
+                        <tbody class="mono">
+                            <tr v-for="(e, index) in entries" :key="`${e.timestamp}-${index}`" @click="entry = e" style="cursor: pointer">
+                                <template v-for="col in cols">
+                                    <td :key="col.key" class="text-no-wrap px-2" :class="{ 'pl-0': col.key === columns[0].key }">
+                                        <div v-if="col.key === 'date'" class="d-flex gap-1">
+                                            <div class="marker" :style="{ backgroundColor: e.color }" />
+                                            <div>{{ getColumnValue(e, col) }}</div>
+                                        </div>
+                                        <v-menu v-else-if="col.key === 'application'" offset-y @click.stop>
+                                            <template #activator="{ on }">
+                                                <a v-on="on" class="nowrap" style="display: inline-block; max-width: 20ch" @click.stop>{{
+                                                    getColumnValue(e, col)
+                                                }}</a>
                                             </template>
-                                            <v-list-item v-if="e.link" :to="e.link">
-                                                <v-icon small class="mr-1">mdi-open-in-new</v-icon>
-                                                go to application
-                                            </v-list-item>
-                                        </v-list>
-                                    </v-menu>
-                                    <div v-else>
-                                        <span v-if="col.maxWidth" :title="getColumnValue(e, col)">
-                                            {{ truncateText(getColumnValue(e, col), col.maxWidth) }}
-                                        </span>
-                                        <span v-else>{{ getColumnValue(e, col) }}</span>
-                                    </div>
-                                </td>
-                            </template>
-                        </tr>
-                    </tbody>
-                </v-simple-table>
-                <div v-else-if="!loading" class="pa-3 text-center grey--text">No messages found</div>
-                <div v-if="entries.length === query.limit" class="text-right caption grey--text mt-1">
-                    The output is capped at
-                    <InlineSelect v-model="query.limit" :items="limits" />
-                    messages.
+                                            <v-list dense>
+                                                <template v-if="e.attributes['service.name']">
+                                                    <v-list-item @click="qbAdd('service.name', '=', e.attributes['service.name'])">
+                                                        <v-icon small class="mr-1">mdi-plus</v-icon>
+                                                        add to search
+                                                    </v-list-item>
+                                                    <v-list-item @click="qbAdd('service.name', '!=', e.attributes['service.name'])">
+                                                        <v-icon small class="mr-1">mdi-minus</v-icon>
+                                                        exclude from search
+                                                    </v-list-item>
+                                                </template>
+                                                <v-list-item v-if="e.link" :to="e.link">
+                                                    <v-icon small class="mr-1">mdi-open-in-new</v-icon>
+                                                    go to application
+                                                </v-list-item>
+                                            </v-list>
+                                        </v-menu>
+                                        <div v-else>
+                                            <span v-if="col.maxWidth" :title="getColumnValue(e, col)">
+                                                {{ truncateText(getColumnValue(e, col), col.maxWidth) }}
+                                            </span>
+                                            <span v-else>{{ getColumnValue(e, col) }}</span>
+                                        </div>
+                                    </td>
+                                </template>
+                            </tr>
+                        </tbody>
+                    </v-simple-table>
+                    <div v-else-if="!loading" class="pa-3 text-center grey--text">No messages found</div>
+                    <div v-if="entries.length === query.limit" class="text-right caption grey--text mt-1">
+                        The output is capped at
+                        <InlineSelect v-model="query.limit" :items="limits" />
+                        messages.
+                    </div>
+                    <LogEntry v-if="entry" v-model="entry" @filter="qbAdd" />
                 </div>
-                <LogEntry v-if="entry" v-model="entry" @filter="qbAdd" />
             </div>
         </template>
     </div>
@@ -122,9 +133,17 @@ import Chart from '@/components/Chart.vue';
 import LogEntry from '@/components/LogEntry.vue';
 import InlineSelect from '@/components/InlineSelect.vue';
 import LogSearchButtons from '@/components/LogSearchButtons.vue';
+import LogQuickFilters from '@/components/LogQuickFilters.vue';
+
+const SEVERITY_FACETS = [
+    { value: 'unknown', color: 'grey-lighten1' },
+    { value: 'info', color: 'blue-lighten2' },
+    { value: 'warning', color: 'orange-lighten1' },
+    { value: 'error', color: 'red-darken1' },
+];
 
 export default {
-    components: { LogSearchButtons, InlineSelect, LogEntry, Chart, QueryBuilder },
+    components: { LogQuickFilters, LogSearchButtons, InlineSelect, LogEntry, Chart, QueryBuilder },
 
     props: {
         showSources: {
@@ -228,6 +247,18 @@ export default {
                 filters: [...this.defaultFilters, ...this.query.filters],
             };
         },
+        severityFacets() {
+            const series = (this.view.chart && this.view.chart.series) || [];
+            return SEVERITY_FACETS.map((facet) => {
+                const match = series.find((item) => item.name === facet.value);
+                const count = match ? (match.data || []).reduce((total, value) => total + (Number(value) || 0), 0) : 0;
+                return {
+                    value: facet.value,
+                    count,
+                    color: palette.get((match && match.color) || facet.color),
+                };
+            });
+        },
         entries() {
             if (!this.view.entries) {
                 return [];
@@ -291,6 +322,24 @@ export default {
             this.query.view = 'messages';
             this.entry = null;
             this.pattern = null;
+            this.query.filters.push({ name, op, value });
+        },
+        clearQuickFilters() {
+            this.query.view = 'messages';
+            this.entry = null;
+            this.pattern = null;
+            this.query.filters = [];
+        },
+        toggleQuickFilter({ name, op, value }) {
+            this.query.view = 'messages';
+            this.entry = null;
+            this.pattern = null;
+            const idx = this.query.filters.findIndex((f) => f.name === name && f.op === op && f.value === value);
+            if (idx >= 0) {
+                this.query.filters.splice(idx, 1);
+                return;
+            }
+            this.query.filters = this.query.filters.filter((f) => !(f.name === name && f.value === value));
             this.query.filters.push({ name, op, value });
         },
         qbGet(what, name) {
@@ -460,6 +509,30 @@ export default {
     height: 20px;
     width: 4px;
     filter: brightness(var(--brightness));
+}
+.logs-body {
+    display: flex;
+    align-items: stretch;
+    gap: 16px;
+    height: clamp(420px, 65vh, 760px);
+    overflow: hidden;
+}
+.logs-table {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 100%;
+    overflow: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+}
+.logs-table:deep(.v-data-table__wrapper) {
+    overflow: visible;
+}
+.logs-table:deep(thead th) {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--background-color);
 }
 *:deep(.v-list-item) {
     min-height: 32px !important;
