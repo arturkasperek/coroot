@@ -46,8 +46,11 @@ echo "                   traces:  SELECT Timestamp, TraceId, SpanName, ServiceNa
 echo "                            FROM default.otel_traces ORDER BY Timestamp DESC LIMIT 100"
 echo "                   metrics: SELECT Timestamp, MetricName, Labels, Value"
 echo "                            FROM default.metrics ORDER BY Timestamp DESC LIMIT 100"
+echo "                            (agents remote-write here; not Prometheus scrape)"
 echo "    Next.js demo:  http://localhost:13000  (calls Express)"
 echo "    Express demo:  http://localhost:13001  /api/hello /api/slow /api/error"
+echo "                   Prometheus: http://localhost:13001 is app; metrics :9464/metrics"
+echo "                   PromQL: http_server_duration_count or express_demo_requests_total"
 echo
 
 exec tilt up --context "kind-${KIND_CLUSTER_NAME}" ${TILT_ARGS:-}

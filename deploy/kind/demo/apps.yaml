@@ -28,6 +28,10 @@ spec:
     metadata:
       labels:
         app: express-demo
+      annotations:
+        coroot.com/scrape-metrics: "true"
+        coroot.com/metrics-port: "9464"
+        coroot.com/metrics-path: "/metrics"
     spec:
       containers:
         - name: express-demo

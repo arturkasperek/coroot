@@ -2,11 +2,22 @@
 
 require('./otel');
 
+const { metrics } = require('@opentelemetry/api');
 const express = require('express');
 const log = require('./log');
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
+const requests = metrics.getMeter('express-demo').createCounter('express_demo_requests_total', {
+  description: 'HTTP requests handled by express-demo',
+});
+
+app.use((req, res, next) => {
+  res.on('finish', () => {
+    requests.add(1, { method: req.method, route: req.path, status: String(res.statusCode) });
+  });
+  next();
+});
 
 app.get('/health', (_req, res) => {
   res.status(200).send('ok');
