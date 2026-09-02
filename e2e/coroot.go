@@ -120,6 +120,116 @@ func expressAppID(t *testing.T, projectID string) string {
 	return ""
 }
 
+type applicationView struct {
+	Reports []auditReport `json:"reports"`
+}
+
+type auditReport struct {
+	Name    string          `json:"name"`
+	Status  string          `json:"status"`
+	Widgets json.RawMessage `json:"widgets"`
+}
+
+func fetchApplication(t *testing.T, projectID, appID string) applicationView {
+	t.Helper()
+	u := fmt.Sprintf("%s/api/project/%s/app/%s?from=now-1h",
+		corootBase(),
+		url.PathEscape(projectID),
+		url.PathEscape(appID),
+	)
+	var env apiEnvelope
+	httpGetJSON(t, u, &env)
+	var view applicationView
+	if err := json.Unmarshal(env.Data, &view); err != nil {
+		t.Fatalf("decode application: %v\n%s", err, env.Data)
+	}
+	return view
+}
+
+func fetchPanelChartPoints(t *testing.T, projectID, query string) int {
+	t.Helper()
+	cfg := map[string]any{
+		"source": map[string]any{
+			"metrics": map[string]any{
+				"queries": []map[string]string{{
+					"query":  query,
+					"legend": "{{__name__}}",
+				}},
+			},
+		},
+		"widget": map[string]any{"chart": map[string]any{"display": "line"}},
+	}
+	b, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := fmt.Sprintf("%s/api/project/%s/panel/data?from=now-1h&query=%s",
+		corootBase(),
+		url.PathEscape(projectID),
+		url.QueryEscape(string(b)),
+	)
+	var panel struct {
+		Chart json.RawMessage `json:"chart"`
+	}
+	httpGetJSON(t, u, &panel)
+	if len(panel.Chart) == 0 || string(panel.Chart) == "null" {
+		return 0
+	}
+	return chartPoints(panel.Chart)
+}
+
+func reportByName(view applicationView, name string) (auditReport, bool) {
+	for _, r := range view.Reports {
+		if r.Name == name {
+			return r, true
+		}
+	}
+	return auditReport{}, false
+}
+
+func chartPoints(raw json.RawMessage) int {
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return 0
+	}
+	return countSeriesPoints(v)
+}
+
+func countSeriesPoints(v any) int {
+	n := 0
+	switch x := v.(type) {
+	case map[string]any:
+		if series, ok := x["series"].([]any); ok {
+			for _, s := range series {
+				sm, ok := s.(map[string]any)
+				if !ok {
+					continue
+				}
+				data, ok := sm["data"].([]any)
+				if !ok {
+					continue
+				}
+				for _, p := range data {
+					if p != nil {
+						n++
+					}
+				}
+			}
+		}
+		for k, child := range x {
+			if k == "series" {
+				continue
+			}
+			n += countSeriesPoints(child)
+		}
+	case []any:
+		for _, child := range x {
+			n += countSeriesPoints(child)
+		}
+	}
+	return n
+}
+
 func fetchAppLogs(t *testing.T, projectID, appID, source, marker string) logsView {
 	t.Helper()
 	q, err := json.Marshal(map[string]any{
