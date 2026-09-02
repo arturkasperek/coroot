@@ -28,6 +28,7 @@ docker_build(
 
 # Demo apps: production images, built once on tilt up (manual trigger, no live_update).
 docker_build(
+    'express-demo',
     'deploy/kind/demo/express',
     dockerfile='deploy/kind/demo/express/Dockerfile',
 )
@@ -41,6 +42,7 @@ k8s_yaml([
     'deploy/kind/prometheus.yaml',
     'deploy/kind/clickhouse.yaml',
     'deploy/kind/coroot.yaml',
+    'deploy/kind/agents.yaml',
     'deploy/kind/demo/apps.yaml',
 ])
 
@@ -54,6 +56,14 @@ k8s_resource(
     'coroot',
     port_forwards=['18080:8080'],
     resource_deps=['prometheus', 'clickhouse'],
+)
+k8s_resource(
+    'coroot-node-agent',
+    resource_deps=['coroot'],
+)
+k8s_resource(
+    'coroot-cluster-agent',
+    resource_deps=['coroot'],
 )
 
 k8s_resource(

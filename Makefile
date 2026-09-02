@@ -52,7 +52,9 @@ dev-down: ## Tilt down + delete in-cluster dev namespace (keeps kind)
 	@bash scripts/dev/k8s-dev-tools.sh
 	@eval "$$(bash scripts/dev/kind-dev-kubeconfig.sh --export)"; \
 	  tilt down --context kind-$(KIND_CLUSTER_NAME) || true; \
-	  kubectl delete namespace coroot-dev --ignore-not-found
+	  kubectl delete namespace coroot-dev --ignore-not-found; \
+	  kubectl delete clusterrolebinding coroot-dev-cluster-agent --ignore-not-found; \
+	  kubectl delete clusterrole coroot-dev-cluster-agent --ignore-not-found
 
 .PHONY: dev-clean
 dev-clean: ## Delete the kind cluster (wipes Prometheus/ClickHouse data)

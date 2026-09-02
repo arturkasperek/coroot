@@ -1,0 +1,155 @@
+# Node + cluster agents. Coroot's inventory / incidents come from node-agent
+# (eBPF + cgroup metrics), not from OTEL Prometheus exporters on :9464.
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: coroot-node-agent
+  namespace: coroot-dev
+  labels:
+    app: coroot-node-agent
+spec:
+  selector:
+    matchLabels:
+      app: coroot-node-agent
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  template:
+    metadata:
+      labels:
+        app: coroot-node-agent
+    spec:
+      hostPID: true
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: coroot-node-agent
+          image: ghcr.io/coroot/coroot-node-agent:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - --listen=0.0.0.0:80
+            - --cgroupfs-root=/host/sys/fs/cgroup
+            - --collector-endpoint=http://coroot:8080
+            - --wal-dir=/tmp
+            - --scrape-interval=15s
+          securityContext:
+            privileged: true
+          ports:
+            - containerPort: 80
+              name: http
+          resources:
+            requests:
+              cpu: 100m
+              memory: 50Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          volumeMounts:
+            - name: cgroupfs
+              mountPath: /host/sys/fs/cgroup
+              readOnly: true
+            - name: tracefs
+              mountPath: /sys/kernel/tracing
+            - name: debugfs
+              mountPath: /sys/kernel/debug
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: cgroupfs
+          hostPath:
+            path: /sys/fs/cgroup
+        - name: tracefs
+          hostPath:
+            path: /sys/kernel/tracing
+        - name: debugfs
+          hostPath:
+            path: /sys/kernel/debug
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: coroot-cluster-agent
+  namespace: coroot-dev
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: coroot-dev-cluster-agent
+rules:
+  - apiGroups: [""]
+    resources:
+      - namespaces
+      - nodes
+      - pods
+      - services
+      - endpoints
+      - persistentvolumeclaims
+      - persistentvolumes
+      - events
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets", "daemonsets", "statefulsets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["cronjobs", "jobs"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses", "volumeattachments"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: coroot-dev-cluster-agent
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: coroot-dev-cluster-agent
+subjects:
+  - kind: ServiceAccount
+    name: coroot-cluster-agent
+    namespace: coroot-dev
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coroot-cluster-agent
+  namespace: coroot-dev
+  labels:
+    app: coroot-cluster-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: coroot-cluster-agent
+  template:
+    metadata:
+      labels:
+        app: coroot-cluster-agent
+    spec:
+      serviceAccountName: coroot-cluster-agent
+      containers:
+        - name: cluster-agent
+          image: ghcr.io/coroot/coroot-cluster-agent:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - --listen=127.0.0.1:10301
+            - --metrics-wal-dir=/tmp
+          env:
+            - name: COROOT_URL
+              value: http://coroot:8080
+            - name: METRICS_SCRAPE_INTERVAL
+              value: 15s
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
