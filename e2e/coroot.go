@@ -90,7 +90,18 @@ type logsView struct {
 	Entries []struct {
 		Message    string            `json:"message"`
 		Attributes map[string]string `json:"attributes"`
+		TraceId    string            `json:"trace_id"`
 	} `json:"entries"`
+}
+
+type tracingView struct {
+	Status  string `json:"status"`
+	Message string `json:"message"`
+	Spans   []struct {
+		Service string `json:"service"`
+		TraceId string `json:"trace_id"`
+		Name    string `json:"name"`
+	} `json:"spans"`
 }
 
 func defaultProjectID(t *testing.T) string {
@@ -232,7 +243,7 @@ func countSeriesPoints(v any) int {
 
 func fetchAppLogs(t *testing.T, projectID, appID, source, marker string) logsView {
 	t.Helper()
-	q, err := json.Marshal(map[string]any{
+	return fetchAppLogsQuery(t, projectID, appID, map[string]any{
 		"source": source,
 		"view":   "messages",
 		"limit":  100,
@@ -242,6 +253,25 @@ func fetchAppLogs(t *testing.T, projectID, appID, source, marker string) logsVie
 			"value": marker,
 		}},
 	})
+}
+
+func fetchAppLogsByTraceID(t *testing.T, projectID, appID, traceID string) logsView {
+	t.Helper()
+	return fetchAppLogsQuery(t, projectID, appID, map[string]any{
+		"source": "otel",
+		"view":   "messages",
+		"limit":  100,
+		"filters": []map[string]string{{
+			"name":  "TraceId",
+			"op":    "=",
+			"value": traceID,
+		}},
+	})
+}
+
+func fetchAppLogsQuery(t *testing.T, projectID, appID string, query map[string]any) logsView {
+	t.Helper()
+	q, err := json.Marshal(query)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,6 +286,23 @@ func fetchAppLogs(t *testing.T, projectID, appID, source, marker string) logsVie
 	var view logsView
 	if err := json.Unmarshal(env.Data, &view); err != nil {
 		t.Fatalf("decode logs: %v\n%s", err, env.Data)
+	}
+	return view
+}
+
+func fetchAppTrace(t *testing.T, projectID, appID, traceID string) tracingView {
+	t.Helper()
+	u := fmt.Sprintf("%s/api/project/%s/app/%s/tracing?from=now-15m&trace=%s",
+		corootBase(),
+		url.PathEscape(projectID),
+		url.PathEscape(appID),
+		url.QueryEscape("otel:"+traceID+"::"),
+	)
+	var env apiEnvelope
+	httpGetJSON(t, u, &env)
+	var view tracingView
+	if err := json.Unmarshal(env.Data, &view); err != nil {
+		t.Fatalf("decode tracing: %v\n%s", err, env.Data)
 	}
 	return view
 }
