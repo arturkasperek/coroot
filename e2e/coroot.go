@@ -255,18 +255,20 @@ func fetchAppLogs(t *testing.T, projectID, appID, source, marker string) logsVie
 	})
 }
 
-func fetchAppLogsByTraceID(t *testing.T, projectID, appID, traceID string) logsView {
+func fetchAppTraces(t *testing.T, projectID, appID string) tracingView {
 	t.Helper()
-	return fetchAppLogsQuery(t, projectID, appID, map[string]any{
-		"source": "otel",
-		"view":   "messages",
-		"limit":  100,
-		"filters": []map[string]string{{
-			"name":  "TraceId",
-			"op":    "=",
-			"value": traceID,
-		}},
-	})
+	u := fmt.Sprintf("%s/api/project/%s/app/%s/tracing?from=now-15m",
+		corootBase(),
+		url.PathEscape(projectID),
+		url.PathEscape(appID),
+	)
+	var env apiEnvelope
+	httpGetJSON(t, u, &env)
+	var view tracingView
+	if err := json.Unmarshal(env.Data, &view); err != nil {
+		t.Fatalf("decode tracing: %v\n%s", err, env.Data)
+	}
+	return view
 }
 
 func fetchAppLogsQuery(t *testing.T, projectID, appID string, query map[string]any) logsView {
@@ -286,23 +288,6 @@ func fetchAppLogsQuery(t *testing.T, projectID, appID string, query map[string]a
 	var view logsView
 	if err := json.Unmarshal(env.Data, &view); err != nil {
 		t.Fatalf("decode logs: %v\n%s", err, env.Data)
-	}
-	return view
-}
-
-func fetchAppTrace(t *testing.T, projectID, appID, traceID string) tracingView {
-	t.Helper()
-	u := fmt.Sprintf("%s/api/project/%s/app/%s/tracing?from=now-15m&trace=%s",
-		corootBase(),
-		url.PathEscape(projectID),
-		url.PathEscape(appID),
-		url.QueryEscape("otel:"+traceID+"::"),
-	)
-	var env apiEnvelope
-	httpGetJSON(t, u, &env)
-	var view tracingView
-	if err := json.Unmarshal(env.Data, &view); err != nil {
-		t.Fatalf("decode tracing: %v\n%s", err, env.Data)
 	}
 	return view
 }
