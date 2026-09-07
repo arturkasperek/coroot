@@ -8,3 +8,4 @@
 /coroot
 /.claude/
 /build.sh
+/.env

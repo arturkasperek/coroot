@@ -5,7 +5,7 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![](https://img.shields.io/badge/slack-coroot-brightgreen.svg?logo=slack)](https://coroot.com/join-slack-community/)
 
-### [Features](#features) | [Installation](https://docs.coroot.com/) | [Documentation](https://docs.coroot.com/) | [Community & Support](#community--support) | [Live demo](https://demo.coroot.com/) | [Coroot Enterprise](https://coroot.com/enterprise/) 
+### [Features](#features) | [Installation](https://docs.coroot.com/) | [Development on a remote k3s host](#development-on-a-remote-k3s-host) | [Documentation](https://docs.coroot.com/) | [Community & Support](#community--support) | [Live demo](https://demo.coroot.com/) | [Coroot Enterprise](https://coroot.com/enterprise/) 
 
 
 ## Open-source observability augmented with actionable insights
@@ -103,6 +103,42 @@ Coroot's eBPF-based instrumentation can capture requests without requiring any c
 
 You can run Coroot as a Docker container or deploy it into any Kubernetes cluster.
 Check out the [Installation guide](https://docs.coroot.com/).
+
+## Development on a remote k3s host
+
+`make dev` does not install or create a cluster. It loads gitignored `.env` and runs Tilt against an existing k3s.
+
+On the **Linux** machine (k3s + Docker Engine):
+
+* Install k3s (do not use k3d — that nests PID namespaces). Example flags: `--tls-san=<hostname-from-the-laptop>`, `--disable traefik`, `--disable metrics-server`, `--write-kubeconfig-mode 644`.
+* Tilt imports images with `docker save | k3s ctr images import` **without sudo**. The k3s containerd socket is `root:root` by default, so after k3s is up (and again after every k3s restart) run:
+
+```bash
+sudo chgrp docker /run/k3s/containerd/containerd.sock
+sudo chmod 660 /run/k3s/containerd/containerd.sock
+/usr/local/bin/k3s ctr version   # must show Client and Server; not the system `ctr` binary
+```
+
+You must be in group `docker`. Use `/usr/local/bin/k3s ctr`, not `/usr/bin/ctr` (that talks to Docker's containerd).
+
+On the **laptop**:
+
+* Tools: `docker`, `kubectl`, `helm`, `tilt` (no `kind`).
+* Docker context = SSH to that Linux host (so `docker build` runs there).
+* Merge k3s kubeconfig, rewrite `server:` to `https://<hostname>:6443`.
+* `.env`:
+
+```
+KUBERNETES_CONTEXT_NAME=k3s-server
+DEV_REMOTE_HOST=server
+```
+
+`DEV_REMOTE_HOST` is the SSH host used for `k3s ctr import`. `make dev` checks that the Docker context is `ssh://` / `tcp://` to the **same** hostname; a local Mac VM context will fail the check because `docker save` on the k3s host would not see the image.
+
+```bash
+make dev    # Tilt; does not start/stop k3s
+make down   # Tilt down + delete namespace coroot-dev (cluster stays)
+```
 
 ## Documentation
 

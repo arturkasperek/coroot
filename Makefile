@@ -1,6 +1,5 @@
 UI_PATH = front
 SHELL := /bin/bash
-KIND_CLUSTER_NAME := coroot-dev
 
 .PHONY: all
 all: lint test
@@ -35,39 +34,33 @@ go-imports:
 go-test:
 	go test $$(go list ./... | grep -v '/e2e$$')
 	bash scripts/dev/node-agent-local-dir.test.sh
+	bash scripts/dev/load-env.test.sh
+	bash scripts/dev/check-docker-remote.test.sh
 
 .PHONY: test-e2e
-test-e2e: ## E2E tests against the running kind-coroot-dev cluster (make dev)
+test-e2e: ## E2E tests against the running make-dev cluster
 	@bash scripts/dev/k8s-dev-tools.sh
-	@eval "$$(bash scripts/dev/kind-dev-kubeconfig.sh --export)"; \
+	@eval "$$(bash scripts/dev/load-env.sh --export)"; \
 	  go test -tags e2e -count=1 -timeout 5m ./e2e/...
 
 .PHONY: help
 help: ## Show common targets
-	@echo "  make dev        kind + Tilt (optional ../coroot-node-agent for a local node-agent image)"
-	@echo "  make dev-down   Tilt down + remove the coroot-dev namespace (keeps the cluster)"
-	@echo "  make dev-clean  Delete the kind cluster"
+	@echo "  make dev        Tilt into KUBERNETES_CONTEXT_NAME from .env (cluster must already exist)"
+	@echo "  make down       Tilt down + remove the coroot-dev namespace (keeps the cluster)"
 	@echo "  make test       Go and UI unit tests"
-	@echo "  make test-e2e   E2E against the make-dev kind cluster (cluster must already be up)"
+	@echo "  make test-e2e   E2E against the make-dev cluster (cluster must already be up)"
 	@echo "  make lint       Go + UI linters"
 
 .PHONY: dev
-dev: ## Bootstrap kind (if needed) + Tilt (in-cluster backend/frontend)
+dev: ## Tilt (in-cluster backend/frontend) against .env KUBERNETES_CONTEXT_NAME
 	@bash scripts/dev/dev.sh
 
-.PHONY: dev-down
-dev-down: ## Tilt down + delete in-cluster dev namespace (keeps kind)
-	@bash scripts/dev/k8s-dev-tools.sh
-	@eval "$$(bash scripts/dev/kind-dev-kubeconfig.sh --export)"; \
-	  tilt down --context kind-$(KIND_CLUSTER_NAME) || true; \
-	  kubectl delete namespace coroot-dev --ignore-not-found; \
-	  kubectl delete clusterrolebinding coroot-dev-cluster-agent --ignore-not-found; \
-	  kubectl delete clusterrole coroot-dev-cluster-agent --ignore-not-found; \
-	  helm uninstall metrics-server -n kube-system --ignore-not-found || true
+.PHONY: down
+down: ## Tilt down + delete in-cluster dev namespace (keeps the cluster)
+	@bash scripts/dev/dev-down.sh
 
-.PHONY: dev-clean
-dev-clean: ## Delete the kind cluster (wipes Postgres/ClickHouse data)
-	kind delete cluster --name $(KIND_CLUSTER_NAME)
+.PHONY: dev-down
+dev-down: down
 
 .PHONY: ui-test
 ui-test: npm-test

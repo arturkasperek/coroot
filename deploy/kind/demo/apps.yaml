@@ -36,7 +36,7 @@ spec:
       containers:
         - name: express-demo
           image: express-demo:dev
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Never
           env:
             - name: OTEL_SERVICE_NAME
               value: express-demo
@@ -91,7 +91,7 @@ spec:
       containers:
         - name: nextjs-demo
           image: nextjs-demo:dev
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Never
           env:
             - name: OTEL_SERVICE_NAME
               value: nextjs-demo

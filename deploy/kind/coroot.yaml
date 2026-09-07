@@ -29,7 +29,7 @@ spec:
       containers:
         - name: coroot
           image: coroot-backend:dev
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Never
           env:
             - name: LISTEN
               value: ":8080"
@@ -67,7 +67,7 @@ spec:
               mountPath: /data
         - name: frontend
           image: coroot-frontend:dev
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Never
           volumeMounts:
             - name: static
               mountPath: /app/static

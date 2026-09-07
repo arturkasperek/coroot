@@ -1,25 +1,57 @@
-# Coroot inner loop: build *:dev images, deploy into kind, live-update
-# Go / Vue sources. Cluster bootstrap (kind + inotify) stays in `make dev`.
-# Images are kind-loaded onto the current kind cluster (including SSH Docker).
+# Coroot inner loop: build *:dev images, deploy into KUBERNETES_CONTEXT_NAME
+# from .env, live-update Go / Vue sources. Cluster lifecycle is outside Tilt.
 
-allow_k8s_contexts('kind-coroot-dev')
+def _kubernetes_context():
+    ctx = os.getenv('KUBERNETES_CONTEXT_NAME', '').strip()
+    if ctx:
+        return ctx
+    if os.path.exists('.env'):
+        for line in str(read_file('.env')).splitlines():
+            line = line.strip()
+            if not line or line.startswith('#') or '=' not in line:
+                continue
+            k, _, v = line.partition('=')
+            if k.strip() == 'KUBERNETES_CONTEXT_NAME':
+                return v.strip().strip("'\"")
+    fail('set KUBERNETES_CONTEXT_NAME in .env (see make dev)')
+
+def cluster_docker_build(ref, context, dockerfile, ignore=None, deps=None, live_update=None):
+    ignore = ignore or []
+    live_update = live_update or []
+    deps = deps or [context]
+    cmd = (
+        'docker build -f %s -t "$EXPECTED_REF" %s && ' +
+        'bash scripts/dev/cluster-load-image.sh "$EXPECTED_REF"'
+    ) % (dockerfile, context)
+    custom_build(
+        ref,
+        cmd,
+        deps=deps,
+        ignore=ignore,
+        live_update=live_update,
+        disable_push=True,
+    )
+
+_k8s_context = _kubernetes_context()
+allow_k8s_contexts(_k8s_context)
+print('Tilt: kubernetes context', _k8s_context)
 update_settings(max_parallel_updates=4)
 
-docker_build(
+cluster_docker_build(
     'coroot-backend',
     '.',
-    dockerfile='docker/coroot/Dockerfile.dev',
+    'docker/coroot/Dockerfile.dev',
     ignore=['front/node_modules', 'docs', 'data-dev', 'static', 'deploy/kind/demo'],
     live_update=[
         sync('.', '/app'),
     ],
 )
 
-docker_build(
+cluster_docker_build(
     'coroot-frontend',
     '.',
-    dockerfile='docker/frontend/Dockerfile.dev',
-    only=['front'],
+    'docker/frontend/Dockerfile.dev',
+    deps=['front'],
     ignore=['front/node_modules'],
     live_update=[
         sync('front', '/app/front'),
@@ -35,25 +67,25 @@ _use_local_node_agent = (
 )
 if _use_local_node_agent:
     print('Tilt: building node-agent from', _node_agent_dir)
-    docker_build(
+    cluster_docker_build(
         'ghcr.io/coroot/coroot-node-agent',
         _node_agent_dir,
-        dockerfile='docker/node-agent/Dockerfile.dev',
+        'docker/node-agent/Dockerfile.dev',
         ignore=['.git', 'windows'],
     )
 else:
     print('Tilt: node-agent image ghcr.io/coroot/coroot-node-agent:latest (no ../coroot-node-agent)')
 
 # Demo apps: production images, built once on tilt up (manual trigger, no live_update).
-docker_build(
+cluster_docker_build(
     'express-demo',
     'deploy/kind/demo/express',
-    dockerfile='deploy/kind/demo/express/Dockerfile',
+    'deploy/kind/demo/express/Dockerfile',
 )
-docker_build(
+cluster_docker_build(
     'nextjs-demo',
     'deploy/kind/demo/nextjs',
-    dockerfile='deploy/kind/demo/nextjs/Dockerfile',
+    'deploy/kind/demo/nextjs/Dockerfile',
 )
 
 load('ext://helm_resource', 'helm_resource', 'helm_repo')

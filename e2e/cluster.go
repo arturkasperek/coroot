@@ -16,8 +16,11 @@ import (
 
 const (
 	namespace = "coroot-dev"
-	context   = "kind-coroot-dev"
 )
+
+func kubeContext() string {
+	return strings.TrimSpace(os.Getenv("KUBERNETES_CONTEXT_NAME"))
+}
 
 func kubectl(t *testing.T, args ...string) string {
 	t.Helper()
@@ -29,7 +32,11 @@ func kubectl(t *testing.T, args ...string) string {
 }
 
 func kubectlErr(args ...string) (string, error) {
-	all := append([]string{"--context", context, "-n", namespace}, args...)
+	ctx := kubeContext()
+	if ctx == "" {
+		return "", fmt.Errorf("KUBERNETES_CONTEXT_NAME is empty (run via make test-e2e)")
+	}
+	all := append([]string{"--context", ctx, "-n", namespace}, args...)
 	cmd := exec.Command("kubectl", all...)
 	if kc := os.Getenv("KUBECONFIG"); kc != "" {
 		cmd.Env = os.Environ()
@@ -45,7 +52,7 @@ func requireDevCluster(t *testing.T) {
 	t.Helper()
 	out, err := kubectlErr("get", "deploy/coroot", "deploy/clickhouse", "deploy/postgres", "ds/coroot-node-agent")
 	if err != nil {
-		t.Fatalf("dev cluster %s not ready (run make dev): %v\n%s", context, err, out)
+		t.Fatalf("dev cluster %s not ready (run make dev): %v\n%s", kubeContext(), err, out)
 	}
 }
 
