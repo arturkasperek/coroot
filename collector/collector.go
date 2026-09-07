@@ -22,7 +22,7 @@ const (
 	ApiKeyHeader = "X-API-Key"
 
 	batchLimit   = 10000
-	batchTimeout = 5 * time.Second
+	batchTimeout = 2 * time.Second
 )
 
 var (

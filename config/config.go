@@ -87,8 +87,9 @@ type ClickHouseSpaceManager struct {
 }
 
 type Cache struct {
-	TTL        timeseries.Duration `yaml:"ttl"`
-	GCInterval timeseries.Duration `yaml:"gc_interval"`
+	TTL              timeseries.Duration `yaml:"ttl"`
+	GCInterval       timeseries.Duration `yaml:"gc_interval"`
+	BackfillInterval timeseries.Duration `yaml:"backfill_interval"`
 }
 
 type Traces struct {
@@ -200,8 +201,9 @@ func NewConfig() *Config {
 		DataDir:       "./data",
 
 		Cache: Cache{
-			TTL:        30 * timeseries.Day,
-			GCInterval: 10 * timeseries.Minute,
+			TTL:              30 * timeseries.Day,
+			GCInterval:       10 * timeseries.Minute,
+			BackfillInterval: 4 * timeseries.Hour,
 		},
 
 		Traces: Traces{

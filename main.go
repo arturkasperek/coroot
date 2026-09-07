@@ -101,6 +101,7 @@ func main() {
 			TTL:      cfg.Cache.TTL,
 			Interval: cfg.Cache.GCInterval,
 		},
+		BackfillInterval: cfg.Cache.BackfillInterval,
 	}
 	promCache, err := cache.NewCache(cacheConfig, database, globalPrometheus, globalClickhouse)
 	if err != nil {

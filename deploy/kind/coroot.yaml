@@ -47,6 +47,8 @@ spec:
               value: "true"
             - name: GLOBAL_REFRESH_INTERVAL
               value: 15s
+            - name: CACHE_BACKFILL_INTERVAL
+              value: 15m
             - name: BOOTSTRAP_CLICKHOUSE_ADDRESS
               value: clickhouse:9000
           ports:

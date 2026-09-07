@@ -124,8 +124,8 @@ func (c *Cache) getStatus(projectId db.ProjectId) (*Status, error) {
 		s.LagMax = timeseries.Duration(max.Float64)
 		s.LagAvg = timeseries.Duration(avg.Float64)
 	} else {
-		s.LagMax = BackFillInterval
-		s.LagAvg = BackFillInterval
+		s.LagMax = c.backfillInterval()
+		s.LagAvg = c.backfillInterval()
 	}
 	return &s, nil
 }

@@ -9,6 +9,15 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func TestBackfillFrom_CapsGapToConfiguredInterval(t *testing.T) {
+	to := timeseries.Time(1_700_000_000)
+	stale := to.Add(-4 * timeseries.Hour)
+
+	assert.Equal(t, to.Add(-4*timeseries.Hour), backfillFrom(stale, to, 4*timeseries.Hour))
+	assert.Equal(t, to.Add(-15*timeseries.Minute), backfillFrom(stale, to, 15*timeseries.Minute))
+	assert.Equal(t, to.Add(-timeseries.Minute), backfillFrom(to.Add(-timeseries.Minute), to, 15*timeseries.Minute))
+}
+
 func TestCacheUpdater_calcIntervals(t *testing.T) {
 	scrapeInterval := 30 * timeseries.Second
 	jitter := 12 * timeseries.Minute

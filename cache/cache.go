@@ -34,6 +34,9 @@ type Cache struct {
 }
 
 func NewCache(cfg Config, database *db.DB, globalPrometheus *db.IntegrationPrometheus, globalClickHouse *db.IntegrationClickhouse) (*Cache, error) {
+	if cfg.BackfillInterval <= 0 {
+		cfg.BackfillInterval = DefaultBackfillInterval
+	}
 	err := utils.CreateDirectoryIfNotExists(cfg.Path)
 	if err != nil {
 		return nil, err

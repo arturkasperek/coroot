@@ -6,9 +6,10 @@ import (
 )
 
 type Config struct {
-	Path       string
-	GC         *GcConfig
-	Compaction *CompactionConfig
+	Path             string
+	GC               *GcConfig
+	Compaction       *CompactionConfig
+	BackfillInterval timeseries.Duration
 }
 
 type GcConfig struct {

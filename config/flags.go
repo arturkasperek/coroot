@@ -19,6 +19,7 @@ var (
 	dataDir                                     = kingpin.Flag("data-dir", `Path to the data directory`).Envar("DATA_DIR").String()
 	cacheTTL                                    = timeseries.DurationFlag(kingpin.Flag("cache-ttl", "Cache TTL (e.g. 8h, 2d, 1w; default 30d)").Envar("CACHE_TTL"))
 	cacheGcInterval                             = timeseries.DurationFlag(kingpin.Flag("cache-gc-interval", "Cache GC interval").Envar("CACHE_GC_INTERVAL"))
+	cacheBackfillInterval                       = timeseries.DurationFlag(kingpin.Flag("cache-backfill-interval", "How far back to fetch metrics on first cache fill (e.g. 15m, 4h; default 4h)").Envar("CACHE_BACKFILL_INTERVAL"))
 	tracesTTL                                   = timeseries.DurationFlag(kingpin.Flag("traces-ttl", "Traces TTL (e.g. 8h, 3d, 2w; default 7d)").Envar("TRACES_TTL"))
 	logsTTL                                     = timeseries.DurationFlag(kingpin.Flag("logs-ttl", "Logs TTL (e.g. 8h, 3d, 2w; default 7d)").Envar("LOGS_TTL"))
 	profilesTTL                                 = timeseries.DurationFlag(kingpin.Flag("profiles-ttl", "Profiles TTL (e.g. 8h, 3d, 2w; default 7d)").Envar("PROFILES_TTL"))
@@ -96,6 +97,9 @@ func (cfg *Config) ApplyFlags() {
 	}
 	if *cacheGcInterval > 0 {
 		cfg.Cache.GCInterval = *cacheGcInterval
+	}
+	if *cacheBackfillInterval > 0 {
+		cfg.Cache.BackfillInterval = *cacheBackfillInterval
 	}
 	if *tracesTTL > 0 {
 		cfg.Traces.TTL = *tracesTTL

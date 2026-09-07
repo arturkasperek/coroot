@@ -22,9 +22,10 @@ import (
 )
 
 const (
-	QueryConcurrency   = 10
-	BackFillInterval   = 4 * timeseries.Hour
-	MinRefreshInterval = timeseries.Minute
+	QueryConcurrency        = 10
+	DefaultBackfillInterval = 4 * timeseries.Hour
+	BackFillInterval        = DefaultBackfillInterval
+	MinRefreshInterval      = 20 * timeseries.Second
 )
 
 func (c *Cache) updater() {
@@ -110,7 +111,7 @@ func (c *Cache) projectUpdateIteration(project *db.Project, step timeseries.Dura
 		actualQueries[q.Query] = true
 		state := states[q.Query]
 		if state == nil {
-			state = &PrometheusQueryState{ProjectId: project.Id, Query: q.Query, LastTs: now.Add(-BackFillInterval)}
+			state = &PrometheusQueryState{ProjectId: project.Id, Query: q.Query, LastTs: now.Add(-c.backfillInterval())}
 			if err := c.saveState(state); err != nil {
 				return fmt.Errorf("failed to create query state: %w", err)
 			}
@@ -217,10 +218,7 @@ func (c *Cache) updaterWorker(projects *sync.Map, projectId db.ProjectId, step t
 func (c *Cache) download(to timeseries.Time, promClient prom.Client, projectId db.ProjectId, step timeseries.Duration, task UpdateTask) {
 	hash, jitter := QueryId(projectId, task.query.Query)
 	pointsCount := int(chunk.Size / step)
-	from := task.state.LastTs
-	if to.Sub(from) > BackFillInterval {
-		from = to.Add(-BackFillInterval)
-	}
+	from := backfillFrom(task.state.LastTs, to, c.backfillInterval())
 	ctx := context.Background()
 	for _, i := range calcIntervals(from, step, to, jitter) {
 		vs, err := promClient.QueryRange(ctx, task.query.Query, task.query.Labels.Has, i.chunkTs, i.toTs, step)
@@ -316,9 +314,7 @@ func (c *Cache) processRecordingRules(to timeseries.Time, project *db.Project, s
 			from = state.LastTs
 		}
 	}
-	if to.Sub(from) > BackFillInterval {
-		from = to.Add(-BackFillInterval)
-	}
+	from = backfillFrom(from, to, c.backfillInterval())
 	jitter := chunkJitter(project.Id, "")
 	intervals := calcIntervals(from, step, to, jitter)
 	if len(intervals) == 0 {
@@ -363,6 +359,21 @@ type interval struct {
 func (i interval) String() string {
 	format := "2006-01-02T15:04:05"
 	return fmt.Sprintf(`(%s %s)`, i.chunkTs.ToStandard().Format(format), i.toTs.ToStandard().Format(format))
+}
+
+func (c *Cache) backfillInterval() timeseries.Duration {
+	if c.cfg.BackfillInterval > 0 {
+		return c.cfg.BackfillInterval
+	}
+	return DefaultBackfillInterval
+}
+
+func backfillFrom(lastTs, to timeseries.Time, backfill timeseries.Duration) timeseries.Time {
+	from := lastTs
+	if backfill > 0 && to.Sub(from) > backfill {
+		return to.Add(-backfill)
+	}
+	return from
 }
 
 func calcIntervals(lastSavedTime timeseries.Time, scrapeInterval timeseries.Duration, now timeseries.Time, jitter timeseries.Duration) []interval {
