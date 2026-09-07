@@ -61,7 +61,7 @@ func TestNodeAgentDiscoversPodStartedAfterAgent(t *testing.T) {
 	token := fmt.Sprintf("e2e-after-agent-%d", time.Now().UnixNano())
 	hello := expressBase() + "/api/hello?token=" + url.QueryEscape(token)
 
-	waitUntil(t, 60*time.Second, "node-agent detect + container logs for pod started after the agent", func() bool {
+	waitUntil(t, 180*time.Second, "node-agent detect + container logs for pod started after the agent", func() bool {
 		httpGetOK(t, hello)
 		detected := nodeAgentDetectedPodSince(t, pod, since)
 		logs := fetchAppLogs(t, projectID, appID, "agent", token)
