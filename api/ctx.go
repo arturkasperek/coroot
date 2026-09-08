@@ -147,10 +147,7 @@ func renderStatus(p *db.Project, cacheStatus *cache.Status, w *model.World, glob
 	res.Prometheus.Status = model.OK
 	res.Prometheus.Message = "ok"
 	promCfg := p.PrometheusConfig(globalPrometheus)
-	refreshInterval := promCfg.RefreshInterval
-	if refreshInterval < cache.MinRefreshInterval {
-		refreshInterval = cache.MinRefreshInterval
-	}
+	refreshInterval := cache.UpdaterStep(promCfg.RefreshInterval)
 	switch {
 	case promCfg.Url == "" && !promCfg.UseClickHouse && !p.Multicluster():
 		res.Prometheus.Status = model.WARNING

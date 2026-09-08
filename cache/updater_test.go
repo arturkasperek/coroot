@@ -9,6 +9,23 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func TestUpdaterPeriod_IsOneTimesStep(t *testing.T) {
+	assert.Equal(t, 15*time.Second, UpdaterPeriod(15*timeseries.Second))
+	assert.Equal(t, 30*time.Second, UpdaterPeriod(30*timeseries.Second))
+	assert.Equal(t, 15*time.Second, UpdaterPeriod(0))
+}
+
+func TestDurationUntilNextAligned(t *testing.T) {
+	period := 15 * time.Second
+
+	assert.Equal(t, 15*time.Second, durationUntilNextAligned(time.Unix(0, 0), period))
+	assert.Equal(t, 15*time.Second, durationUntilNextAligned(time.Unix(15, 0), period))
+	assert.Equal(t, 1*time.Second, durationUntilNextAligned(time.Unix(14, 0), period))
+	assert.Equal(t, 14*time.Second, durationUntilNextAligned(time.Unix(16, 0), period))
+	assert.Equal(t, 500*time.Millisecond, durationUntilNextAligned(time.Unix(29, int64(500*time.Millisecond)), period))
+	assert.Equal(t, time.Duration(0), durationUntilNextAligned(time.Unix(10, 0), 0))
+}
+
 func TestBackfillFrom_CapsGapToConfiguredInterval(t *testing.T) {
 	to := timeseries.Time(1_700_000_000)
 	stale := to.Add(-4 * timeseries.Hour)

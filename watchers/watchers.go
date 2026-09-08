@@ -55,7 +55,11 @@ func Start(database *db.DB, mcache *cache.Cache, pricing *pricing.Manager, incid
 
 	go func() {
 		// multi-cluster projects are skipped in the cache updater, so we need to check Incidents and Deployments by a ticker
-		ticker := time.NewTicker(cache.MinRefreshInterval.ToStandard()).C
+		var step timeseries.Duration
+		if globalPrometheus != nil {
+			step = globalPrometheus.RefreshInterval
+		}
+		ticker := time.NewTicker(cache.UpdaterPeriod(step)).C
 
 		for {
 			select {

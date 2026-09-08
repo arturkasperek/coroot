@@ -25,8 +25,30 @@ const (
 	QueryConcurrency        = 10
 	DefaultBackfillInterval = 4 * timeseries.Hour
 	BackFillInterval        = DefaultBackfillInterval
-	MinRefreshInterval      = 20 * timeseries.Second
+	UpdaterIntervalFactor   = 1
+	defaultUpdaterStep      = 15 * timeseries.Second
 )
+
+func UpdaterStep(step timeseries.Duration) timeseries.Duration {
+	if step <= 0 {
+		step = defaultUpdaterStep
+	}
+	return step * UpdaterIntervalFactor
+}
+
+func UpdaterPeriod(step timeseries.Duration) time.Duration {
+	return UpdaterStep(step).ToStandard()
+}
+
+func durationUntilNextAligned(now time.Time, period time.Duration) time.Duration {
+	if period <= 0 {
+		return 0
+	}
+	unix := now.UnixNano()
+	p := period.Nanoseconds()
+	next := (unix/p + 1) * p
+	return time.Duration(next - unix)
+}
 
 func (c *Cache) updater() {
 	workers := &sync.Map{}
@@ -207,12 +229,20 @@ func (c *Cache) updaterWorker(projects *sync.Map, projectId db.ProjectId, step t
 		}
 		duration := time.Since(start)
 		klog.Infof("%s: cache updated in %s", projectId, duration.Truncate(time.Millisecond))
-		refreshInterval := step
-		if refreshInterval < MinRefreshInterval {
-			refreshInterval = MinRefreshInterval
+		period := UpdaterPeriod(c.currentStep(projectId, step))
+		if wait := durationUntilNextAligned(time.Now(), period); wait > 0 {
+			time.Sleep(wait)
 		}
-		time.Sleep(refreshInterval.ToStandard() - duration)
 	}
+}
+
+func (c *Cache) currentStep(projectId db.ProjectId, fallback timeseries.Duration) timeseries.Duration {
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+	if pd := c.byProject[projectId]; pd != nil && pd.step > 0 {
+		return pd.step
+	}
+	return fallback
 }
 
 func (c *Cache) download(to timeseries.Time, promClient prom.Client, projectId db.ProjectId, step timeseries.Duration, task UpdateTask) {
@@ -401,7 +431,7 @@ func getScrapeInterval(promClient prom.Client) (timeseries.Duration, error) {
 	step, _ := promClient.GetStep(0, 0)
 	if step == 0 {
 		klog.Warningln("step is zero")
-		step = MinRefreshInterval
+		step = defaultUpdaterStep
 	}
 	to := timeseries.Now()
 	from := to.Add(-timeseries.Hour)
