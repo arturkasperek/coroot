@@ -93,19 +93,3 @@ func nodeAgentPodUID(t *testing.T) string {
 	t.Helper()
 	return kubectl(t, "get", "pod", "-l", "app=coroot-node-agent", "-o", "jsonpath={.items[0].metadata.uid}")
 }
-
-func nodeAgentDetectedPodSince(t *testing.T, pod string, since time.Time) bool {
-	t.Helper()
-	out, err := kubectlErr("logs", "ds/coroot-node-agent", "--since-time="+since.UTC().Format(time.RFC3339Nano))
-	if err != nil {
-		t.Logf("node-agent logs: %v\n%s", err, out)
-		return false
-	}
-	needle := fmt.Sprintf(`id="/k8s/%s/%s/express-demo"`, namespace, pod)
-	for _, line := range strings.Split(out, "\n") {
-		if strings.Contains(line, "detected a new container") && strings.Contains(line, needle) {
-			return true
-		}
-	}
-	return false
-}
