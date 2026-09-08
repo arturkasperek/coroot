@@ -43,10 +43,26 @@ test-e2e: ## E2E tests against the running make-dev cluster
 	@eval "$$(bash scripts/dev/load-env.sh --export)"; \
 	  go test -tags e2e -count=1 -timeout 5m ./e2e/...
 
+ifeq (seed,$(firstword $(MAKECMDGOALS)))
+SEED_ARGS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
+$(eval $(SEED_ARGS):;@:)
+endif
+
+.PHONY: seed
+seed: ## Seed ClickHouse with demo logs: make seed <days> <thousands>  (1000 = 1e6 logs)
+	@if [ -z "$(SEED_ARGS)" ]; then \
+	  echo "usage: make seed <days> <thousands-of-logs>"; \
+	  echo "example: make seed 30 1000   # 30 days, 1 000 000 agent-style logs"; \
+	  exit 2; \
+	fi
+	@eval "$$(bash scripts/dev/load-env.sh --export)"; \
+	  go run ./scripts/chseed $(SEED_ARGS)
+
 .PHONY: help
 help: ## Show common targets
 	@echo "  make dev        Tilt into KUBERNETES_CONTEXT_NAME from .env (cluster must already exist)"
 	@echo "  make down       Tilt down + remove the coroot-dev namespace (keeps the cluster)"
+	@echo "  make seed 30 1000  Seed ClickHouse as if express/nextjs-demo produced 1e6 logs over 30 days"
 	@echo "  make test       Go and UI unit tests"
 	@echo "  make test-e2e   E2E against the make-dev cluster (cluster must already be up)"
 	@echo "  make lint       Go + UI linters"
