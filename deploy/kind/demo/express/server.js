@@ -8,8 +8,12 @@ const log = require('./log');
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
-const requests = metrics.getMeter('express-demo').createCounter('express_demo_requests_total', {
+const meter = metrics.getMeter('express-demo');
+const requests = meter.createCounter('express_demo_requests_total', {
   description: 'HTTP requests handled by express-demo',
+});
+const hellos = meter.createCounter('express_demo_hello_total', {
+  description: 'GET /api/hello requests handled by express-demo',
 });
 
 app.use((req, res, next) => {
@@ -24,6 +28,7 @@ app.get('/health', (_req, res) => {
 });
 
 app.get('/api/hello', (req, res) => {
+  hellos.add(1);
   log.info(req.query.token ? `express hello ${req.query.token}` : 'express hello', { path: req.path });
   res.json({ service: 'express-demo', message: 'hello from express', ts: Date.now() });
 });

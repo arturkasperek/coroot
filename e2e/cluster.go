@@ -82,7 +82,7 @@ func restartExpressDemo(t *testing.T) string {
 		io.Copy(io.Discard, resp.Body)
 		return resp.StatusCode == http.StatusOK
 	})
-	pod := kubectl(t, "get", "pod", "-l", "app=express-demo", "-o", "jsonpath={.items[0].metadata.name}")
+	pod := kubectl(t, "get", "pod", "-l", "app=express-demo", "--field-selector=status.phase=Running", "-o", "jsonpath={.items[0].metadata.name}")
 	if pod == "" {
 		t.Fatal("express-demo pod name is empty after restart")
 	}

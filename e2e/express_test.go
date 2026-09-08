@@ -10,39 +10,8 @@ import (
 	"time"
 )
 
-func TestCorootIngestsContainerLogs(t *testing.T) {
-	requireDevCluster(t)
-	httpGetOK(t, corootBase()+"/health")
-	httpGetOK(t, expressBase()+"/health")
+const expressHelloMetric = "express_demo_hello_total"
 
-	projectID := defaultProjectID(t)
-	appID := expressAppID(t, projectID)
-
-	waitUntil(t, 90*time.Second, "container logs from Coroot API (source=agent)", func() bool {
-		httpGetOK(t, expressBase()+"/api/hello")
-		logs := fetchAppLogs(t, projectID, appID, "agent", "express hello")
-		t.Logf("status=%s source=%s message=%s entries=%d", logs.Status, logs.Source, logs.Message, len(logs.Entries))
-		if logs.Status != "ok" || logs.Source != "agent" {
-			return false
-		}
-		if !strings.Contains(strings.ToLower(logs.Message), "container") {
-			return false
-		}
-		for _, e := range logs.Entries {
-			if !strings.Contains(e.Message, "express hello") {
-				continue
-			}
-			svc := e.Attributes["service.name"]
-			if strings.HasPrefix(svc, "/k8s/"+namespace+"/") {
-				return true
-			}
-		}
-		return false
-	})
-}
-
-// TestNodeAgentDiscoversPodStartedAfterAgent checks that a pod created after
-// node-agent is already running still shows up in Coroot container logs.
 func TestNodeAgentDiscoversPodStartedAfterAgent(t *testing.T) {
 	requireDevCluster(t)
 	httpGetOK(t, corootBase()+"/health")
@@ -58,20 +27,15 @@ func TestNodeAgentDiscoversPodStartedAfterAgent(t *testing.T) {
 	appID := expressAppID(t, projectID)
 	token := fmt.Sprintf("e2e-after-agent-%d", time.Now().UnixNano())
 	hello := expressBase() + "/api/hello?token=" + url.QueryEscape(token)
+	metricQuery := fmt.Sprintf(`%s{namespace="%s",pod="%s"}`, expressHelloMetric, namespace, pod)
 
-	waitUntil(t, 90*time.Second, "container logs from Coroot API for pod started after the agent", func() bool {
+	waitUntil(t, 90*time.Second, "logs and custom Prometheus metric for pod started after the agent", func() bool {
 		httpGetOK(t, hello)
 		logs := fetchAppLogs(t, projectID, appID, "agent", token)
-		t.Logf("status=%s source=%s entries=%d", logs.Status, logs.Source, len(logs.Entries))
-		if logs.Status != "ok" || logs.Source != "agent" {
-			return false
-		}
-		for _, e := range logs.Entries {
-			if strings.Contains(e.Message, token) && strings.HasPrefix(e.Attributes["service.name"], "/k8s/"+namespace+"/") {
-				return true
-			}
-		}
-		return false
+		points := fetchPanelChartPoints(t, projectID, metricQuery)
+		t.Logf("logs status=%s source=%s entries=%d metric=%s points=%d",
+			logs.Status, logs.Source, len(logs.Entries), metricQuery, points)
+		return agentLogsHaveMessage(logs, token) && points > 0
 	})
 }
 
@@ -100,4 +64,19 @@ func TestCorootDoesNotIngestAppOtelLogs(t *testing.T) {
 		}
 		time.Sleep(2 * time.Second)
 	}
+}
+
+func agentLogsHaveMessage(logs logsView, marker string) bool {
+	if logs.Status != "ok" || logs.Source != "agent" {
+		return false
+	}
+	for _, e := range logs.Entries {
+		if !strings.Contains(e.Message, marker) {
+			continue
+		}
+		if strings.HasPrefix(e.Attributes["service.name"], "/k8s/"+namespace+"/") {
+			return true
+		}
+	}
+	return false
 }

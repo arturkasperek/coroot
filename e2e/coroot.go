@@ -174,7 +174,7 @@ func fetchPanelChartPoints(t *testing.T, projectID, query string) int {
 	if err != nil {
 		t.Fatal(err)
 	}
-	u := fmt.Sprintf("%s/api/project/%s/panel/data?from=now-1h&query=%s",
+	u := fmt.Sprintf("%s/api/project/%s/panel/data?from=now-15m&query=%s",
 		corootBase(),
 		url.PathEscape(projectID),
 		url.QueryEscape(string(b)),
