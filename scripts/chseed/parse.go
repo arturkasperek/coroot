@@ -11,13 +11,14 @@ import (
 )
 
 type Config struct {
-	Days  int
-	Count int
+	Days   int
+	PerDay int
+	Count  int
 }
 
 func ParseArgs(args []string) (Config, error) {
 	if len(args) != 2 {
-		return Config{}, fmt.Errorf("usage: make seed <days> <thousands-of-logs>  (example: make seed 30 1000)")
+		return Config{}, fmt.Errorf("usage: make seed <days> <thousands-of-logs-per-day>  (example: make seed 30 1000)")
 	}
 	days, err := strconv.Atoi(args[0])
 	if err != nil || days <= 0 {
@@ -25,9 +26,10 @@ func ParseArgs(args []string) (Config, error) {
 	}
 	thousands, err := strconv.Atoi(args[1])
 	if err != nil || thousands <= 0 {
-		return Config{}, fmt.Errorf("log volume must be a positive integer in thousands (1000 = 1_000_000 logs), got %q", args[1])
+		return Config{}, fmt.Errorf("log volume must be a positive integer in thousands per day (1000 = 1_000_000 logs/day), got %q", args[1])
 	}
-	return Config{Days: days, Count: thousands * 1000}, nil
+	perDay := thousands * 1000
+	return Config{Days: days, PerDay: perDay, Count: days * perDay}, nil
 }
 
 func ProjectDatabase(projectID string) string {

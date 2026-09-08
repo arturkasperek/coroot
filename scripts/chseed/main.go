@@ -18,7 +18,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
 	defer cancel()
 
 	chHTTP := envDefault("COROOT_DEV_CLICKHOUSE_HTTP", "http://127.0.0.1:18123")
@@ -40,7 +40,7 @@ func main() {
 	}
 	ch = ch.withDatabase(dbName)
 
-	log.Printf("seeding %s at %s (%d days, %d logs for express-demo + nextjs-demo)", dbName, chHTTP, cfg.Days, cfg.Count)
+	log.Printf("seeding %s at %s (%d days, %d logs/day, %d total for express-demo + nextjs-demo)", dbName, chHTTP, cfg.Days, cfg.PerDay, cfg.Count)
 	if err = Seed(ctx, ch, cfg, time.Now().UTC()); err != nil {
 		log.Fatal(err)
 	}

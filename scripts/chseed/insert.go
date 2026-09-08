@@ -34,7 +34,7 @@ func Seed(ctx context.Context, ch *chClient, cfg Config, now time.Time) error {
 		return fmt.Errorf("delete previous seed: %w", err)
 	}
 
-	log.Printf("inserting %d logs over %d days", cfg.Count, cfg.Days)
+	log.Printf("inserting %d logs over %d days (%d/day)", cfg.Count, cfg.Days, cfg.PerDay)
 	var buf bytes.Buffer
 	buf.Grow(seedBatchSize * 512)
 	started := time.Now()

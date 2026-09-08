@@ -49,10 +49,10 @@ $(eval $(SEED_ARGS):;@:)
 endif
 
 .PHONY: seed
-seed: ## Seed ClickHouse with demo logs: make seed <days> <thousands>  (1000 = 1e6 logs)
+seed: ## Seed ClickHouse with demo logs: make seed <days> <thousands-per-day>  (1000 = 1e6 logs/day)
 	@if [ -z "$(SEED_ARGS)" ]; then \
-	  echo "usage: make seed <days> <thousands-of-logs>"; \
-	  echo "example: make seed 30 1000   # 30 days, 1 000 000 agent-style logs"; \
+	  echo "usage: make seed <days> <thousands-of-logs-per-day>"; \
+	  echo "example: make seed 7 1000   # 7 days, 1 000 000 logs/day"; \
 	  exit 2; \
 	fi
 	@eval "$$(bash scripts/dev/load-env.sh --export)"; \
@@ -62,7 +62,7 @@ seed: ## Seed ClickHouse with demo logs: make seed <days> <thousands>  (1000 = 1
 help: ## Show common targets
 	@echo "  make dev        Tilt into KUBERNETES_CONTEXT_NAME from .env (cluster must already exist)"
 	@echo "  make down       Tilt down + remove the coroot-dev namespace (keeps the cluster)"
-	@echo "  make seed 30 1000  Seed ClickHouse as if express/nextjs-demo produced 1e6 logs over 30 days"
+	@echo "  make seed 7 1000  Seed ClickHouse: 1e6 agent-style logs/day for 7 days (express/nextjs-demo)"
 	@echo "  make test       Go and UI unit tests"
 	@echo "  make test-e2e   E2E against the make-dev cluster (cluster must already be up)"
 	@echo "  make lint       Go + UI linters"

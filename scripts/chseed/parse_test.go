@@ -8,18 +8,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestParseArgs_DaysAndThousandsOfLogs(t *testing.T) {
+func TestParseArgs_DaysAndThousandsPerDay(t *testing.T) {
 	cfg, err := ParseArgs([]string{"30", "1000"})
 	require.NoError(t, err)
 	assert.Equal(t, 30, cfg.Days)
-	assert.Equal(t, 1_000_000, cfg.Count)
+	assert.Equal(t, 1_000_000, cfg.PerDay)
+	assert.Equal(t, 30_000_000, cfg.Count)
 }
 
 func TestParseArgs_SmallerVolume(t *testing.T) {
 	cfg, err := ParseArgs([]string{"7", "1"})
 	require.NoError(t, err)
 	assert.Equal(t, 7, cfg.Days)
-	assert.Equal(t, 1000, cfg.Count)
+	assert.Equal(t, 1000, cfg.PerDay)
+	assert.Equal(t, 7000, cfg.Count)
 }
 
 func TestParseArgs_RejectsBadInput(t *testing.T) {

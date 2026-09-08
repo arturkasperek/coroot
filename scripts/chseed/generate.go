@@ -44,8 +44,16 @@ func Record(cfg Config, now time.Time, i int) LogRecord {
 	from := now.Add(-time.Duration(cfg.Days) * 24 * time.Hour)
 	ts := now
 	if cfg.Count > 1 {
-		span := now.Sub(from)
-		ts = from.Add(time.Duration(int64(i) * int64(span) / int64(cfg.Count-1)))
+		switch i {
+		case 0:
+			ts = from
+		case cfg.Count - 1:
+			ts = now
+		default:
+			// Divide first: i*span overflows int64 around 15k rows for a 7-day window.
+			span := now.Sub(from)
+			ts = from.Add(span / time.Duration(cfg.Count-1) * time.Duration(i))
+		}
 	}
 
 	tpl := templateFor(i)

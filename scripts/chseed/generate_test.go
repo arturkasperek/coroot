@@ -70,3 +70,26 @@ func TestRecord_IndexOutOfRangePanics(t *testing.T) {
 		Record(Config{Days: 1, Count: 1}, time.Now(), 1)
 	})
 }
+
+func TestRecord_LargeVolumeStaysInsideWindow(t *testing.T) {
+	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	cfg := Config{Days: 7, Count: 100_000}
+	from := now.Add(-7 * 24 * time.Hour)
+
+	first := Record(cfg, now, 0)
+	last := Record(cfg, now, cfg.Count-1)
+	mid := Record(cfg, now, cfg.Count/2)
+	overflow := Record(cfg, now, 20_000)
+
+	assert.Equal(t, from, first.Timestamp)
+	assert.Equal(t, now, last.Timestamp)
+	assert.InDelta(t, from.Add(3*24*time.Hour+12*time.Hour).Unix(), mid.Timestamp.Unix(), 60)
+	assert.True(t, overflow.Timestamp.After(from))
+	assert.True(t, overflow.Timestamp.Before(now))
+	assert.True(t, overflow.Timestamp.After(first.Timestamp))
+	assert.True(t, last.Timestamp.After(overflow.Timestamp))
+
+	million := Config{Days: 30, Count: 1_000_000}
+	assert.Equal(t, now.Add(-30*24*time.Hour), Record(million, now, 0).Timestamp)
+	assert.Equal(t, now, Record(million, now, million.Count-1).Timestamp)
+}
