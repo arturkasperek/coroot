@@ -1,0 +1,15 @@
+{
+	{$CADDY_GLOBAL_OPTIONS}
+
+	frankenphp {
+		{$FRANKENPHP_CONFIG}
+	}
+
+	order php_server before file_server
+}
+
+{$SERVER_NAME:localhost} {
+	root * /app/public
+	encode zstd gzip
+	php_server
+}

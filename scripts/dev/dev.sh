@@ -51,6 +51,8 @@ echo "                            (node-agent + cluster-agent remote-write)"
 echo "    Next.js demo:  http://localhost:13000  (calls Express)"
 echo "    Express demo:  http://localhost:13001  /api/hello /api/slow /api/error"
 echo "                   OTEL Prometheus scrape: pod :9464/metrics (cluster-agent)"
+echo "    Symfony demo:  http://localhost:13002  /health /api/hello /api/visits /api/slow /api/error"
+echo "                   FrankenPHP + Postgres (symfony-demo-db, not Coroot config DB)"
 if AGENT_SRC="$(bash "$DIR/node-agent-local-dir.sh")"; then
   echo "    Node agent:    local $AGENT_SRC (Tilt docker_build)"
 else

@@ -87,6 +87,11 @@ cluster_docker_build(
     'deploy/kind/demo/nextjs',
     'deploy/kind/demo/nextjs/Dockerfile',
 )
+cluster_docker_build(
+    'symfony-demo',
+    'deploy/kind/demo/symfony',
+    'deploy/kind/demo/symfony/Dockerfile',
+)
 
 load('ext://helm_resource', 'helm_resource', 'helm_repo')
 
@@ -156,7 +161,17 @@ k8s_resource(
     trigger_mode=TRIGGER_MODE_MANUAL,
 )
 k8s_resource(
+    'symfony-demo-db',
+    trigger_mode=TRIGGER_MODE_MANUAL,
+)
+k8s_resource(
+    'symfony-demo',
+    port_forwards=['13002:80'],
+    resource_deps=['coroot', 'symfony-demo-db'],
+    trigger_mode=TRIGGER_MODE_MANUAL,
+)
+k8s_resource(
     'demo-traffic',
-    resource_deps=['express-demo', 'nextjs-demo'],
+    resource_deps=['express-demo', 'nextjs-demo', 'symfony-demo'],
     trigger_mode=TRIGGER_MODE_MANUAL,
 )

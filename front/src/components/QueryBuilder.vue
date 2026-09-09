@@ -37,6 +37,9 @@
                     <v-list-item v-else-if="mode === 'value' && str" dense class="item" @click="select(str)">
                         Use custom value: {{ str }}
                     </v-list-item>
+                    <v-list-item v-else-if="freeTextMessageFilter" dense class="item" @click="applyEnter({ action: 'push-filter', filter: freeTextMessageFilter })">
+                        Search messages: {{ freeTextMessageFilter.value }}
+                    </v-list-item>
                     <v-list-item v-else dense class="item"> No options found </v-list-item>
                 </v-list>
             </v-menu>
@@ -45,7 +48,13 @@
 </template>
 
 <script>
-import { formatLogFilter, displaySourceName, displayNamespaceName } from '@/utils/logQuickFilters';
+import {
+    formatLogFilter,
+    displaySourceName,
+    displayNamespaceName,
+    messageFilterFromFreeText,
+    resolveQueryBuilderEnter,
+} from '@/utils/logQuickFilters';
 
 export default {
     props: {
@@ -81,6 +90,12 @@ export default {
                     const label = this.formatItem(i).toLocaleLowerCase();
                     return raw.includes(q) || label.includes(q);
                 });
+        },
+        freeTextMessageFilter() {
+            if (this.mode !== 'name' || this._items.length) {
+                return null;
+            }
+            return messageFilterFromFreeText(this.str);
         },
     },
 
@@ -147,6 +162,23 @@ export default {
             this.get();
             this.item = 0;
         },
+        applyEnter(result) {
+            if (!result || result.action === 'none') {
+                return;
+            }
+            if (result.action === 'select') {
+                this.select(result.value);
+                return;
+            }
+            if (result.action === 'push-filter' && result.filter) {
+                this.filters.push(result.filter);
+                this.str = '';
+                this.mode = 'name';
+                this.filter = { name: '', op: '', value: '' };
+                this.get();
+                this.item = 0;
+            }
+        },
         keydown(e) {
             if (e.code === 'Escape') {
                 this.leave();
@@ -170,14 +202,13 @@ export default {
                     this.item = this.item === 0 ? l : this.item - 1;
                     break;
                 case 'Enter':
-                    if (this._items[this.item]) {
-                        this.select(this._items[this.item]);
-                        break;
-                    }
-                    if (this.mode === 'value' && this.str) {
-                        this.select(this.str);
-                        break;
-                    }
+                    this.applyEnter(
+                        resolveQueryBuilderEnter({
+                            mode: this.mode,
+                            str: this.str,
+                            matchedItem: this._items[this.item],
+                        }),
+                    );
                     break;
             }
         },

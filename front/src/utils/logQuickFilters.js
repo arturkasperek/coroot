@@ -97,6 +97,37 @@ export function formatLogFilter(filter = {}) {
     return `${filter.name || ''} ${op} ${facetLabel(filter.name, filter.value)}`.trim();
 }
 
+export function messageFilterFromFreeText(str) {
+    const raw = String(str || '').trim();
+    if (!raw) {
+        return null;
+    }
+    if (raw.startsWith('!')) {
+        const value = raw.slice(1).trim();
+        if (!value) {
+            return null;
+        }
+        return { name: 'Message', op: 'not contains', value };
+    }
+    return { name: 'Message', op: 'contains', value: raw };
+}
+
+export function resolveQueryBuilderEnter({ mode, str, matchedItem } = {}) {
+    if (matchedItem) {
+        return { action: 'select', value: matchedItem };
+    }
+    if (mode === 'value' && String(str || '').length) {
+        return { action: 'select', value: str };
+    }
+    if (mode === 'name') {
+        const filter = messageFilterFromFreeText(str);
+        if (filter) {
+            return { action: 'push-filter', filter };
+        }
+    }
+    return { action: 'none' };
+}
+
 export function facetValue(entry, from) {
     if (!from) {
         return '';

@@ -36,6 +36,7 @@ go-test:
 	bash scripts/dev/node-agent-local-dir.test.sh
 	bash scripts/dev/load-env.test.sh
 	bash scripts/dev/check-docker-remote.test.sh
+	bash scripts/dev/demo-apps.test.sh
 
 .PHONY: test-e2e
 test-e2e: ## E2E tests against the running make-dev cluster. Optional: make test-e2e TestOverviewLogSourceFilters

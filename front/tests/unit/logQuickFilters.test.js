@@ -306,3 +306,76 @@ test('falls back to deriving Namespace and Application from attributes', async (
     assert.equal(apps.values.find((v) => v.value === 'express-demo').count, 1);
     assert.equal(apps.values.find((v) => v.value === 'checkout').count, 1);
 });
+
+test('parses free text as a Message contains filter', async () => {
+    const { messageFilterFromFreeText } = await loadLogQuickFilters();
+    assert.deepEqual(messageFilterFromFreeText('some text'), {
+        name: 'Message',
+        op: 'contains',
+        value: 'some text',
+    });
+    assert.deepEqual(messageFilterFromFreeText('  timeout  '), {
+        name: 'Message',
+        op: 'contains',
+        value: 'timeout',
+    });
+});
+
+test('parses leading exclamation as Message not contains', async () => {
+    const { messageFilterFromFreeText, formatLogFilter } = await loadLogQuickFilters();
+    assert.deepEqual(messageFilterFromFreeText('!some text'), {
+        name: 'Message',
+        op: 'not contains',
+        value: 'some text',
+    });
+    assert.deepEqual(messageFilterFromFreeText('!  boom'), {
+        name: 'Message',
+        op: 'not contains',
+        value: 'boom',
+    });
+    assert.equal(
+        formatLogFilter(messageFilterFromFreeText('!boom')),
+        'Message !🔍 boom',
+    );
+});
+
+test('ignores empty or bang-only free text', async () => {
+    const { messageFilterFromFreeText } = await loadLogQuickFilters();
+    assert.equal(messageFilterFromFreeText(''), null);
+    assert.equal(messageFilterFromFreeText('   '), null);
+    assert.equal(messageFilterFromFreeText('!'), null);
+    assert.equal(messageFilterFromFreeText('!   '), null);
+    assert.equal(messageFilterFromFreeText(null), null);
+});
+
+test('Enter prefers a matched suggestion over Message search', async () => {
+    const { resolveQueryBuilderEnter } = await loadLogQuickFilters();
+    assert.deepEqual(
+        resolveQueryBuilderEnter({ mode: 'name', str: 'app', matchedItem: 'Application' }),
+        { action: 'select', value: 'Application' },
+    );
+});
+
+test('Enter on unmatched name text adds a Message filter', async () => {
+    const { resolveQueryBuilderEnter } = await loadLogQuickFilters();
+    assert.deepEqual(
+        resolveQueryBuilderEnter({ mode: 'name', str: 'some text', matchedItem: undefined }),
+        { action: 'push-filter', filter: { name: 'Message', op: 'contains', value: 'some text' } },
+    );
+    assert.deepEqual(
+        resolveQueryBuilderEnter({ mode: 'name', str: '!error', matchedItem: undefined }),
+        { action: 'push-filter', filter: { name: 'Message', op: 'not contains', value: 'error' } },
+    );
+});
+
+test('Enter in value mode still uses a custom value', async () => {
+    const { resolveQueryBuilderEnter } = await loadLogQuickFilters();
+    assert.deepEqual(
+        resolveQueryBuilderEnter({ mode: 'value', str: 'some text', matchedItem: undefined }),
+        { action: 'select', value: 'some text' },
+    );
+    assert.deepEqual(
+        resolveQueryBuilderEnter({ mode: 'name', str: '', matchedItem: undefined }),
+        { action: 'none' },
+    );
+});

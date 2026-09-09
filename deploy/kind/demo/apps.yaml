@@ -143,5 +143,126 @@ spec:
                 curl -sf -m 5 http://express-demo:3000/api/hello || true
                 curl -sf -m 5 http://express-demo:3000/api/slow || true
                 curl -sf -m 5 http://express-demo:3000/api/error || true
+                curl -sf -m 5 http://symfony-demo:80/api/hello || true
+                curl -sf -m 5 http://symfony-demo:80/api/visits || true
+                curl -sf -m 5 http://symfony-demo:80/api/slow || true
+                curl -sf -m 5 http://symfony-demo:80/api/error || true
                 sleep 3
               done
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: symfony-demo-db
+  namespace: coroot-dev
+spec:
+  selector:
+    app: symfony-demo-db
+  ports:
+    - name: pg
+      port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: symfony-demo-db
+  namespace: coroot-dev
+  labels:
+    app: symfony-demo-db
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: symfony-demo-db
+  template:
+    metadata:
+      labels:
+        app: symfony-demo-db
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: POSTGRES_USER
+              value: symfony
+            - name: POSTGRES_PASSWORD
+              value: symfony
+            - name: POSTGRES_DB
+              value: symfony
+          ports:
+            - containerPort: 5432
+              name: pg
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "symfony", "-d", "symfony"]
+            periodSeconds: 5
+            timeoutSeconds: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: symfony-demo
+  namespace: coroot-dev
+spec:
+  selector:
+    app: symfony-demo
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: symfony-demo
+  namespace: coroot-dev
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: symfony-demo
+  template:
+    metadata:
+      labels:
+        app: symfony-demo
+    spec:
+      containers:
+        - name: symfony-demo
+          image: symfony-demo:dev
+          imagePullPolicy: Never
+          env:
+            - name: APP_ENV
+              value: prod
+            - name: APP_DEBUG
+              value: "0"
+            - name: APP_SECRET
+              value: dev-only-symfony-demo
+            - name: DATABASE_URL
+              value: postgresql://symfony:symfony@symfony-demo-db:5432/symfony?serverVersion=16&charset=utf8
+            - name: SERVER_NAME
+              value: ":80"
+          ports:
+            - containerPort: 80
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 80
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 12
