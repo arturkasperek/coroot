@@ -45,3 +45,59 @@ test('keeps an active excluded value visible when it is absent from filtered ent
     });
     assert.equal(isLogFacetActive(filters, 'service.name', '!=', excluded.value), true);
 });
+
+const backendFacets = [
+    {
+        key: 'Severity',
+        values: [
+            { value: 'unknown', count: 0 },
+            { value: 'info', count: 38 },
+            { value: 'warning', count: 0 },
+            { value: 'error', count: 12 },
+        ],
+    },
+    {
+        key: 'service.name',
+        values: [
+            { value: '/k8s/coroot-dev/express-demo', count: 10 },
+            { value: '/k8s/coroot-dev/nextjs-demo', count: 2 },
+        ],
+    },
+    { key: 'host.name', values: [{ value: 'node-a', count: 10 }, { value: 'node-b', count: 2 }] },
+    { key: 'Cluster', values: [{ value: 'default', count: 12 }] },
+];
+
+const pageEntries = Array.from({ length: 100 }, (_, i) => ({
+    severity: 'error',
+    cluster: 'default',
+    attributes: {
+        'service.name': i < 90 ? '/k8s/coroot-dev/express-demo' : '/k8s/coroot-dev/nextjs-demo',
+        'host.name': i < 90 ? 'node-a' : 'node-b',
+    },
+}));
+
+test('uses ClickHouse facet counts instead of the loaded page', async () => {
+    const { buildLogQuickFilters } = await loadLogQuickFilters();
+    const groups = buildLogQuickFilters(pageEntries, { facets: backendFacets });
+    const apps = groups.find((g) => g.key === 'service.name');
+    const sev = groups.find((g) => g.key === 'Severity');
+    assert.equal(apps.values.find((v) => v.value.includes('express-demo')).count, 10);
+    assert.equal(sev.values.find((v) => v.value === 'info').count, 38);
+    assert.equal(sev.values.find((v) => v.value === 'error').count, 12);
+});
+
+test('falls back to counting entries when facets is omitted', async () => {
+    const { buildLogQuickFilters } = await loadLogQuickFilters();
+    const groups = buildLogQuickFilters(pageEntries, {});
+    const apps = groups.find((g) => g.key === 'service.name');
+    assert.equal(apps.values.find((v) => v.value.includes('express-demo')).count, 90);
+});
+
+test('does not mix backend severity with client-side application when facets is present', async () => {
+    const { buildLogQuickFilters } = await loadLogQuickFilters();
+    const groups = buildLogQuickFilters(pageEntries, {
+        facets: [{ key: 'Severity', values: [{ value: 'info', count: 38 }, { value: 'error', count: 12 }, { value: 'unknown', count: 0 }, { value: 'warning', count: 0 }] }],
+    });
+    const apps = groups.find((g) => g.key === 'service.name');
+    assert.equal(apps, undefined);
+});

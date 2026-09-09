@@ -96,6 +96,7 @@ export default {
         hiddenAttributes: { type: Array, default: () => [] },
         columns: { type: Array, default: () => [] },
         severityFacets: { type: Array, default: () => [] },
+        facets: { type: Array, default: undefined },
     },
     data() {
         return {
@@ -112,6 +113,7 @@ export default {
                 hiddenAttributes: this.hiddenAttributes,
                 columns: this.columns,
                 severityFacets: this.severityFacets,
+                facets: this.facets,
             });
         },
         groups() {

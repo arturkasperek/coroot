@@ -21,12 +21,13 @@ const (
 )
 
 type Logs struct {
-	Message string       `json:"message"`
-	Error   string       `json:"error"`
-	Chart   *model.Chart `json:"chart"`
-	Entries []LogEntry   `json:"entries"`
-	Suggest []string     `json:"suggest"`
-	MaxTs   string       `json:"max_ts"` // string because in JS: 1756993779510773600 === 1756993779510773500
+	Message string                  `json:"message"`
+	Error   string                  `json:"error"`
+	Chart   *model.Chart            `json:"chart"`
+	Entries []LogEntry              `json:"entries"`
+	Suggest []string                `json:"suggest"`
+	Facets  []clickhouse.FacetGroup `json:"facets"`
+	MaxTs   string                  `json:"max_ts"` // string because in JS: 1756993779510773600 === 1756993779510773500
 }
 
 type LogEntry struct {
@@ -102,11 +103,46 @@ func renderLogs(ctx context.Context, chs clickhouse.Clients, w *model.World, que
 	suggest := utils.NewStringSet()
 	var suggestLock sync.Mutex
 	var suggestWg sync.WaitGroup
+	facetQuery := lq
+	facetQuery.Since = time.Time{}
+	mergedFacets := map[string]map[string]uint64{}
+	var facetMu sync.Mutex
+	var facetWg sync.WaitGroup
+	waitBackground := func() {
+		suggestWg.Wait()
+		facetWg.Wait()
+	}
+	addFacet := func(ch *clickhouse.Client, name string) {
+		facetWg.Add(1)
+		go func() {
+			defer facetWg.Done()
+			values, e := ch.GetLogFacetCounts(ctx, facetQuery, name)
+			if e != nil {
+				klog.Warningln(e)
+				return
+			}
+			facetMu.Lock()
+			if mergedFacets[name] == nil {
+				mergedFacets[name] = map[string]uint64{}
+			}
+			mergeFacetValues(mergedFacets[name], values)
+			facetMu.Unlock()
+		}()
+	}
 	bySeverity := map[model.Severity]*timeseries.Aggregate{}
 	var overallEntries []*model.LogEntry
 
 	for _, ch := range chs.Clients {
-		if !clusterFilter.Matches(ch.Project().Name) {
+		match := clusterFilter.Matches(ch.Project().Name)
+		if q.Suggest == nil {
+			addFacet(ch, "Cluster")
+			if match {
+				addFacet(ch, "Severity")
+				addFacet(ch, "service.name")
+				addFacet(ch, "host.name")
+			}
+		}
+		if !match {
 			continue
 		}
 		if q.Suggest != nil {
@@ -149,11 +185,15 @@ func renderLogs(ctx context.Context, chs clickhouse.Clients, w *model.World, que
 		if err != nil {
 			klog.Errorln(err)
 			v.Error = fmt.Sprintf("Clickhouse error: %s", err)
+			waitBackground()
 			return v
 		}
 	}
-	suggestWg.Wait()
+	waitBackground()
 	v.Suggest = suggest.Items()
+	if q.Suggest == nil {
+		v.Facets = facetGroupsFromMerged(mergedFacets)
+	}
 
 	if len(bySeverity) > 0 {
 		v.Chart = model.NewChart(w.Ctx, "").Column().Sorted()

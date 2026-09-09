@@ -45,9 +45,23 @@ export function buildLogQuickFilters(entries, options = {}) {
         defs.push({ key: col.key, label: col.label || col.key, from: `attr:${col.key}` });
     }
 
+    const useBackendFacets = Array.isArray(options.facets);
+    const backend = new Map((options.facets || []).map((g) => [g.key, g]));
+
     return defs
         .filter((d) => !hidden.has(d.key))
         .map((d) => {
+            if (useBackendFacets && CORE_FACETS.some((c) => c.key === d.key)) {
+                const group = backend.get(d.key);
+                const values = (group?.values || []).map((facet) => ({
+                    value: facet.value,
+                    label: d.key === 'service.name' ? displayServiceName(facet.value) : facet.value,
+                    count: facet.count || 0,
+                    color: d.key === 'Severity' ? (options.severityFacets || []).find((s) => s.value === facet.value)?.color || '' : '',
+                }));
+                return { key: d.key, label: d.label, values };
+            }
+
             if (d.key === 'Severity' && options.severityFacets && options.severityFacets.length) {
                 return {
                     key: d.key,

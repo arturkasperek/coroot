@@ -291,3 +291,56 @@ func fetchAppLogsQuery(t *testing.T, projectID, appID string, query map[string]a
 	}
 	return view
 }
+
+type overviewLogs struct {
+	Error   string `json:"error"`
+	Message string `json:"message"`
+	Entries []struct {
+		Message    string            `json:"message"`
+		Attributes map[string]string `json:"attributes"`
+		Cluster    string            `json:"cluster"`
+	} `json:"entries"`
+	Facets []struct {
+		Key    string `json:"key"`
+		Values []struct {
+			Value string `json:"value"`
+			Count uint64 `json:"count"`
+		} `json:"values"`
+	} `json:"facets"`
+}
+
+func fetchOverviewLogs(t *testing.T, projectID string, query map[string]any) overviewLogs {
+	t.Helper()
+	q, err := json.Marshal(query)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := fmt.Sprintf("%s/api/project/%s/overview/logs?from=now-15m&query=%s",
+		corootBase(),
+		url.PathEscape(projectID),
+		url.QueryEscape(string(q)),
+	)
+	var env apiEnvelope
+	httpGetJSON(t, u, &env)
+	var ov struct {
+		Logs overviewLogs `json:"logs"`
+	}
+	if err := json.Unmarshal(env.Data, &ov); err != nil {
+		t.Fatalf("decode overview logs: %v\n%s", err, env.Data)
+	}
+	return ov.Logs
+}
+
+func facetCount(logs overviewLogs, key, value string) uint64 {
+	for _, g := range logs.Facets {
+		if g.Key != key {
+			continue
+		}
+		for _, v := range g.Values {
+			if v.Value == value {
+				return v.Count
+			}
+		}
+	}
+	return 0
+}

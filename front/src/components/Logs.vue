@@ -59,6 +59,7 @@
                     :hidden-attributes="hiddenAttributes"
                     :columns="columns"
                     :severity-facets="severityFacets"
+                    :facets="view.facets"
                     @toggle="toggleQuickFilter"
                     @clear="clearQuickFilters"
                 />
@@ -453,6 +454,9 @@ export default {
                     }
                     if (data.logs.entries) {
                         this.view.entries.push(...data.logs.entries);
+                    }
+                    if (Array.isArray(data.logs.facets)) {
+                        this.view.facets = data.logs.facets;
                     }
                 });
             };
