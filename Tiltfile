@@ -92,6 +92,11 @@ cluster_docker_build(
     'deploy/kind/demo/symfony',
     'deploy/kind/demo/symfony/Dockerfile',
 )
+cluster_docker_build(
+    'flask-demo',
+    'deploy/kind/demo/flask',
+    'deploy/kind/demo/flask/Dockerfile',
+)
 
 load('ext://helm_resource', 'helm_resource', 'helm_repo')
 
@@ -171,7 +176,13 @@ k8s_resource(
     trigger_mode=TRIGGER_MODE_MANUAL,
 )
 k8s_resource(
+    'flask-demo',
+    port_forwards=['13003:3000'],
+    resource_deps=['coroot'],
+    trigger_mode=TRIGGER_MODE_MANUAL,
+)
+k8s_resource(
     'demo-traffic',
-    resource_deps=['express-demo', 'nextjs-demo', 'symfony-demo'],
+    resource_deps=['express-demo', 'nextjs-demo', 'symfony-demo', 'flask-demo'],
     trigger_mode=TRIGGER_MODE_MANUAL,
 )

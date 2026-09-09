@@ -43,3 +43,45 @@ grep -q 'COUNT' "$CONTROLLER" || grep -q 'fetchOne' "$CONTROLLER" || fail "ApiCo
 grep -q 'Symfony' "$DEV" || fail "dev.sh banner missing Symfony demo"
 grep -q '13002' "$DEV" || fail "dev.sh banner missing Symfony port 13002"
 grep -q 'demo-apps.test.sh' "$MAKEFILE" || fail "Makefile does not run demo-apps.test.sh"
+
+FLASK_DIR="$ROOT/deploy/kind/demo/flask"
+FLASK_DOCKERFILE="$FLASK_DIR/Dockerfile"
+FLASK_SERVER="$FLASK_DIR/server.py"
+FLASK_OTEL="$FLASK_DIR/otel.py"
+FLASK_REQ="$FLASK_DIR/requirements.txt"
+
+grep -q 'name: flask-demo$' "$APPS" || fail "apps.yaml missing flask-demo"
+grep -q 'image: flask-demo:dev' "$APPS" || fail "apps.yaml missing flask-demo:dev image"
+grep -q 'OTEL_SERVICE_NAME' "$APPS" || fail "apps.yaml missing OTEL_SERVICE_NAME"
+grep -A2 'name: OTEL_SERVICE_NAME' "$APPS" | grep -q 'flask-demo' || fail "flask-demo missing OTEL_SERVICE_NAME=flask-demo"
+grep -q 'OTEL_EXPORTER_OTLP_ENDPOINT' "$APPS" || fail "apps.yaml missing OTEL_EXPORTER_OTLP_ENDPOINT"
+grep -q 'http://coroot:8080' "$APPS" || fail "flask-demo OTLP endpoint must be http://coroot:8080"
+grep -Eq 'http://flask-demo:[0-9]+/api/hello' "$APPS" || fail "demo-traffic missing http://flask-demo:<port>/api/hello"
+grep -Eq 'http://flask-demo:[0-9]+/api/slow' "$APPS" || fail "demo-traffic missing http://flask-demo:<port>/api/slow"
+grep -Eq 'http://flask-demo:[0-9]+/api/error' "$APPS" || fail "demo-traffic missing http://flask-demo:<port>/api/error"
+
+grep -q "'flask-demo'" "$TILT" || fail "Tiltfile missing flask-demo image"
+grep -q 'deploy/kind/demo/flask' "$TILT" || fail "Tiltfile missing Flask build context"
+grep -q '13003:3000' "$TILT" || fail "Tiltfile missing flask-demo port-forward 13003:3000"
+
+[[ -f "$FLASK_DOCKERFILE" ]] || fail "missing $FLASK_DOCKERFILE"
+grep -qi 'python' "$FLASK_DOCKERFILE" || fail "Dockerfile is not based on Python"
+
+[[ -f "$FLASK_REQ" ]] || fail "missing $FLASK_REQ"
+grep -qi 'flask' "$FLASK_REQ" || fail "requirements.txt missing Flask"
+grep -q 'opentelemetry-exporter-otlp-proto-http' "$FLASK_REQ" || fail "requirements.txt missing OTLP HTTP exporter"
+grep -q 'opentelemetry-instrumentation-flask' "$FLASK_REQ" || fail "requirements.txt missing Flask instrumentation"
+
+[[ -f "$FLASK_SERVER" ]] || fail "missing $FLASK_SERVER"
+grep -q '/api/hello' "$FLASK_SERVER" || fail "server.py missing /api/hello"
+grep -q '/api/slow' "$FLASK_SERVER" || fail "server.py missing /api/slow"
+grep -q '/api/error' "$FLASK_SERVER" || fail "server.py missing /api/error"
+grep -q '/health' "$FLASK_SERVER" || fail "server.py missing /health"
+
+[[ -f "$FLASK_OTEL" ]] || fail "missing $FLASK_OTEL"
+grep -q 'OTLPSpanExporter' "$FLASK_OTEL" || fail "otel.py missing OTLPSpanExporter"
+grep -q '/v1/traces' "$FLASK_OTEL" || fail "otel.py must export traces to /v1/traces"
+grep -q 'FlaskInstrumentor' "$FLASK_OTEL" || fail "otel.py missing FlaskInstrumentor"
+
+grep -q 'Flask' "$DEV" || fail "dev.sh banner missing Flask demo"
+grep -q '13003' "$DEV" || fail "dev.sh banner missing Flask port 13003"

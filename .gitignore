@@ -10,3 +10,5 @@
 /.claude/
 /build.sh
 /.env
+__pycache__/
+*.py[cod]
