@@ -297,6 +297,7 @@ type overviewLogs struct {
 	Message string `json:"message"`
 	Entries []struct {
 		Message    string            `json:"message"`
+		Severity   string            `json:"severity"`
 		Attributes map[string]string `json:"attributes"`
 		Cluster    string            `json:"cluster"`
 	} `json:"entries"`

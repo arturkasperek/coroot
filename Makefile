@@ -38,10 +38,18 @@ go-test:
 	bash scripts/dev/check-docker-remote.test.sh
 
 .PHONY: test-e2e
-test-e2e: ## E2E tests against the running make-dev cluster
+test-e2e: ## E2E tests against the running make-dev cluster. Optional: make test-e2e TestOverviewLogSourceFilters
 	@bash scripts/dev/k8s-dev-tools.sh
 	@eval "$$(bash scripts/dev/load-env.sh --export)"; \
-	  go test -tags e2e -count=1 -timeout 5m ./e2e/...
+	  go test -tags e2e -count=1 -timeout 5m ./e2e/... $(if $(E2E_RUN),-run "$(E2E_RUN)")
+
+ifeq (test-e2e,$(firstword $(MAKECMDGOALS)))
+E2E_RUN_ARG := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
+ifneq ($(E2E_RUN_ARG),)
+$(eval $(E2E_RUN_ARG):;@:)
+endif
+endif
+E2E_RUN := $(or $(RUN),$(E2E_RUN_ARG))
 
 ifeq (seed,$(firstword $(MAKECMDGOALS)))
 SEED_ARGS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
@@ -64,7 +72,7 @@ help: ## Show common targets
 	@echo "  make down       Tilt down + remove the coroot-dev namespace (keeps the cluster)"
 	@echo "  make seed 7 1000  Seed ClickHouse: 1e6 agent-style logs/day for 7 days (express/nextjs-demo)"
 	@echo "  make test       Go and UI unit tests"
-	@echo "  make test-e2e   E2E against the make-dev cluster (cluster must already be up)"
+	@echo "  make test-e2e [RUN=regex]   E2E against the make-dev cluster (optional -run filter)"
 	@echo "  make lint       Go + UI linters"
 
 .PHONY: dev

@@ -20,8 +20,6 @@ func TestOverviewLogFacetCounts(t *testing.T) {
 	projectID := defaultProjectID(t)
 	base := map[string]any{
 		"view":  "messages",
-		"agent": true,
-		"otel":  true,
 		"limit": 100,
 		"filters": []map[string]string{{
 			"name": "e2e.facets", "op": "=", "value": token,

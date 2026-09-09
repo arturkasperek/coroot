@@ -160,35 +160,34 @@ func chExec(t *testing.T, query string, body []byte) {
 	}
 }
 
-func insertFacetFixture(t *testing.T, token string) {
+type logFixtureRow struct {
+	Count          int
+	SeverityText   string
+	SeverityNumber int
+	ServiceName    string
+	Host           string
+	Body           string
+}
+
+func insertLogFixture(t *testing.T, token string, rows []logFixtureRow) {
 	t.Helper()
 	// Overview clamps `to` to Prometheus cache GetTo (~45–60s behind wall clock).
 	now := time.Now().UTC().Add(-2 * time.Minute)
 	var buf bytes.Buffer
-	type spec struct {
-		n, sevNum            int
-		sev, svc, host, body string
-	}
-	rows := []spec{
-		{30, 9, "INFO", "/k8s/coroot-dev/express-demo", "node-a", "e2e express info"},
-		{10, 17, "ERROR", "/k8s/coroot-dev/express-demo", "node-a", "e2e express error"},
-		{8, 9, "INFO", "/k8s/coroot-dev/nextjs-demo", "node-b", "e2e nextjs info"},
-		{2, 17, "ERROR", "/k8s/coroot-dev/nextjs-demo", "node-b", "e2e nextjs error"},
-	}
 	for _, s := range rows {
-		for i := 0; i < s.n; i++ {
+		for i := 0; i < s.Count; i++ {
 			line, err := json.Marshal(map[string]any{
 				"Timestamp":      now.Format("2006-01-02 15:04:05.000000000"),
 				"TraceId":        "",
 				"SpanId":         "",
 				"TraceFlags":     0,
-				"SeverityText":   s.sev,
-				"SeverityNumber": s.sevNum,
-				"ServiceName":    s.svc,
-				"Body":           s.body,
+				"SeverityText":   s.SeverityText,
+				"SeverityNumber": s.SeverityNumber,
+				"ServiceName":    s.ServiceName,
+				"Body":           s.Body,
 				"ResourceAttributes": map[string]string{
-					"service.name": s.svc,
-					"host.name":    s.host,
+					"service.name": s.ServiceName,
+					"host.name":    s.Host,
 				},
 				"LogAttributes": map[string]string{"e2e.facets": token},
 			})
@@ -204,6 +203,16 @@ func insertFacetFixture(t *testing.T, token string) {
 		SeverityText, SeverityNumber, ServiceName, Body,
 		ResourceAttributes, LogAttributes
 	) FORMAT JSONEachRow`, buf.Bytes())
+}
+
+func insertFacetFixture(t *testing.T, token string) {
+	t.Helper()
+	insertLogFixture(t, token, []logFixtureRow{
+		{30, "INFO", 9, "/k8s/coroot-dev/express-demo", "node-a", "e2e express info"},
+		{10, "ERROR", 17, "/k8s/coroot-dev/express-demo", "node-a", "e2e express error"},
+		{8, "INFO", 9, "/k8s/coroot-dev/nextjs-demo", "node-b", "e2e nextjs info"},
+		{2, "ERROR", 17, "/k8s/coroot-dev/nextjs-demo", "node-b", "e2e nextjs error"},
+	})
 }
 
 func deleteFacetFixture(t *testing.T, token string) {
