@@ -8,7 +8,7 @@
                 {{ view.error }}
             </v-alert>
 
-            <v-card outlined class="px-4 mb-2" :class="showSources ? 'py-2' : 'pt-2 pb-4'">
+            <v-card outlined class="px-4 pt-2 pb-4 mb-2">
                 <div class="subtitle-1">Query:</div>
                 <div class="d-flex flex-wrap flex-md-nowrap gap-2">
                     <QueryBuilder
@@ -22,10 +22,6 @@
                         class="flex-grow-1"
                     />
                     <LogSearchButtons :interval="refreshInterval" @search="get" @refresh="setRefreshInterval" />
-                </div>
-                <div v-if="showSources" class="d-flex gap-2 sources">
-                    <v-checkbox v-model="query.agent" label="Container logs" :disabled="disabled" dense hide-details />
-                    <v-checkbox v-model="query.otel" label="OpenTelemetry" :disabled="disabled" dense hide-details />
                 </div>
             </v-card>
 
@@ -147,10 +143,6 @@ export default {
     components: { LogQuickFilters, LogSearchButtons, InlineSelect, LogEntry, Chart, QueryBuilder },
 
     props: {
-        showSources: {
-            type: Boolean,
-            default: true,
-        },
         defaultFilters: {
             type: Array,
             default: () => [],
@@ -304,9 +296,6 @@ export default {
                 };
             });
         },
-        disabled() {
-            return this.loading || this.query.view !== 'messages';
-        },
     },
 
     methods: {
@@ -334,8 +323,6 @@ export default {
         makeQuery(q) {
             return {
                 view: q.view || 'messages',
-                agent: q.agent !== undefined ? q.agent : true,
-                otel: q.otel !== undefined ? q.otel : true,
                 filters: q.filters || [],
                 limit: q.limit || 100,
             };
@@ -380,6 +367,7 @@ export default {
             if (what === 'op') {
                 switch (name) {
                     case 'Severity':
+                    case 'Source':
                         this.qb.items = ['=', '!='];
                         break;
                     case 'Message':
@@ -534,9 +522,6 @@ export default {
 .view.active {
     color: var(--text-color);
     border-bottom: 2px solid var(--text-color);
-}
-.sources:deep(.v-input--selection-controls__input) {
-    margin-right: 0 !important;
 }
 .mono {
     font-family: monospace, monospace;

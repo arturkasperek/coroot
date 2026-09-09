@@ -43,8 +43,6 @@ type LogEntry struct {
 
 type LogsQuery struct {
 	View    string                 `json:"view"`
-	Agent   bool                   `json:"agent"`
-	Otel    bool                   `json:"otel"`
 	Filters []clickhouse.LogFilter `json:"filters"`
 	Limit   int                    `json:"limit"`
 	Suggest *string                `json:"suggest,omitempty"`
@@ -70,31 +68,21 @@ func renderLogs(ctx context.Context, chs clickhouse.Clients, w *model.World, que
 			klog.Warningln(err)
 		}
 	}
-	if !q.Agent && !q.Otel {
-		return v
-	}
 	if q.Limit <= 0 {
 		q.Limit = defaultLimit
 	}
-	lq := clickhouse.LogQuery{Ctx: w.Ctx, Limit: q.Limit}
+	lq := clickhouse.LogQuery{Ctx: w.Ctx, Limit: q.Limit, Filters: q.Filters}
 	var clusterFilter *clickhouse.LogFilter
 
-	for _, f := range q.Filters {
+	var rest []clickhouse.LogFilter
+	for _, f := range lq.Filters {
 		if f.Name == "Cluster" {
 			clusterFilter = &f
 		} else {
-			lq.Filters = append(lq.Filters, f)
+			rest = append(rest, f)
 		}
 	}
-
-	if !q.Agent || !q.Otel {
-		if q.Agent {
-			lq.Source = model.LogSourceAgent
-		}
-		if q.Otel {
-			lq.Source = model.LogSourceOtel
-		}
-	}
+	lq.Filters = rest
 
 	var histogram []model.LogHistogramBucket
 	var entries []*model.LogEntry
@@ -138,6 +126,7 @@ func renderLogs(ctx context.Context, chs clickhouse.Clients, w *model.World, que
 			addFacet(ch, "Cluster")
 			if match {
 				addFacet(ch, "Severity")
+				addFacet(ch, "Source")
 				addFacet(ch, "service.name")
 				addFacet(ch, "host.name")
 			}

@@ -127,7 +127,7 @@ func (c *Client) GetLogFilters(ctx context.Context, query LogQuery, name string)
 	settings := " SETTINGS max_block_size=2048, max_threads=4"
 	switch name {
 	case "":
-		res = append(res, "Severity", "Message", "Cluster")
+		res = append(res, "Severity", "Source", "Message", "Cluster")
 		q = "SELECT arrayJoin(arrayConcat(mapKeys(LogAttributes), mapKeys(ResourceAttributes))) AS k"
 		orderBy = `GROUP BY 1 HAVING NOT match(k, '\\.\\d+(\\.|$)') ORDER BY count(1) DESC, 1`
 	case "Severity":
@@ -136,6 +136,8 @@ func (c *Client) GetLogFilters(ctx context.Context, query LogQuery, name string)
 		return res, nil
 	case "Cluster":
 		return []string{c.project.Name}, nil
+	case "Source":
+		return []string{string(model.LogSourceAgent), string(model.LogSourceOtel)}, nil
 	default:
 		q = "SELECT DISTINCT arrayJoin([LogAttributes[@attr], ResourceAttributes[@attr]])"
 		args = append(args, clickhouse.Named("attr", name))
@@ -335,6 +337,24 @@ func (q LogQuery) filters(attr *string) ([]string, []any) {
 				v := fmt.Sprintf("service_name_%d_%d", i, j)
 				*f = append(*f, fmt.Sprintf(expr, v))
 				args = append(args, clickhouse.Named(v, a.Value))
+			}
+		case "Source":
+			for _, a := range attrs {
+				var expr string
+				switch a.Value {
+				case string(model.LogSourceAgent):
+					expr = "startsWith(ServiceName, '/')"
+				case string(model.LogSourceOtel):
+					expr = "NOT startsWith(ServiceName, '/')"
+				default:
+					continue
+				}
+				switch a.Op {
+				case "=":
+					ors = append(ors, expr)
+				case "!=":
+					ands = append(ands, "NOT ("+expr+")")
+				}
 			}
 		default:
 			for j, a := range attrs {

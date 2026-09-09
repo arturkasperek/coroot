@@ -31,6 +31,36 @@ func assertArgsContain(t *testing.T, args []any, substr string) {
 	t.Errorf("args do not contain %q", substr)
 }
 
+func TestLogQueryFiltersSourceAgentAndOtel(t *testing.T) {
+	q := LogQuery{
+		Ctx: timeseries.NewContext(1_700_000_000, 1_700_003_600, 15),
+		Filters: []LogFilter{
+			{Name: "Source", Op: "=", Value: "agent"},
+			{Name: "Severity", Op: "=", Value: "error"},
+		},
+	}
+	where, _ := q.filters(nil)
+	joined := strings.Join(where, " AND ")
+	assert.Contains(t, joined, "startsWith(ServiceName, '/')")
+	assert.NotContains(t, joined, "NOT startsWith(ServiceName, '/')")
+	assert.Contains(t, joined, "SeverityNumber")
+
+	q.Filters = []LogFilter{{Name: "Source", Op: "=", Value: "otel"}}
+	where, _ = q.filters(nil)
+	joined = strings.Join(where, " AND ")
+	assert.Contains(t, joined, "NOT startsWith(ServiceName, '/')")
+
+	q.Filters = []LogFilter{{Name: "Source", Op: "!=", Value: "agent"}}
+	where, _ = q.filters(nil)
+	assert.Contains(t, strings.Join(where, " AND "), "NOT (startsWith(ServiceName, '/'))")
+
+	where, _ = q.filters(strPtr("Source"))
+	joined = strings.Join(where, " AND ")
+	assert.NotContains(t, joined, "startsWith(ServiceName")
+}
+
+func strPtr(s string) *string { return &s }
+
 func TestLogQueryFiltersExcludeNamedAttr(t *testing.T) {
 	q := testLogQuery()
 	joined := func(attr string) (string, []any) {
@@ -91,4 +121,11 @@ func TestFacetCountSQL(t *testing.T) {
 
 	_, _, ok = facetCountSQL("k8s.pod.name")
 	assert.False(t, ok)
+
+	q, attr, ok = facetCountSQL("Source")
+	require.True(t, ok)
+	require.NotNil(t, attr)
+	assert.Equal(t, "Source", *attr)
+	assert.Contains(t, q, "startsWith(ServiceName, '/')")
+	assert.Contains(t, q, "GROUP BY 1")
 }

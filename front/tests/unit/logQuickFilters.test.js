@@ -156,3 +156,101 @@ test('does not mix backend severity with client-side application when facets is 
     const apps = groups.find((g) => g.key === 'service.name');
     assert.equal(apps, undefined);
 });
+
+test('displays Source facet values as Container logs and OpenTelemetry', async () => {
+    const { displaySourceName } = await loadLogQuickFilters();
+    assert.equal(displaySourceName('agent'), 'Container logs');
+    assert.equal(displaySourceName('otel'), 'OpenTelemetry');
+});
+
+test('formats Source query chips with display labels', async () => {
+    const { formatLogFilter } = await loadLogQuickFilters();
+    assert.equal(formatLogFilter({ name: 'Source', op: '=', value: 'agent' }), 'Source = Container logs');
+    assert.equal(formatLogFilter({ name: 'Source', op: '!=', value: 'otel' }), 'Source != OpenTelemetry');
+    assert.equal(formatLogFilter({ name: 'Severity', op: '=', value: 'error' }), 'Severity = error');
+    assert.equal(formatLogFilter({ name: 'Message', op: 'contains', value: 'boom' }), 'Message 🔍 boom');
+});
+
+test('puts Source before Severity in filter groups', async () => {
+    const { buildLogQuickFilters } = await loadLogQuickFilters();
+    const groups = buildLogQuickFilters(pageEntries, {
+        facets: [
+            ...backendFacets,
+            {
+                key: 'Source',
+                values: [
+                    { value: 'agent', count: 90 },
+                    { value: 'otel', count: 10 },
+                ],
+            },
+        ],
+    });
+    assert.deepEqual(
+        groups.map((g) => g.key),
+        ['Source', 'Severity', 'Cluster', 'service.name', 'host.name'],
+    );
+});
+
+test('keeps Source first after catalog merge', async () => {
+    const { buildStableLogQuickFilters } = await loadLogQuickFilters();
+    const groups = buildStableLogQuickFilters(
+        [
+            { key: 'Severity', label: 'Severity', values: [{ value: 'info', label: 'info', count: 1, color: '' }] },
+            { key: 'Source', label: 'Source', values: [{ value: 'agent', label: 'Container logs', count: 1, color: '' }] },
+        ],
+        [],
+        {
+            Severity: { key: 'Severity', label: 'Severity', values: [{ value: 'info', label: 'info', color: '' }] },
+        },
+    );
+    assert.equal(groups[0].key, 'Source');
+    assert.equal(groups[1].key, 'Severity');
+});
+
+test('uses backend Source facet counts with display labels', async () => {
+    const { buildLogQuickFilters } = await loadLogQuickFilters();
+    const groups = buildLogQuickFilters(pageEntries, {
+        facets: [
+            ...backendFacets,
+            {
+                key: 'Source',
+                values: [
+                    { value: 'agent', count: 90 },
+                    { value: 'otel', count: 10 },
+                ],
+            },
+        ],
+    });
+    const source = groups.find((g) => g.key === 'Source');
+    assert.deepEqual(
+        source.values.map((v) => [v.value, v.label, v.count]),
+        [
+            ['agent', 'Container logs', 90],
+            ['otel', 'OpenTelemetry', 10],
+        ],
+    );
+});
+
+test('falls back to deriving Source from service.name', async () => {
+    const { buildLogQuickFilters } = await loadLogQuickFilters();
+    const groups = buildLogQuickFilters(
+        [
+            { attributes: { 'service.name': '/k8s/coroot-dev/express-demo' } },
+            { attributes: { 'service.name': '/k8s/coroot-dev/express-demo' } },
+            { attributes: { 'service.name': 'checkout' } },
+        ],
+        {},
+    );
+    const source = groups.find((g) => g.key === 'Source');
+    assert.equal(source.values.find((v) => v.value === 'agent').count, 2);
+    assert.equal(source.values.find((v) => v.value === 'otel').count, 1);
+});
+
+test('keeps an active Source filter visible', async () => {
+    const { buildStableLogQuickFilters, isLogFacetActive } = await loadLogQuickFilters();
+    const groups = buildStableLogQuickFilters([], [{ name: 'Source', op: '=', value: 'agent' }]);
+    const source = groups.find((g) => g.key === 'Source');
+    assert.equal(source.label, 'Source');
+    assert.deepEqual(source.values[0], { value: 'agent', label: 'Container logs', color: '', count: 0 });
+    assert.equal(isLogFacetActive([{ name: 'Source', op: '=', value: 'agent' }], 'Source', '=', 'agent'), true);
+});

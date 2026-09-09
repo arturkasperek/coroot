@@ -13,9 +13,8 @@
             <template v-if="!tab">
                 <div class="pt-4">
                     <Logs
-                        :show-sources="false"
                         :default-filters="[{ name: 'service.name', op: '=', value: 'KubernetesEvents' }]"
-                        :hidden-attributes="['service.name']"
+                        :hidden-attributes="['service.name', 'Source']"
                         :columns="[
                             { key: 'date', label: 'Date' },
                             { key: 'cluster', label: 'Cluster', maxWidth: 20 },

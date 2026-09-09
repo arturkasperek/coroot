@@ -1,4 +1,5 @@
 const CORE_FACETS = [
+    { key: 'Source', label: 'Source', from: 'source' },
     { key: 'Severity', label: 'Severity', from: 'severity' },
     { key: 'Cluster', label: 'Cluster', from: 'cluster' },
     { key: 'service.name', label: 'Application', from: 'attr:service.name' },
@@ -42,9 +43,47 @@ export function displayServiceName(value) {
     return s;
 }
 
+export function displaySourceName(value) {
+    switch (String(value)) {
+        case 'agent':
+            return 'Container logs';
+        case 'otel':
+            return 'OpenTelemetry';
+        default:
+            return String(value || '');
+    }
+}
+
+function facetLabel(key, value) {
+    if (key === 'service.name') {
+        return displayServiceName(value);
+    }
+    if (key === 'Source') {
+        return displaySourceName(value);
+    }
+    return value;
+}
+
+export function formatLogFilter(filter = {}) {
+    let op = filter.op || '';
+    if (filter.op === 'contains') {
+        op = '🔍';
+    } else if (filter.op === 'not contains') {
+        op = '!🔍';
+    }
+    return `${filter.name || ''} ${op} ${facetLabel(filter.name, filter.value)}`.trim();
+}
+
 export function facetValue(entry, from) {
     if (!from) {
         return '';
+    }
+    if (from === 'source') {
+        const svc = (entry.attributes && entry.attributes['service.name']) || '';
+        if (!svc) {
+            return '';
+        }
+        return String(svc).startsWith('/') ? 'agent' : 'otel';
     }
     if (from.startsWith('attr:')) {
         const name = from.slice(5);
@@ -78,7 +117,7 @@ export function buildLogQuickFilters(entries, options = {}) {
                 const group = backend.get(d.key);
                 const values = (group?.values || []).map((facet) => ({
                     value: facet.value,
-                    label: d.key === 'service.name' ? displayServiceName(facet.value) : facet.value,
+                    label: facetLabel(d.key, facet.value),
                     count: facet.count || 0,
                     color: d.key === 'Severity' ? (options.severityFacets || []).find((s) => s.value === facet.value)?.color || '' : '',
                 }));
@@ -115,7 +154,7 @@ export function buildLogQuickFilters(entries, options = {}) {
                 .map(([value, count]) => ({
                     value,
                     count,
-                    label: d.key === 'service.name' ? displayServiceName(value) : value,
+                    label: facetLabel(d.key, value),
                     color: colors.get(value) || '',
                 }));
             return { key: d.key, label: d.label, values };
@@ -128,6 +167,7 @@ export function buildStableLogQuickFilters(rawGroups, filters, catalog = {}, opt
     const hidden = new Set(options.hiddenAttributes || []);
     const labels = {
         Severity: 'Severity',
+        Source: 'Source',
         Cluster: 'Cluster',
         'service.name': 'Application',
         'host.name': 'Host',
@@ -152,36 +192,41 @@ export function buildStableLogQuickFilters(rawGroups, filters, catalog = {}, opt
         if (!values.some((known) => known.value === value)) {
             values.push({
                 value,
-                label: filter.name === 'service.name' ? displayServiceName(value) : value,
+                label: facetLabel(filter.name, value),
                 color: '',
             });
         }
     }
 
-    const keys = [...Object.keys(catalog), ...(rawGroups || []).map((group) => group.key), ...activeGroups.keys()].filter(
-        (key, index, all) => all.indexOf(key) === index,
-    );
+    const keys = [
+        ...CORE_FACETS.map((d) => d.key),
+        ...Object.keys(catalog),
+        ...(rawGroups || []).map((group) => group.key),
+        ...activeGroups.keys(),
+    ].filter((key, index, all) => all.indexOf(key) === index && !hidden.has(key));
 
-    return keys.map((key) => {
-        const currentGroup = currentGroups.get(key);
-        const catalogGroup = catalog[key] || currentGroup || activeGroups.get(key);
-        const currentValues = new Map((currentGroup?.values || []).map((value) => [value.value, value]));
-        const values = [...catalogGroup.values];
-        for (const value of [...(currentGroup?.values || []), ...(activeGroups.get(key)?.values || [])]) {
-            if (!values.some((known) => known.value === value.value)) {
-                values.push(value);
+    return keys
+        .filter((key) => currentGroups.has(key) || catalog[key] || activeGroups.has(key))
+        .map((key) => {
+            const currentGroup = currentGroups.get(key);
+            const catalogGroup = catalog[key] || currentGroup || activeGroups.get(key);
+            const currentValues = new Map((currentGroup?.values || []).map((value) => [value.value, value]));
+            const values = [...catalogGroup.values];
+            for (const value of [...(currentGroup?.values || []), ...(activeGroups.get(key)?.values || [])]) {
+                if (!values.some((known) => known.value === value.value)) {
+                    values.push(value);
+                }
             }
-        }
-        return {
-            key,
-            label: catalogGroup.label,
-            values: values.map((value) => ({
-                ...value,
-                ...(currentValues.get(value.value) || {}),
-                count: currentValues.get(value.value)?.count || 0,
-            })),
-        };
-    });
+            return {
+                key,
+                label: catalogGroup.label,
+                values: values.map((value) => ({
+                    ...value,
+                    ...(currentValues.get(value.value) || {}),
+                    count: currentValues.get(value.value)?.count || 0,
+                })),
+            };
+        });
 }
 
 export function isLogFacetActive(filters, name, op, value) {

@@ -32,6 +32,8 @@ func facetCountSQL(name string) (string, *string, bool) {
 		return "SELECT if(LogAttributes[@attr] != '', LogAttributes[@attr], ResourceAttributes[@attr]) AS v, count(1) FROM @@table_otel_logs@@ WHERE %s GROUP BY v HAVING v != '' ORDER BY count(1) DESC, v LIMIT 1000", &attr, true
 	case "Cluster":
 		return "SELECT count(1) FROM @@table_otel_logs@@ WHERE %s", &attr, true
+	case "Source":
+		return "SELECT if(startsWith(ServiceName, '/'), 'agent', 'otel'), count(1) FROM @@table_otel_logs@@ WHERE %s GROUP BY 1", &attr, true
 	default:
 		return "", nil, false
 	}
@@ -74,6 +76,21 @@ func (c *Client) GetLogFacetCounts(ctx context.Context, query LogQuery, name str
 		}
 		out := make([]FacetValue, 0, 4)
 		for _, label := range []string{"unknown", "info", "warning", "error"} {
+			out = append(out, FacetValue{Value: label, Count: by[label]})
+		}
+		return out, nil
+	case "Source":
+		by := map[string]uint64{}
+		var v string
+		var n uint64
+		for rows.Next() {
+			if err = rows.Scan(&v, &n); err != nil {
+				return nil, err
+			}
+			by[v] = n
+		}
+		out := make([]FacetValue, 0, 2)
+		for _, label := range []string{string(model.LogSourceAgent), string(model.LogSourceOtel)} {
 			out = append(out, FacetValue{Value: label, Count: by[label]})
 		}
 		return out, nil

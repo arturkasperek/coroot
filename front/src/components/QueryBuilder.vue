@@ -31,7 +31,7 @@
                     <v-list-item v-if="error" dense class="item" @click="get">Failed to load options</v-list-item>
                     <template v-else-if="_items.length">
                         <v-list-item v-for="i in _items" dense class="item" @click="select(i)">
-                            {{ i }}
+                            {{ formatItem(i) }}
                         </v-list-item>
                     </template>
                     <v-list-item v-else-if="mode === 'value' && str" dense class="item" @click="select(str)">
@@ -45,6 +45,8 @@
 </template>
 
 <script>
+import { formatLogFilter, displaySourceName } from '@/utils/logQuickFilters';
+
 export default {
     props: {
         value: Array,
@@ -71,9 +73,14 @@ export default {
 
     computed: {
         _items() {
+            const q = this.str.toLocaleLowerCase();
             return this.items
                 .filter((i) => !this.hiddenAttributes.includes(i))
-                .filter((i) => i.toLocaleLowerCase().includes(this.str.toLocaleLowerCase()));
+                .filter((i) => {
+                    const raw = String(i).toLocaleLowerCase();
+                    const label = this.formatItem(i).toLocaleLowerCase();
+                    return raw.includes(q) || label.includes(q);
+                });
         },
     },
 
@@ -192,13 +199,13 @@ export default {
             this.mode = 'name';
         },
         formatFilter(filter) {
-            let op = filter.op;
-            if (filter.op === 'contains') {
-                op = '🔍';
-            } else if (filter.op === 'not contains') {
-                op = '!🔍';
+            return formatLogFilter(filter);
+        },
+        formatItem(item) {
+            if (this.mode === 'value' && this.filter.name === 'Source') {
+                return displaySourceName(item);
             }
-            return filter.name + ' ' + op + ' ' + filter.value;
+            return item;
         },
     },
 };
