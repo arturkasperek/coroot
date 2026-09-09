@@ -37,7 +37,12 @@
                     <v-list-item v-else-if="mode === 'value' && str" dense class="item" @click="select(str)">
                         Use custom value: {{ str }}
                     </v-list-item>
-                    <v-list-item v-else-if="freeTextMessageFilter" dense class="item" @click="applyEnter({ action: 'push-filter', filter: freeTextMessageFilter })">
+                    <v-list-item
+                        v-else-if="freeTextMessageFilter"
+                        dense
+                        class="item"
+                        @click="applyEnter({ action: 'push-filter', filter: freeTextMessageFilter })"
+                    >
                         Search messages: {{ freeTextMessageFilter.value }}
                     </v-list-item>
                     <v-list-item v-else dense class="item"> No options found </v-list-item>
@@ -67,6 +72,10 @@ export default {
             type: Array,
             default: () => [],
         },
+        allowFreeText: {
+            type: Boolean,
+            default: true,
+        },
     },
 
     data() {
@@ -92,7 +101,7 @@ export default {
                 });
         },
         freeTextMessageFilter() {
-            if (this.mode !== 'name' || this._items.length) {
+            if (!this.allowFreeText || this.mode !== 'name' || this._items.length) {
                 return null;
             }
             return messageFilterFromFreeText(this.str);
@@ -207,6 +216,7 @@ export default {
                             mode: this.mode,
                             str: this.str,
                             matchedItem: this._items[this.item],
+                            allowFreeText: this.allowFreeText,
                         }),
                     );
                     break;

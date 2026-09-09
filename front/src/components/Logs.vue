@@ -8,22 +8,19 @@
                 {{ view.error }}
             </v-alert>
 
-            <v-card outlined class="px-4 pt-2 pb-4 mb-2">
-                <div class="subtitle-1">Query:</div>
-                <div class="d-flex flex-wrap flex-md-nowrap gap-2">
-                    <QueryBuilder
-                        v-model="query.filters"
-                        :loading="qb.loading"
-                        :items="qb.items"
-                        :error="qb.error"
-                        :disabled="query.view !== 'messages'"
-                        :hidden-attributes="hiddenAttributes"
-                        @get="qbGet"
-                        class="flex-grow-1"
-                    />
+            <QueryPanel
+                v-model="query.filters"
+                :options-loading="qb.loading"
+                :items="qb.items"
+                :error="qb.error"
+                :disabled="query.view !== 'messages'"
+                :hidden-attributes="hiddenAttributes"
+                @get="qbGet"
+            >
+                <template #actions>
                     <LogSearchButtons :interval="refreshInterval" @search="get" @refresh="setRefreshInterval" />
-                </div>
-            </v-card>
+                </template>
+            </QueryPanel>
 
             <Chart
                 v-if="view.chart"
@@ -125,7 +122,7 @@
 
 <script>
 import { palette } from '@/utils/colors';
-import QueryBuilder from '@/components/QueryBuilder.vue';
+import QueryPanel from '@/components/QueryPanel.vue';
 import Chart from '@/components/Chart.vue';
 import LogEntry from '@/components/LogEntry.vue';
 import InlineSelect from '@/components/InlineSelect.vue';
@@ -140,7 +137,7 @@ const SEVERITY_FACETS = [
 ];
 
 export default {
-    components: { LogQuickFilters, LogSearchButtons, InlineSelect, LogEntry, Chart, QueryBuilder },
+    components: { LogQuickFilters, LogSearchButtons, InlineSelect, LogEntry, Chart, QueryPanel },
 
     props: {
         defaultFilters: {

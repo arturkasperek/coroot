@@ -112,14 +112,14 @@ export function messageFilterFromFreeText(str) {
     return { name: 'Message', op: 'contains', value: raw };
 }
 
-export function resolveQueryBuilderEnter({ mode, str, matchedItem } = {}) {
+export function resolveQueryBuilderEnter({ mode, str, matchedItem, allowFreeText = true } = {}) {
     if (matchedItem) {
         return { action: 'select', value: matchedItem };
     }
     if (mode === 'value' && String(str || '').length) {
         return { action: 'select', value: str };
     }
-    if (mode === 'name') {
+    if (mode === 'name' && allowFreeText) {
         const filter = messageFilterFromFreeText(str);
         if (filter) {
             return { action: 'push-filter', filter };

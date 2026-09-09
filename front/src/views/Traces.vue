@@ -1,20 +1,16 @@
 <template>
     <Views :error="error" class="traces">
         <v-alert v-if="view.message" color="info" outlined text class="message">
-            <template v-if="view.message === 'not_found'">
-                This page only shows traces from OpenTelemetry integrations, not from eBPF.
-                <div class="mt-2">
-                    <OpenTelemetryIntegration color="primary">Integrate OpenTelemetry</OpenTelemetryIntegration>
-                </div>
-            </template>
+            <template v-if="view.message === 'not_found'"> This page only shows traces from OpenTelemetry integrations, not from eBPF. </template>
             <template v-if="view.message === 'no_clickhouse'"> Clickhouse integration is not configured. </template>
         </v-alert>
 
         <template v-else>
-            <div class="d-flex">
-                <v-spacer />
-                <OpenTelemetryIntegration small color="primary">Integrate OpenTelemetry</OpenTelemetryIntegration>
-            </div>
+            <QueryPanel v-model="queryBuilderFilters" :items="qb.items" :allow-free-text="false" :loading="loading" @get="qbGet" class="query mb-4">
+                <template #actions>
+                    <v-btn @click="get" color="primary" height="40" depressed>Show traces</v-btn>
+                </template>
+            </QueryPanel>
 
             <v-alert v-if="view.error" color="error" icon="mdi-alert-octagon-outline" outlined text class="mt-2">
                 {{ view.error }}
@@ -29,109 +25,25 @@
                 </v-tab>
             </v-tabs>
 
-            <v-card outlined class="query px-4 py-2 my-4">
-                <div class="mt-2 d-flex align-center" style="gap: 4px">
-                    <div>Filters:</div>
-                    <div class="d-flex flex-wrap align-center filters">
-                        <div v-for="(f, i) in filters" class="d-flex align-center filter">
-                            <template v-if="f.edit">
-                                <v-select
-                                    v-model="f.field"
-                                    :items="Object.keys(filterable.fields).map((f) => ({ value: f, text: filterable.fields[f] }))"
-                                    outlined
-                                    dense
-                                    hide-details
-                                    :menu-props="{ 'offset-y': true }"
-                                    append-icon="mdi-chevron-down"
-                                    class="field"
-                                />
-                                <v-select
-                                    v-model="f.op"
-                                    :items="filterable.ops"
-                                    outlined
-                                    dense
-                                    hide-details
-                                    :menu-props="{ 'offset-y': true }"
-                                    append-icon="mdi-chevron-down"
-                                    class="op"
-                                />
-                                <v-text-field outlined dense v-model="f.value" hide-details class="value" />
-                                <v-btn @click="applyFilters" :disabled="!f.field" small icon>
-                                    <v-icon small color="success">mdi-check</v-icon>
-                                </v-btn>
-                                <v-btn @click="delFilter(i)" small icon>
-                                    <v-icon small color="error">mdi-close</v-icon>
-                                </v-btn>
-                            </template>
-                            <template v-else>
-                                <v-chip @click="editFilter(i)" @click:close="delFilter(i)" label close color="primary">
-                                    <div class="where-arg">{{ filterable.fields[f.field] }} {{ f.op }} {{ f.value }}</div>
-                                </v-chip>
-                            </template>
-                        </div>
-                        <v-btn v-if="!filters.some((f) => f.edit)" @click="newFilter" small icon>
-                            <v-icon small>mdi-plus</v-icon>
+            <div v-if="query.view === 'attributes' || query.view === 'latency'" class="d-flex align-center mt-2">
+                <div><div class="marker baseline trace-baseline-marker"></div></div>
+                Baseline: other events within the time window
+            </div>
+            <v-form v-if="query.view === 'latency'" :disabled="loading">
+                <div class="d-flex mt-2 mb-1 align-baseline" style="gap: 8px; min-width: 0">
+                    <div>View:</div>
+                    <v-btn-toggle :value="query.diff || false" @change="setDiffMode" mandatory>
+                        <v-btn :value="false" height="30">
+                            <v-icon small class="mr-1">mdi-chart-timeline</v-icon>
+                            FlameGraph
                         </v-btn>
-                    </div>
+                        <v-btn :value="true" height="30" :disabled="!selectionDefined">
+                            <v-icon small class="mr-1 mdi-flip-h">mdi-select-compare</v-icon>
+                            Diff
+                        </v-btn>
+                    </v-btn-toggle>
                 </div>
-                <div class="d-flex align-center">
-                    <div><div class="marker selection"></div></div>
-                    <div>
-                        Selection:
-                        <template v-if="selectionDefined">
-                            <template v-if="query.ts_from && query.ts_to">
-                                time <var> {{ format(query.ts_from, 'ts') }}</var> — <var> {{ format(query.ts_to, 'ts') }}</var>
-                            </template>
-                            <template v-if="query.dur_from !== 'inf' || query.dur_to === 'err'">
-                                where (
-                                <template v-if="query.dur_from !== 'inf'">
-                                    trace duration
-                                    <var> {{ format(query.dur_from, 'dur') }}</var> — <var> {{ format(query.dur_to, 'dur') }}</var>
-                                    <template v-if="query.dur_to === 'err'"> or </template>
-                                </template>
-                                <template v-if="query.dur_to === 'err'"> trace status is <var> Error</var></template>
-                                )
-                            </template>
-                            <v-tooltip bottom>
-                                <template #activator="{ on }">
-                                    <v-btn :to="clearSelection()" v-on="on" x-small icon exact><v-icon small>mdi-close</v-icon></v-btn>
-                                </template>
-                                <v-card class="px-2 py-1"> clear selection </v-card>
-                            </v-tooltip>
-                        </template>
-                        <span v-else class="grey--text">
-                            <template v-if="query.view === 'attributes'">select a chart area to explore trace attributes</template>
-                            <template v-else>select a chart area to see traces for a specific time range, duration, or status</template>
-                        </span>
-                    </div>
-                </div>
-                <div v-if="query.view === 'attributes' || query.view === 'latency'" class="d-flex align-center">
-                    <div><div class="marker baseline"></div></div>
-                    Baseline: other events within the time window
-                </div>
-                <v-form :disabled="loading">
-                    <v-checkbox
-                        v-model="form.excludeAux"
-                        label="Exclude auxiliary requests (from monitoring, control plane, etc)"
-                        dense
-                        hide-details
-                    />
-                    <div v-if="query.view === 'latency'" class="d-flex mt-2 mb-1 align-baseline" style="gap: 8px; min-width: 0">
-                        <div>View:</div>
-                        <v-btn-toggle :value="query.diff || false" @change="setDiffMode" mandatory>
-                            <v-btn :value="false" height="30">
-                                <v-icon small class="mr-1">mdi-chart-timeline</v-icon>
-                                FlameGraph
-                            </v-btn>
-                            <v-btn :value="true" height="30" :disabled="!selectionDefined">
-                                <v-icon small class="mr-1 mdi-flip-h">mdi-select-compare</v-icon>
-                                Diff
-                            </v-btn>
-                        </v-btn-toggle>
-                    </div>
-                </v-form>
-                <v-progress-linear v-if="loading" indeterminate height="4" style="position: absolute; bottom: 0; left: 0" />
-            </v-card>
+            </v-form>
 
             <div v-if="query.trace_id" class="mt-5" style="min-height: 50vh">
                 <div class="d-flex">
@@ -395,17 +307,19 @@ import { palette } from '../utils/colors';
 import Heatmap from '../components/Heatmap.vue';
 import TracingTrace from '../components/TracingTrace.vue';
 import FlameGraph from '../components/FlameGraph.vue';
-import OpenTelemetryIntegration from '@/views/OpenTelemetryIntegration.vue';
+import QueryPanel from '@/components/QueryPanel.vue';
+import { TRACE_QUERY_FIELDS, fromQueryBuilderFilters, toQueryBuilderFilters } from '@/utils/traceQuery';
 
 export default {
-    components: { Views, OpenTelemetryIntegration, FlameGraph, TracingTrace, Heatmap },
+    components: { Views, FlameGraph, TracingTrace, Heatmap, QueryPanel },
 
     data() {
         return {
             view: {},
-            filters: [],
+            qb: {
+                items: [],
+            },
             form: {
-                excludeAux: true,
                 diff: false,
             },
             loading: false,
@@ -426,8 +340,6 @@ export default {
         },
         '$route.query.query': {
             handler() {
-                this.filters = (this.query.filters || []).map((f) => ({ ...f, edit: false }));
-                this.form.excludeAux = !this.query.include_aux;
                 this.form.diff = (this.selectionDefined ? this.query.diff : false) || false;
                 this.get();
             },
@@ -487,15 +399,22 @@ export default {
             }
             return q;
         },
-        filterable() {
-            return {
-                fields: {
-                    ServiceName: 'Root Service Name',
-                    SpanName: 'Root Span Name',
-                    TraceId: 'Trace ID',
-                },
-                ops: ['=', '!=', '~', '!~'],
-            };
+        queryBuilderFilters: {
+            get() {
+                return toQueryBuilderFilters(this.query.filters || []);
+            },
+            set(filters) {
+                const { from, to } = this.$route.query;
+                const q = { ...this.query };
+                q.filters = fromQueryBuilderFilters(filters);
+                if (!q.filters.length) {
+                    q.filters = undefined;
+                }
+                if (q.view === 'overview' && q.filters && q.filters.some((filter) => filter.field === 'TraceId')) {
+                    q.view = 'traces';
+                }
+                this.push(this.setQuery(q, from, to));
+            },
         },
         selection() {
             const q = this.query;
@@ -521,7 +440,7 @@ export default {
 
     methods: {
         get() {
-            const query = this.$route.query.query || '';
+            const query = JSON.stringify({ ...this.query, include_aux: true });
             this.loading = true;
             this.error = '';
             this.$api.getOverview('traces', query, (data, error) => {
@@ -578,40 +497,29 @@ export default {
             }
             return this.setQuery(q, from, to);
         },
-        newFilter() {
-            this.filters.push({ field: '', op: '=', value: '', edit: true });
-        },
-        delFilter(i) {
-            this.filters.splice(i, 1);
-            this.applyFilters();
-        },
-        editFilter(i) {
-            this.filters[i].edit = true;
-        },
-        applyFilters() {
-            this.filters.forEach((f) => {
-                f.edit = !f.field;
-            });
-            const { from, to } = this.$route.query;
-            const q = { ...this.query };
-            q.filters = this.filters.filter((f) => !f.edit).map(({ field, op, value }) => ({ field, op, value }));
-            if (!q.filters.length) {
-                q.filters = undefined;
+        qbGet(what, name) {
+            if (what === 'name') {
+                this.qb.items = TRACE_QUERY_FIELDS;
+                return;
             }
-            if (q.view === 'overview' && q.filters && q.filters.some((f) => f.field === 'TraceId')) {
-                q.view = 'traces';
+            if (what === 'op') {
+                this.qb.items = ['=', '!=', '~', '!~'];
+                return;
             }
-            this.push(this.setQuery(q, from, to));
-        },
-        clearSelection() {
-            const { from, to } = this.$route.query;
-            const q = { ...this.query };
-            q.ts_from = undefined;
-            q.ts_to = undefined;
-            q.dur_from = undefined;
-            q.dur_to = undefined;
-            q.diff = undefined;
-            return this.setQuery(q, from, to);
+            const stats = (this.view.summary && this.view.summary.stats) || [];
+            switch (name) {
+                case 'Root Service Name':
+                    this.qb.items = [...new Set(stats.map((item) => item.service_name))];
+                    break;
+                case 'Root Span Name':
+                    this.qb.items = [...new Set(stats.map((item) => item.span_name))];
+                    break;
+                case 'Trace ID':
+                    this.qb.items = [...new Set((this.view.traces || []).map((item) => item.trace_id))];
+                    break;
+                default:
+                    this.qb.items = [];
+            }
         },
         setSelection(s) {
             const { from, to } = this.view.heatmap.ctx;
@@ -635,7 +543,6 @@ export default {
         setForm(f) {
             const { from, to } = this.$route.query;
             const q = { ...this.query };
-            q.include_aux = !f.excludeAux;
             q.diff = f.diff;
             this.push(this.setQuery(q, from, to));
         },
@@ -713,81 +620,11 @@ export default {
     border-bottom: 2px solid var(--text-color);
 }
 
-.query {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-}
-.query var {
-    font-style: normal;
-    font-weight: 500;
-}
-.query .marker {
+.trace-baseline-marker {
     height: 16px;
     width: 16px;
     margin-right: 4px;
-}
-.query .marker.baseline {
     background-color: var(--baseline-color);
-}
-.query .marker.selection {
-    background-color: var(--selection-color);
-}
-.query .where-arg {
-    max-width: 100%;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-.query:deep(.v-chip) {
-    height: 26px;
-}
-.query:deep(.v-input--checkbox) {
-    margin-top: 0;
-    margin-left: -4px;
-    padding-top: 0;
-}
-.query:deep(.v-input--checkbox) label {
-    margin-left: -8px;
-    color: var(--text-color);
-}
-
-.filters {
-    gap: 8px;
-    min-width: 0;
-}
-.filter {
-    gap: 4px;
-    max-width: 100%;
-}
-.filter * {
-    font-size: 14px;
-}
-.filter:deep(.v-input__slot) {
-    min-height: initial !important;
-    height: 26px !important;
-    padding: 0 8px !important;
-}
-.filter:deep(.v-select__selection--comma) {
-    margin: 0 !important;
-}
-.filter:deep(.v-input__append-inner) {
-    margin-top: 2px !important;
-    margin-right: -8px !important;
-}
-.filter:deep(.v-icon) {
-    font-size: 16px;
-}
-*:deep(.v-list-item) {
-    font-size: 14px;
-    min-height: 32px !important;
-    padding: 0 8px !important;
-}
-.filter .field {
-    max-width: 22ch;
-}
-.filter .op {
-    max-width: 8ch;
 }
 
 .attr-stats {

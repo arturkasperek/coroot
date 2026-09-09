@@ -273,14 +273,18 @@ test('Application facet uses short names from backend', async () => {
     const groups = buildLogQuickFilters([], {
         facets: [
             { key: 'Application', values: [{ value: 'express-demo', count: 40 }] },
-            { key: 'Namespace', values: [{ value: 'coroot-dev', count: 32 }, { value: 'n/a', count: 0 }] },
+            {
+                key: 'Namespace',
+                values: [
+                    { value: 'coroot-dev', count: 32 },
+                    { value: 'n/a', count: 0 },
+                ],
+            },
         ],
     });
     assert.deepEqual(
         groups.map((g) => g.key),
-        ['Source', 'Severity', 'Cluster', 'Namespace', 'Application', 'Host'].filter((k) =>
-            groups.some((g) => g.key === k),
-        ),
+        ['Source', 'Severity', 'Cluster', 'Namespace', 'Application', 'Host'].filter((k) => groups.some((g) => g.key === k)),
     );
     const apps = groups.find((g) => g.key === 'Application');
     assert.equal(apps.values[0].value, 'express-demo');
@@ -333,10 +337,7 @@ test('parses leading exclamation as Message not contains', async () => {
         op: 'not contains',
         value: 'boom',
     });
-    assert.equal(
-        formatLogFilter(messageFilterFromFreeText('!boom')),
-        'Message !🔍 boom',
-    );
+    assert.equal(formatLogFilter(messageFilterFromFreeText('!boom')), 'Message !🔍 boom');
 });
 
 test('ignores empty or bang-only free text', async () => {
@@ -350,32 +351,30 @@ test('ignores empty or bang-only free text', async () => {
 
 test('Enter prefers a matched suggestion over Message search', async () => {
     const { resolveQueryBuilderEnter } = await loadLogQuickFilters();
-    assert.deepEqual(
-        resolveQueryBuilderEnter({ mode: 'name', str: 'app', matchedItem: 'Application' }),
-        { action: 'select', value: 'Application' },
-    );
+    assert.deepEqual(resolveQueryBuilderEnter({ mode: 'name', str: 'app', matchedItem: 'Application' }), { action: 'select', value: 'Application' });
 });
 
 test('Enter on unmatched name text adds a Message filter', async () => {
     const { resolveQueryBuilderEnter } = await loadLogQuickFilters();
-    assert.deepEqual(
-        resolveQueryBuilderEnter({ mode: 'name', str: 'some text', matchedItem: undefined }),
-        { action: 'push-filter', filter: { name: 'Message', op: 'contains', value: 'some text' } },
-    );
-    assert.deepEqual(
-        resolveQueryBuilderEnter({ mode: 'name', str: '!error', matchedItem: undefined }),
-        { action: 'push-filter', filter: { name: 'Message', op: 'not contains', value: 'error' } },
-    );
+    assert.deepEqual(resolveQueryBuilderEnter({ mode: 'name', str: 'some text', matchedItem: undefined }), {
+        action: 'push-filter',
+        filter: { name: 'Message', op: 'contains', value: 'some text' },
+    });
+    assert.deepEqual(resolveQueryBuilderEnter({ mode: 'name', str: '!error', matchedItem: undefined }), {
+        action: 'push-filter',
+        filter: { name: 'Message', op: 'not contains', value: 'error' },
+    });
+});
+
+test('Enter does not create a Message filter when free text is disabled', async () => {
+    const { resolveQueryBuilderEnter } = await loadLogQuickFilters();
+    assert.deepEqual(resolveQueryBuilderEnter({ mode: 'name', str: 'express-demo', matchedItem: undefined, allowFreeText: false }), {
+        action: 'none',
+    });
 });
 
 test('Enter in value mode still uses a custom value', async () => {
     const { resolveQueryBuilderEnter } = await loadLogQuickFilters();
-    assert.deepEqual(
-        resolveQueryBuilderEnter({ mode: 'value', str: 'some text', matchedItem: undefined }),
-        { action: 'select', value: 'some text' },
-    );
-    assert.deepEqual(
-        resolveQueryBuilderEnter({ mode: 'name', str: '', matchedItem: undefined }),
-        { action: 'none' },
-    );
+    assert.deepEqual(resolveQueryBuilderEnter({ mode: 'value', str: 'some text', matchedItem: undefined }), { action: 'select', value: 'some text' });
+    assert.deepEqual(resolveQueryBuilderEnter({ mode: 'name', str: '', matchedItem: undefined }), { action: 'none' });
 });
