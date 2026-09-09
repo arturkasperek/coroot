@@ -127,7 +127,8 @@ func renderLogs(ctx context.Context, chs clickhouse.Clients, w *model.World, que
 			if match {
 				addFacet(ch, "Severity")
 				addFacet(ch, "Source")
-				addFacet(ch, "service.name")
+				addFacet(ch, "Namespace")
+				addFacet(ch, "Application")
 				addFacet(ch, "host.name")
 			}
 		}

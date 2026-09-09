@@ -27,10 +27,10 @@ func TestOverviewLogSourceFilters(t *testing.T) {
 
 	token := fmt.Sprintf("e2e-source-%d", time.Now().UnixNano())
 	insertLogFixture(t, token, []logFixtureRow{
-		{sourceAgentInfo, "INFO", 9, sourceAgentSvc, sourceAgentHost, "e2e source agent info"},
-		{sourceAgentError, "ERROR", 17, sourceAgentSvc, sourceAgentHost, "e2e source agent error"},
-		{sourceOtelInfo, "INFO", 9, sourceOtelSvc, sourceOtelHost, "e2e source otel info"},
-		{sourceOtelError, "ERROR", 17, sourceOtelSvc, sourceOtelHost, "e2e source otel error"},
+		{Count: sourceAgentInfo, SeverityText: "INFO", SeverityNumber: 9, ServiceName: sourceAgentSvc, Host: sourceAgentHost, Body: "e2e source agent info"},
+		{Count: sourceAgentError, SeverityText: "ERROR", SeverityNumber: 17, ServiceName: sourceAgentSvc, Host: sourceAgentHost, Body: "e2e source agent error"},
+		{Count: sourceOtelInfo, SeverityText: "INFO", SeverityNumber: 9, ServiceName: sourceOtelSvc, Host: sourceOtelHost, Body: "e2e source otel info"},
+		{Count: sourceOtelError, SeverityText: "ERROR", SeverityNumber: 17, ServiceName: sourceOtelSvc, Host: sourceOtelHost, Body: "e2e source otel error"},
 	})
 	t.Cleanup(func() { deleteFacetFixture(t, token) })
 
@@ -61,8 +61,9 @@ func TestOverviewLogSourceFilters(t *testing.T) {
 		assertFacet(t, logs, "Source", "otel", uint64(otelTotal))
 		assertFacet(t, logs, "Severity", "info", uint64(sourceAgentInfo+sourceOtelInfo))
 		assertFacet(t, logs, "Severity", "error", uint64(sourceAgentError+sourceOtelError))
-		assertFacet(t, logs, "service.name", sourceAgentSvc, uint64(agentTotal))
-		assertFacet(t, logs, "service.name", sourceOtelSvc, uint64(otelTotal))
+		assertFacet(t, logs, "Application", "express-demo", uint64(allTotal))
+		assertFacet(t, logs, "Namespace", "coroot-dev", uint64(agentTotal))
+		assertFacet(t, logs, "Namespace", "n/a", uint64(otelTotal))
 		assertClusterTotal(t, logs, uint64(allTotal))
 		assertEntrySources(t, logs, agentTotal, otelTotal)
 	})
@@ -75,8 +76,9 @@ func TestOverviewLogSourceFilters(t *testing.T) {
 		assertFacet(t, logs, "Source", "otel", uint64(otelTotal))
 		assertFacet(t, logs, "Severity", "info", uint64(sourceAgentInfo))
 		assertFacet(t, logs, "Severity", "error", uint64(sourceAgentError))
-		assertFacet(t, logs, "service.name", sourceAgentSvc, uint64(agentTotal))
-		assertFacet(t, logs, "service.name", sourceOtelSvc, 0)
+		assertFacet(t, logs, "Application", "express-demo", uint64(agentTotal))
+		assertFacet(t, logs, "Namespace", "coroot-dev", uint64(agentTotal))
+		assertFacet(t, logs, "Namespace", "n/a", 0)
 		assertFacet(t, logs, "host.name", sourceAgentHost, uint64(agentTotal))
 		assertFacet(t, logs, "host.name", sourceOtelHost, 0)
 		assertEntrySources(t, logs, agentTotal, 0)
@@ -90,8 +92,9 @@ func TestOverviewLogSourceFilters(t *testing.T) {
 		assertFacet(t, logs, "Source", "otel", uint64(otelTotal))
 		assertFacet(t, logs, "Severity", "info", uint64(sourceOtelInfo))
 		assertFacet(t, logs, "Severity", "error", uint64(sourceOtelError))
-		assertFacet(t, logs, "service.name", sourceOtelSvc, uint64(otelTotal))
-		assertFacet(t, logs, "service.name", sourceAgentSvc, 0)
+		assertFacet(t, logs, "Application", "express-demo", uint64(otelTotal))
+		assertFacet(t, logs, "Namespace", "n/a", uint64(otelTotal))
+		assertFacet(t, logs, "Namespace", "coroot-dev", 0)
 		assertFacet(t, logs, "host.name", sourceOtelHost, uint64(otelTotal))
 		assertFacet(t, logs, "host.name", sourceAgentHost, 0)
 		assertEntrySources(t, logs, 0, otelTotal)
@@ -127,7 +130,8 @@ func TestOverviewLogSourceFilters(t *testing.T) {
 		assertFacet(t, logs, "Source", "otel", uint64(sourceOtelError))
 		assertFacet(t, logs, "Severity", "info", uint64(sourceAgentInfo))
 		assertFacet(t, logs, "Severity", "error", uint64(sourceAgentError))
-		assertFacet(t, logs, "service.name", sourceAgentSvc, uint64(sourceAgentError))
+		assertFacet(t, logs, "Application", "express-demo", uint64(sourceAgentError))
+		assertFacet(t, logs, "Namespace", "coroot-dev", uint64(sourceAgentError))
 		assertFacet(t, logs, "host.name", sourceAgentHost, uint64(sourceAgentError))
 		assertEntrySources(t, logs, sourceAgentError, 0)
 		assertEntrySeverity(t, logs, "error")

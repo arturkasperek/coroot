@@ -161,12 +161,13 @@ func chExec(t *testing.T, query string, body []byte) {
 }
 
 type logFixtureRow struct {
-	Count          int
-	SeverityText   string
-	SeverityNumber int
-	ServiceName    string
-	Host           string
-	Body           string
+	Count              int
+	SeverityText       string
+	SeverityNumber     int
+	ServiceName        string
+	Host               string
+	Body               string
+	ResourceAttributes map[string]string // merged on top of service.name + host.name
 }
 
 func insertLogFixture(t *testing.T, token string, rows []logFixtureRow) {
@@ -176,20 +177,24 @@ func insertLogFixture(t *testing.T, token string, rows []logFixtureRow) {
 	var buf bytes.Buffer
 	for _, s := range rows {
 		for i := 0; i < s.Count; i++ {
+			attrs := map[string]string{
+				"service.name": s.ServiceName,
+				"host.name":    s.Host,
+			}
+			for k, v := range s.ResourceAttributes {
+				attrs[k] = v
+			}
 			line, err := json.Marshal(map[string]any{
-				"Timestamp":      now.Format("2006-01-02 15:04:05.000000000"),
-				"TraceId":        "",
-				"SpanId":         "",
-				"TraceFlags":     0,
-				"SeverityText":   s.SeverityText,
-				"SeverityNumber": s.SeverityNumber,
-				"ServiceName":    s.ServiceName,
-				"Body":           s.Body,
-				"ResourceAttributes": map[string]string{
-					"service.name": s.ServiceName,
-					"host.name":    s.Host,
-				},
-				"LogAttributes": map[string]string{"e2e.facets": token},
+				"Timestamp":          now.Format("2006-01-02 15:04:05.000000000"),
+				"TraceId":            "",
+				"SpanId":             "",
+				"TraceFlags":         0,
+				"SeverityText":       s.SeverityText,
+				"SeverityNumber":     s.SeverityNumber,
+				"ServiceName":        s.ServiceName,
+				"Body":               s.Body,
+				"ResourceAttributes": attrs,
+				"LogAttributes":      map[string]string{"e2e.facets": token},
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -208,10 +213,10 @@ func insertLogFixture(t *testing.T, token string, rows []logFixtureRow) {
 func insertFacetFixture(t *testing.T, token string) {
 	t.Helper()
 	insertLogFixture(t, token, []logFixtureRow{
-		{30, "INFO", 9, "/k8s/coroot-dev/express-demo", "node-a", "e2e express info"},
-		{10, "ERROR", 17, "/k8s/coroot-dev/express-demo", "node-a", "e2e express error"},
-		{8, "INFO", 9, "/k8s/coroot-dev/nextjs-demo", "node-b", "e2e nextjs info"},
-		{2, "ERROR", 17, "/k8s/coroot-dev/nextjs-demo", "node-b", "e2e nextjs error"},
+		{Count: 30, SeverityText: "INFO", SeverityNumber: 9, ServiceName: "/k8s/coroot-dev/express-demo", Host: "node-a", Body: "e2e express info"},
+		{Count: 10, SeverityText: "ERROR", SeverityNumber: 17, ServiceName: "/k8s/coroot-dev/express-demo", Host: "node-a", Body: "e2e express error"},
+		{Count: 8, SeverityText: "INFO", SeverityNumber: 9, ServiceName: "/k8s/coroot-dev/nextjs-demo", Host: "node-b", Body: "e2e nextjs info"},
+		{Count: 2, SeverityText: "ERROR", SeverityNumber: 17, ServiceName: "/k8s/coroot-dev/nextjs-demo", Host: "node-b", Body: "e2e nextjs error"},
 	})
 }
 

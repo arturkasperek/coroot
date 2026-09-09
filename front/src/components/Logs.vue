@@ -368,6 +368,8 @@ export default {
                 switch (name) {
                     case 'Severity':
                     case 'Source':
+                    case 'Namespace':
+                    case 'Application':
                         this.qb.items = ['=', '!='];
                         break;
                     case 'Message':

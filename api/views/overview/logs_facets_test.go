@@ -51,9 +51,13 @@ func TestFacetGroupsFromMergedCompletesSource(t *testing.T) {
 func TestFacetGroupsFromMergedKeepsClusterRowsAndSorts(t *testing.T) {
 	merged := map[string]map[string]uint64{
 		"Source": {"agent": 40, "otel": 10},
-		"service.name": {
-			"/k8s/coroot-dev/nextjs-demo":  10,
-			"/k8s/coroot-dev/express-demo": 40,
+		"Namespace": {
+			"coroot-dev": 40,
+			"n/a":        10,
+		},
+		"Application": {
+			"nextjs-demo":  10,
+			"express-demo": 40,
 		},
 		"Cluster": {
 			"default": 50,
@@ -72,11 +76,43 @@ func TestFacetGroupsFromMergedKeepsClusterRowsAndSorts(t *testing.T) {
 		{Value: "warning", Count: 0},
 		{Value: "error", Count: 12},
 	}, byKey["Severity"].Values)
-	assert.Equal(t, "/k8s/coroot-dev/express-demo", byKey["service.name"].Values[0].Value)
-	assert.Equal(t, uint64(40), byKey["service.name"].Values[0].Count)
+	assert.Equal(t, "coroot-dev", byKey["Namespace"].Values[0].Value)
+	assert.Equal(t, uint64(40), byKey["Namespace"].Values[0].Count)
+	assert.Equal(t, "n/a", byKey["Namespace"].Values[1].Value)
+	assert.Equal(t, "express-demo", byKey["Application"].Values[0].Value)
+	assert.Equal(t, uint64(40), byKey["Application"].Values[0].Count)
 	assert.Len(t, byKey["Cluster"].Values, 2)
 	assert.Equal(t, []clickhouse.FacetValue{
 		{Value: "agent", Count: 40},
 		{Value: "otel", Count: 10},
 	}, byKey["Source"].Values)
+}
+
+func TestFacetGroupsFromMergedNamespaceAndApplication(t *testing.T) {
+	groups := facetGroupsFromMerged(map[string]map[string]uint64{
+		"Namespace":   {"coroot-dev": 32},
+		"Application": {"express-demo": 23, "nextjs-demo": 7},
+		"Severity":    {"info": 10},
+		"Source":      {"agent": 20},
+	})
+	keys := make([]string, len(groups))
+	for i, g := range groups {
+		keys[i] = g.Key
+	}
+	assert.Equal(t, []string{"Source", "Severity", "Namespace", "Application"}, keys)
+
+	by := map[string]clickhouse.FacetGroup{}
+	for _, g := range groups {
+		by[g.Key] = g
+	}
+	assert.Equal(t, uint64(32), by["Namespace"].Values[0].Count)
+	var hasNA bool
+	for _, v := range by["Namespace"].Values {
+		if v.Value == "n/a" {
+			hasNA = true
+			assert.Equal(t, uint64(0), v.Count)
+		}
+	}
+	assert.True(t, hasNA)
+	assert.Equal(t, "express-demo", by["Application"].Values[0].Value)
 }

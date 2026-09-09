@@ -1,4 +1,5 @@
 /.idea/
+/.worktrees/
 /static/
 /data*
 /data-dev/

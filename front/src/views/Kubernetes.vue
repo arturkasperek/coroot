@@ -14,7 +14,7 @@
                 <div class="pt-4">
                     <Logs
                         :default-filters="[{ name: 'service.name', op: '=', value: 'KubernetesEvents' }]"
-                        :hidden-attributes="['service.name', 'Source']"
+                        :hidden-attributes="['service.name', 'Source', 'Namespace', 'Application']"
                         :columns="[
                             { key: 'date', label: 'Date' },
                             { key: 'cluster', label: 'Cluster', maxWidth: 20 },

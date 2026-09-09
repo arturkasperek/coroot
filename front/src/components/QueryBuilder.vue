@@ -45,7 +45,7 @@
 </template>
 
 <script>
-import { formatLogFilter, displaySourceName } from '@/utils/logQuickFilters';
+import { formatLogFilter, displaySourceName, displayNamespaceName } from '@/utils/logQuickFilters';
 
 export default {
     props: {
@@ -204,6 +204,9 @@ export default {
         formatItem(item) {
             if (this.mode === 'value' && this.filter.name === 'Source') {
                 return displaySourceName(item);
+            }
+            if (this.mode === 'value' && this.filter.name === 'Namespace') {
+                return displayNamespaceName(item);
             }
             return item;
         },

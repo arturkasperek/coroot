@@ -57,10 +57,14 @@ const backendFacets = [
         ],
     },
     {
-        key: 'service.name',
+        key: 'Namespace',
+        values: [{ value: 'coroot-dev', count: 12 }],
+    },
+    {
+        key: 'Application',
         values: [
-            { value: '/k8s/coroot-dev/express-demo', count: 10 },
-            { value: '/k8s/coroot-dev/nextjs-demo', count: 2 },
+            { value: 'express-demo', count: 10 },
+            { value: 'nextjs-demo', count: 2 },
         ],
     },
     {
@@ -85,9 +89,9 @@ const pageEntries = Array.from({ length: 100 }, (_, i) => ({
 test('uses ClickHouse facet counts instead of the loaded page', async () => {
     const { buildLogQuickFilters } = await loadLogQuickFilters();
     const groups = buildLogQuickFilters(pageEntries, { facets: backendFacets });
-    const apps = groups.find((g) => g.key === 'service.name');
+    const apps = groups.find((g) => g.key === 'Application');
     const sev = groups.find((g) => g.key === 'Severity');
-    assert.equal(apps.values.find((v) => v.value.includes('express-demo')).count, 10);
+    assert.equal(apps.values.find((v) => v.value === 'express-demo').count, 10);
     assert.equal(sev.values.find((v) => v.value === 'info').count, 38);
     assert.equal(sev.values.find((v) => v.value === 'error').count, 12);
 });
@@ -95,8 +99,8 @@ test('uses ClickHouse facet counts instead of the loaded page', async () => {
 test('falls back to counting entries when facets is omitted', async () => {
     const { buildLogQuickFilters } = await loadLogQuickFilters();
     const groups = buildLogQuickFilters(pageEntries, {});
-    const apps = groups.find((g) => g.key === 'service.name');
-    assert.equal(apps.values.find((v) => v.value.includes('express-demo')).count, 90);
+    const apps = groups.find((g) => g.key === 'Application');
+    assert.equal(apps.values.find((v) => v.value === 'express-demo').count, 90);
 });
 
 const facetValues = [
@@ -106,10 +110,12 @@ const facetValues = [
     { value: 'ollama', label: 'ollama', count: 26 },
 ];
 
-test('group search is available for Application and Host only', async () => {
+test('group search is available for Namespace and Application', async () => {
     const { groupHasLocalSearch } = await loadLogQuickFilters();
-    assert.equal(groupHasLocalSearch('service.name'), true);
+    assert.equal(groupHasLocalSearch('Namespace'), true);
+    assert.equal(groupHasLocalSearch('Application'), true);
     assert.equal(groupHasLocalSearch('host.name'), true);
+    assert.equal(groupHasLocalSearch('service.name'), false);
     assert.equal(groupHasLocalSearch('Severity'), false);
     assert.equal(groupHasLocalSearch('Cluster'), false);
 });
@@ -153,7 +159,7 @@ test('does not mix backend severity with client-side application when facets is 
             },
         ],
     });
-    const apps = groups.find((g) => g.key === 'service.name');
+    const apps = groups.find((g) => g.key === 'Application');
     assert.equal(apps, undefined);
 });
 
@@ -187,7 +193,7 @@ test('puts Source before Severity in filter groups', async () => {
     });
     assert.deepEqual(
         groups.map((g) => g.key),
-        ['Source', 'Severity', 'Cluster', 'service.name', 'host.name'],
+        ['Source', 'Severity', 'Cluster', 'Namespace', 'Application', 'host.name'],
     );
 });
 
@@ -253,4 +259,50 @@ test('keeps an active Source filter visible', async () => {
     assert.equal(source.label, 'Source');
     assert.deepEqual(source.values[0], { value: 'agent', label: 'Container logs', color: '', count: 0 });
     assert.equal(isLogFacetActive([{ name: 'Source', op: '=', value: 'agent' }], 'Source', '=', 'agent'), true);
+});
+
+test('displays Namespace n/a as Not applicable', async () => {
+    const { displayNamespaceName, formatLogFilter } = await loadLogQuickFilters();
+    assert.equal(displayNamespaceName('n/a'), 'Not applicable');
+    assert.equal(displayNamespaceName('coroot-dev'), 'coroot-dev');
+    assert.equal(formatLogFilter({ name: 'Namespace', op: '=', value: 'n/a' }), 'Namespace = Not applicable');
+});
+
+test('Application facet uses short names from backend', async () => {
+    const { buildLogQuickFilters } = await loadLogQuickFilters();
+    const groups = buildLogQuickFilters([], {
+        facets: [
+            { key: 'Application', values: [{ value: 'express-demo', count: 40 }] },
+            { key: 'Namespace', values: [{ value: 'coroot-dev', count: 32 }, { value: 'n/a', count: 0 }] },
+        ],
+    });
+    assert.deepEqual(
+        groups.map((g) => g.key),
+        ['Source', 'Severity', 'Cluster', 'Namespace', 'Application', 'Host'].filter((k) =>
+            groups.some((g) => g.key === k),
+        ),
+    );
+    const apps = groups.find((g) => g.key === 'Application');
+    assert.equal(apps.values[0].value, 'express-demo');
+    assert.equal(apps.values[0].label, 'express-demo');
+    const ns = groups.find((g) => g.key === 'Namespace');
+    assert.equal(ns.values.find((v) => v.value === 'n/a').label, 'Not applicable');
+});
+
+test('falls back to deriving Namespace and Application from attributes', async () => {
+    const { buildLogQuickFilters } = await loadLogQuickFilters();
+    const groups = buildLogQuickFilters(
+        [
+            { attributes: { 'service.name': '/k8s/coroot-dev/express-demo' } },
+            { attributes: { 'service.name': 'checkout', 'k8s.namespace.name': 'coroot-dev' } },
+            { attributes: { 'service.name': 'ollama' } },
+        ],
+        {},
+    );
+    const ns = groups.find((g) => g.key === 'Namespace');
+    assert.equal(ns.values.find((v) => v.value === 'coroot-dev').count, 2);
+    assert.equal(ns.values.find((v) => v.value === 'n/a').count, 1);
+    const apps = groups.find((g) => g.key === 'Application');
+    assert.equal(apps.values.find((v) => v.value === 'express-demo').count, 1);
+    assert.equal(apps.values.find((v) => v.value === 'checkout').count, 1);
 });

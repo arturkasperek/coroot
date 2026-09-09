@@ -34,8 +34,8 @@ func TestOverviewLogFacetCounts(t *testing.T) {
 	if logs.Error != "" {
 		t.Fatalf("overview logs error: %s", logs.Error)
 	}
-	assertFacet(t, logs, "service.name", "/k8s/coroot-dev/express-demo", 40)
-	assertFacet(t, logs, "service.name", "/k8s/coroot-dev/nextjs-demo", 10)
+	assertFacet(t, logs, "Application", "express-demo", 40)
+	assertFacet(t, logs, "Application", "nextjs-demo", 10)
 	assertFacet(t, logs, "host.name", "node-a", 40)
 	assertFacet(t, logs, "host.name", "node-b", 10)
 	assertFacet(t, logs, "Severity", "info", 38)
@@ -49,8 +49,8 @@ func TestOverviewLogFacetCounts(t *testing.T) {
 	withSev := copyQuery(base)
 	withSev["filters"] = append(filtersOf(base), map[string]string{"name": "Severity", "op": "=", "value": "error"})
 	logs = fetchOverviewLogs(t, projectID, withSev)
-	assertFacet(t, logs, "service.name", "/k8s/coroot-dev/express-demo", 10)
-	assertFacet(t, logs, "service.name", "/k8s/coroot-dev/nextjs-demo", 2)
+	assertFacet(t, logs, "Application", "express-demo", 10)
+	assertFacet(t, logs, "Application", "nextjs-demo", 2)
 	assertFacet(t, logs, "host.name", "node-a", 10)
 	assertFacet(t, logs, "host.name", "node-b", 2)
 	assertFacet(t, logs, "Severity", "info", 38)
@@ -63,8 +63,8 @@ func TestOverviewLogFacetCounts(t *testing.T) {
 	logs = fetchOverviewLogs(t, projectID, withApp)
 	assertFacet(t, logs, "Severity", "info", 30)
 	assertFacet(t, logs, "Severity", "error", 10)
-	assertFacet(t, logs, "service.name", "/k8s/coroot-dev/express-demo", 40)
-	assertFacet(t, logs, "service.name", "/k8s/coroot-dev/nextjs-demo", 10)
+	assertFacet(t, logs, "Application", "express-demo", 40)
+	assertFacet(t, logs, "Application", "nextjs-demo", 0)
 
 	express := "/k8s/coroot-dev/express-demo"
 	nextjs := "/k8s/coroot-dev/nextjs-demo"
@@ -80,8 +80,8 @@ func TestOverviewLogFacetCounts(t *testing.T) {
 		assertClusterTotal(t, logs, 10)
 		assertFacet(t, logs, "Severity", "info", 30)
 		assertFacet(t, logs, "Severity", "error", 10)
-		assertFacet(t, logs, "service.name", express, 10)
-		assertFacet(t, logs, "service.name", nextjs, 2)
+		assertFacet(t, logs, "Application", "express-demo", 10)
+		assertFacet(t, logs, "Application", "nextjs-demo", 0)
 	})
 
 	t.Run("Severity=error and host.name=node-a", func(t *testing.T) {
@@ -90,8 +90,8 @@ func TestOverviewLogFacetCounts(t *testing.T) {
 			map[string]string{"name": "host.name", "op": "=", "value": "node-a"},
 		)
 		logs := fetchOverviewLogs(t, projectID, q)
-		assertFacet(t, logs, "service.name", express, 10)
-		assertFacet(t, logs, "service.name", nextjs, 0)
+		assertFacet(t, logs, "Application", "express-demo", 10)
+		assertFacet(t, logs, "Application", "nextjs-demo", 0)
 		assertFacet(t, logs, "host.name", "node-a", 10)
 		assertFacet(t, logs, "host.name", "node-b", 2)
 		assertFacet(t, logs, "Severity", "info", 30)
@@ -107,8 +107,8 @@ func TestOverviewLogFacetCounts(t *testing.T) {
 		logs := fetchOverviewLogs(t, projectID, q)
 		assertFacet(t, logs, "Severity", "info", 30)
 		assertFacet(t, logs, "Severity", "error", 10)
-		assertFacet(t, logs, "service.name", express, 40)
-		assertFacet(t, logs, "service.name", nextjs, 0)
+		assertFacet(t, logs, "Application", "express-demo", 40)
+		assertFacet(t, logs, "Application", "nextjs-demo", 0)
 		assertFacet(t, logs, "host.name", "node-a", 40)
 		assertFacet(t, logs, "host.name", "node-b", 0)
 		assertClusterTotal(t, logs, 40)
@@ -125,8 +125,8 @@ func TestOverviewLogFacetCounts(t *testing.T) {
 		assertClusterTotal(t, logs, 8)
 		assertFacet(t, logs, "Severity", "info", 8)
 		assertFacet(t, logs, "Severity", "error", 2)
-		assertFacet(t, logs, "service.name", express, 30)
-		assertFacet(t, logs, "service.name", nextjs, 8)
+		assertFacet(t, logs, "Application", "express-demo", 0)
+		assertFacet(t, logs, "Application", "nextjs-demo", 8)
 	})
 }
 

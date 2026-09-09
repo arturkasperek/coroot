@@ -2,12 +2,13 @@ const CORE_FACETS = [
     { key: 'Source', label: 'Source', from: 'source' },
     { key: 'Severity', label: 'Severity', from: 'severity' },
     { key: 'Cluster', label: 'Cluster', from: 'cluster' },
-    { key: 'service.name', label: 'Application', from: 'attr:service.name' },
+    { key: 'Namespace', label: 'Namespace', from: 'namespace' },
+    { key: 'Application', label: 'Application', from: 'application' },
     { key: 'host.name', label: 'Host', from: 'attr:host.name' },
 ];
 
 const SKIP_COLUMN_KEYS = new Set(['date', 'message', 'application', 'cluster']);
-const LOCAL_SEARCH_FACETS = new Set(['service.name', 'host.name']);
+const LOCAL_SEARCH_FACETS = new Set(['Namespace', 'Application', 'host.name']);
 
 export function groupHasLocalSearch(key) {
     return LOCAL_SEARCH_FACETS.has(key);
@@ -29,6 +30,10 @@ export function filterFacetValues(values, query) {
                 .toLowerCase()
                 .includes(q),
     );
+}
+
+export function displayNamespaceName(value) {
+    return String(value) === 'n/a' ? 'Not applicable' : String(value || '');
 }
 
 export function displayServiceName(value) {
@@ -58,10 +63,28 @@ function facetLabel(key, value) {
     if (key === 'service.name') {
         return displayServiceName(value);
     }
+    if (key === 'Namespace') {
+        return displayNamespaceName(value);
+    }
+    if (key === 'Application') {
+        return String(value || '');
+    }
     if (key === 'Source') {
         return displaySourceName(value);
     }
     return value;
+}
+
+function k8sParts(svc) {
+    const s = String(svc || '');
+    if (!s.startsWith('/k8s')) {
+        return null;
+    }
+    const parts = s.split('/').filter(Boolean);
+    if (parts.length < 2) {
+        return null;
+    }
+    return parts;
 }
 
 export function formatLogFilter(filter = {}) {
@@ -84,6 +107,26 @@ export function facetValue(entry, from) {
             return '';
         }
         return String(svc).startsWith('/') ? 'agent' : 'otel';
+    }
+    if (from === 'namespace') {
+        const svc = (entry.attributes && entry.attributes['service.name']) || '';
+        const parts = k8sParts(svc);
+        if (parts) {
+            return parts[1];
+        }
+        const ns = entry.attributes && entry.attributes['k8s.namespace.name'];
+        if (ns) {
+            return String(ns);
+        }
+        return 'n/a';
+    }
+    if (from === 'application') {
+        const svc = (entry.attributes && entry.attributes['service.name']) || '';
+        const parts = k8sParts(svc);
+        if (parts) {
+            return parts[parts.length - 1];
+        }
+        return svc;
     }
     if (from.startsWith('attr:')) {
         const name = from.slice(5);
@@ -169,6 +212,8 @@ export function buildStableLogQuickFilters(rawGroups, filters, catalog = {}, opt
         Severity: 'Severity',
         Source: 'Source',
         Cluster: 'Cluster',
+        Namespace: 'Namespace',
+        Application: 'Application',
         'service.name': 'Application',
         'host.name': 'Host',
     };

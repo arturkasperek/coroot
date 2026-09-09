@@ -3,6 +3,7 @@ package clickhouse
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	ch "github.com/ClickHouse/clickhouse-go/v2"
@@ -10,6 +11,16 @@ import (
 )
 
 const maxLogFacetValues = 1000
+
+const logNamespaceNA = "n/a"
+
+func logNamespaceExpr() string {
+	return `if(startsWith(ServiceName, '/k8s'), if(arrayElement(splitByChar('/', ServiceName), 3) = '', 'n/a', arrayElement(splitByChar('/', ServiceName), 3)), if(ResourceAttributes['k8s.namespace.name'] != '', ResourceAttributes['k8s.namespace.name'], if(LogAttributes['k8s.namespace.name'] != '', LogAttributes['k8s.namespace.name'], 'n/a')))`
+}
+
+func logApplicationExpr() string {
+	return `if(startsWith(ServiceName, '/k8s'), nullIf(arrayElement(splitByChar('/', ServiceName), length(splitByChar('/', ServiceName))), ''), ServiceName)`
+}
 
 type FacetValue struct {
 	Value string `json:"value"`
@@ -34,6 +45,10 @@ func facetCountSQL(name string) (string, *string, bool) {
 		return "SELECT count(1) FROM @@table_otel_logs@@ WHERE %s", &attr, true
 	case "Source":
 		return "SELECT if(startsWith(ServiceName, '/'), 'agent', 'otel'), count(1) FROM @@table_otel_logs@@ WHERE %s GROUP BY 1", &attr, true
+	case "Namespace":
+		return "SELECT " + logNamespaceExpr() + ", count(1) FROM @@table_otel_logs@@ WHERE %s GROUP BY 1", &attr, true
+	case "Application":
+		return "SELECT " + logApplicationExpr() + " AS v, count(1) FROM @@table_otel_logs@@ WHERE %s GROUP BY v HAVING v != '' ORDER BY count(1) DESC, v LIMIT 1000", &attr, true
 	default:
 		return "", nil, false
 	}
@@ -93,6 +108,37 @@ func (c *Client) GetLogFacetCounts(ctx context.Context, query LogQuery, name str
 		for _, label := range []string{string(model.LogSourceAgent), string(model.LogSourceOtel)} {
 			out = append(out, FacetValue{Value: label, Count: by[label]})
 		}
+		return out, nil
+	case "Namespace":
+		by := map[string]uint64{}
+		var v string
+		var n uint64
+		for rows.Next() {
+			if err = rows.Scan(&v, &n); err != nil {
+				return nil, err
+			}
+			by[v] = n
+		}
+		if _, ok := by[logNamespaceNA]; !ok {
+			by[logNamespaceNA] = 0
+		}
+		var names []string
+		for name := range by {
+			if name != logNamespaceNA {
+				names = append(names, name)
+			}
+		}
+		sort.Slice(names, func(i, j int) bool {
+			if by[names[i]] != by[names[j]] {
+				return by[names[i]] > by[names[j]]
+			}
+			return names[i] < names[j]
+		})
+		out := make([]FacetValue, 0, len(by))
+		for _, name := range names {
+			out = append(out, FacetValue{Value: name, Count: by[name]})
+		}
+		out = append(out, FacetValue{Value: logNamespaceNA, Count: by[logNamespaceNA]})
 		return out, nil
 	default:
 		var out []FacetValue

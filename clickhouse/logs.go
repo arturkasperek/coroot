@@ -127,7 +127,7 @@ func (c *Client) GetLogFilters(ctx context.Context, query LogQuery, name string)
 	settings := " SETTINGS max_block_size=2048, max_threads=4"
 	switch name {
 	case "":
-		res = append(res, "Severity", "Source", "Message", "Cluster")
+		res = append(res, "Severity", "Source", "Namespace", "Application", "Message", "Cluster")
 		q = "SELECT arrayJoin(arrayConcat(mapKeys(LogAttributes), mapKeys(ResourceAttributes))) AS k"
 		orderBy = `GROUP BY 1 HAVING NOT match(k, '\\.\\d+(\\.|$)') ORDER BY count(1) DESC, 1`
 	case "Severity":
@@ -138,6 +138,12 @@ func (c *Client) GetLogFilters(ctx context.Context, query LogQuery, name string)
 		return []string{c.project.Name}, nil
 	case "Source":
 		return []string{string(model.LogSourceAgent), string(model.LogSourceOtel)}, nil
+	case "Namespace", "Application":
+		expr := logNamespaceExpr()
+		if name == "Application" {
+			expr = logApplicationExpr()
+		}
+		q = "SELECT DISTINCT " + expr
 	default:
 		q = "SELECT DISTINCT arrayJoin([LogAttributes[@attr], ResourceAttributes[@attr]])"
 		args = append(args, clickhouse.Named("attr", name))
@@ -354,6 +360,23 @@ func (q LogQuery) filters(attr *string) ([]string, []any) {
 					ors = append(ors, expr)
 				case "!=":
 					ands = append(ands, "NOT ("+expr+")")
+				}
+			}
+		case "Namespace", "Application":
+			exprFn := logNamespaceExpr
+			if name == "Application" {
+				exprFn = logApplicationExpr
+			}
+			base := exprFn()
+			for j, a := range attrs {
+				v := fmt.Sprintf("derived_%s_%d_%d", name, i, j)
+				switch a.Op {
+				case "=":
+					ors = append(ors, fmt.Sprintf("(%s) = @%s", base, v))
+					args = append(args, clickhouse.Named(v, a.Value))
+				case "!=":
+					ands = append(ands, fmt.Sprintf("NOT ((%s) = @%s)", base, v))
+					args = append(args, clickhouse.Named(v, a.Value))
 				}
 			}
 		default:
