@@ -261,7 +261,7 @@ func (q LogQuery) filters(attr *string) ([]string, []any) {
 	var notMessage [][]string
 	byName := map[string][]LogFilter{}
 	for _, f := range filters {
-		if attr == nil && f.Name == "Message" {
+		if f.Name == "Message" {
 			fields := strings.FieldsFunc(f.Value, func(r rune) bool {
 				return unicode.IsSpace(r) || (r <= unicode.MaxASCII && !unicode.IsNumber(r) && !unicode.IsLetter(r))
 			})
@@ -432,16 +432,9 @@ func (q LogQuery) filters(attr *string) ([]string, []any) {
 func messageTokensExpr(tokens []string, prefix string, args *[]any) string {
 	var ands []string
 	for i, m := range tokens {
-		set := utils.NewStringSet(m, strings.ToLower(m), strings.ToUpper(m), strings.Title(m))
-		var ors []string
-		for j, s := range set.Items() {
-			name := fmt.Sprintf("%s_%d_%d", prefix, i, j)
-			ors = append(ors, fmt.Sprintf("hasToken(Body, @%s)", name))
-			*args = append(*args, clickhouse.Named(name, s))
-		}
-		if len(ors) > 0 {
-			ands = append(ands, fmt.Sprintf("(%s)", strings.Join(ors, " OR ")))
-		}
+		name := fmt.Sprintf("%s_%d", prefix, i)
+		ands = append(ands, fmt.Sprintf("positionCaseInsensitiveUTF8(Body, @%s) > 0", name))
+		*args = append(*args, clickhouse.Named(name, m))
 	}
 	return strings.Join(ands, " AND ")
 }

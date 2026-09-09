@@ -356,7 +356,7 @@ func (h *MCPHandler) registerTools() {
 				mcp.Description("Filter to one or more severities (OR). Allowed: 'unknown','trace','debug','info','warning','error','fatal'. Default: all."),
 				mcp.WithStringItems(),
 			),
-			mcp.WithString("search", mcp.Description("Full-text search over the log body. Tokenized on whitespace/punctuation; tokens are AND'd, case-insensitive variants are OR'd within each token. Backed by ClickHouse `hasToken`.")),
+			mcp.WithString("search", mcp.Description("Substring search over the log body (case-insensitive). Split on whitespace/punctuation; terms are AND'd. `fail` matches `failure`.")),
 			mcp.WithString("log_pattern", mcp.Description("Pattern hash from get_application_status's log_patterns. When app_id is set, the hash is expanded to its similar-pattern equivalence class so all variants of the pattern match. Source is forced to 'agent' since pattern hashes are only emitted by the node-agent.")),
 			mcp.WithString("source", mcp.Description("'auto' (default) | 'agent' (container stdout/stderr collected by coroot-node-agent) | 'otel' (OpenTelemetry-shipped logs). When `app_id` is omitted and source is 'auto', defaults to 'agent'.")),
 			mcp.WithReadOnlyHintAnnotation(true),
@@ -1509,7 +1509,7 @@ func (h *MCPHandler) toolQueryLogs(ctx context.Context, req mcp.CallToolRequest)
 		}
 	}
 	if search != "" {
-		lq.Filters = append(lq.Filters, clickhouse.LogFilter{Name: "Message", Op: "=", Value: search})
+		lq.Filters = append(lq.Filters, clickhouse.LogFilter{Name: "Message", Op: "contains", Value: search})
 	}
 	if logPattern != "" {
 		hashes := []string{logPattern}

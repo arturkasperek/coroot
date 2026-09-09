@@ -170,3 +170,39 @@ func TestLogQueryFiltersNamespaceAndApplication(t *testing.T) {
 	where, _ = q.filters(nil)
 	assert.Contains(t, strings.Join(where, " AND "), "NOT (")
 }
+
+func TestLogQueryFiltersMessageContainsSubstring(t *testing.T) {
+	q := LogQuery{
+		Ctx: timeseries.NewContext(1_700_000_000, 1_700_003_600, 15),
+		Filters: []LogFilter{
+			{Name: "Message", Op: "contains", Value: "fail"},
+		},
+	}
+	where, args := q.filters(nil)
+	joined := strings.Join(where, " AND ")
+	assert.Contains(t, joined, "positionCaseInsensitiveUTF8(Body,")
+	assert.Contains(t, joined, "> 0")
+	assert.NotContains(t, joined, "hasToken(")
+	assertArgsContain(t, args, "fail")
+
+	q.Filters = []LogFilter{{Name: "Message", Op: "contains", Value: "fail timeout"}}
+	where, _ = q.filters(nil)
+	joined = strings.Join(where, " AND ")
+	assert.Equal(t, 2, strings.Count(joined, "positionCaseInsensitiveUTF8(Body,"))
+	assert.Contains(t, joined, " AND ")
+
+	q.Filters = []LogFilter{{Name: "Message", Op: "not contains", Value: "err"}}
+	where, _ = q.filters(nil)
+	joined = strings.Join(where, " AND ")
+	assert.Contains(t, joined, "NOT (")
+	assert.Contains(t, joined, "positionCaseInsensitiveUTF8(Body,")
+	assert.NotContains(t, joined, "hasToken(")
+
+	q.Filters = []LogFilter{{Name: "Message", Op: "contains", Value: "fail"}}
+	where, _ = q.filters(strPtr("Cluster"))
+	joined = strings.Join(where, " AND ")
+	assert.Contains(t, joined, "positionCaseInsensitiveUTF8(Body,")
+	where, _ = q.filters(strPtr("Severity"))
+	joined = strings.Join(where, " AND ")
+	assert.Contains(t, joined, "positionCaseInsensitiveUTF8(Body,")
+}
