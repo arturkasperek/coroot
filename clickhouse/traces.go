@@ -735,7 +735,11 @@ func rootSpanCondition(fromMV bool) string {
 }
 
 func (q *SpanQuery) RootSpansFilter(fromMV bool) ([]string, []any) {
-	filter, args := q.Filter()
+	return q.rootSpansFilter(fromMV, "")
+}
+
+func (q *SpanQuery) rootSpansFilter(fromMV bool, skipField string) ([]string, []any) {
+	filter, args := q.filter(skipField)
 	filter = append(filter, rootSpanCondition(fromMV))
 	filter = append(filter, "NOT startsWith(ServiceName, '/')")
 	if len(q.ExcludePeerAddrs) > 0 {
@@ -799,9 +803,16 @@ func (q *SpanQuery) SpansByServiceNameFilter(fromMV bool) ([]string, []any) {
 }
 
 func (q *SpanQuery) Filter() ([]string, []any) {
+	return q.filter("")
+}
+
+func (q *SpanQuery) filter(skipField string) ([]string, []any) {
 	var filter []string
 	var args []any
 	for i, f := range q.Filters {
+		if skipField != "" && f.Field == skipField {
+			continue
+		}
 		if strings.ContainsFunc(f.Field, func(r rune) bool { return !unicode.IsLetter(r) }) {
 			continue
 		}

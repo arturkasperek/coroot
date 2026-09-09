@@ -301,13 +301,7 @@ type overviewLogs struct {
 		Attributes map[string]string `json:"attributes"`
 		Cluster    string            `json:"cluster"`
 	} `json:"entries"`
-	Facets []struct {
-		Key    string `json:"key"`
-		Values []struct {
-			Value string `json:"value"`
-			Count uint64 `json:"count"`
-		} `json:"values"`
-	} `json:"facets"`
+	Facets apiFacetGroups `json:"facets"`
 }
 
 func fetchOverviewLogs(t *testing.T, projectID string, query map[string]any) overviewLogs {
@@ -332,8 +326,44 @@ func fetchOverviewLogs(t *testing.T, projectID string, query map[string]any) ove
 	return ov.Logs
 }
 
-func facetCount(logs overviewLogs, key, value string) uint64 {
-	for _, g := range logs.Facets {
+type apiFacetGroups []struct {
+	Key    string `json:"key"`
+	Values []struct {
+		Value string `json:"value"`
+		Count uint64 `json:"count"`
+	} `json:"values"`
+}
+
+type overviewTraces struct {
+	Error   string         `json:"error"`
+	Message string         `json:"message"`
+	Facets  apiFacetGroups `json:"facets"`
+}
+
+func fetchOverviewTraces(t *testing.T, projectID string, query map[string]any) overviewTraces {
+	t.Helper()
+	q, err := json.Marshal(query)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := fmt.Sprintf("%s/api/project/%s/overview/traces?from=now-15m&query=%s",
+		corootBase(),
+		url.PathEscape(projectID),
+		url.QueryEscape(string(q)),
+	)
+	var env apiEnvelope
+	httpGetJSON(t, u, &env)
+	var ov struct {
+		Traces overviewTraces `json:"traces"`
+	}
+	if err := json.Unmarshal(env.Data, &ov); err != nil {
+		t.Fatalf("decode overview traces: %v\n%s", err, env.Data)
+	}
+	return ov.Traces
+}
+
+func facetValueCount(groups apiFacetGroups, key, value string) uint64 {
+	for _, g := range groups {
 		if g.Key != key {
 			continue
 		}
@@ -344,4 +374,8 @@ func facetCount(logs overviewLogs, key, value string) uint64 {
 		}
 	}
 	return 0
+}
+
+func facetCount(logs overviewLogs, key, value string) uint64 {
+	return facetValueCount(logs.Facets, key, value)
 }

@@ -225,3 +225,64 @@ func deleteFacetFixture(t *testing.T, token string) {
 	q := fmt.Sprintf("DELETE FROM otel_logs WHERE LogAttributes['e2e.facets'] = '%s'", token)
 	chExec(t, q, nil)
 }
+
+type traceFixtureRow struct {
+	Count        int
+	ServiceName  string
+	SpanName     string
+	ParentSpanId string
+}
+
+func insertTraceFixture(t *testing.T, rows []traceFixtureRow) {
+	t.Helper()
+	// Overview clamps `to` to Prometheus cache GetTo (~45–60s behind wall clock).
+	now := time.Now().UTC().Add(-2 * time.Minute)
+	base := uint64(now.UnixNano())
+	var buf bytes.Buffer
+	n := 0
+	for _, s := range rows {
+		parent := s.ParentSpanId
+		for i := 0; i < s.Count; i++ {
+			n++
+			line, err := json.Marshal(map[string]any{
+				"Timestamp":          now.Format("2006-01-02 15:04:05.000000000"),
+				"TraceId":            fmt.Sprintf("%016x%016x", base, n),
+				"SpanId":             fmt.Sprintf("%016x", base+uint64(n)),
+				"ParentSpanId":       parent,
+				"TraceState":         "",
+				"SpanName":           s.SpanName,
+				"SpanKind":           "SPAN_KIND_SERVER",
+				"ServiceName":        s.ServiceName,
+				"ResourceAttributes": map[string]string{"service.name": s.ServiceName},
+				"SpanAttributes":     map[string]string{},
+				"Duration":           int64(5_000_000),
+				"StatusCode":         "STATUS_CODE_UNSET",
+				"StatusMessage":      "",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			buf.Write(line)
+			buf.WriteByte('\n')
+		}
+	}
+	chExec(t, `INSERT INTO otel_traces (
+		Timestamp, TraceId, SpanId, ParentSpanId, TraceState,
+		SpanName, SpanKind, ServiceName,
+		ResourceAttributes, SpanAttributes, Duration, StatusCode, StatusMessage
+	) FORMAT JSONEachRow`, buf.Bytes())
+}
+
+func deleteTraceFixture(t *testing.T, serviceNames ...string) {
+	t.Helper()
+	if len(serviceNames) == 0 {
+		return
+	}
+	quoted := make([]string, len(serviceNames))
+	for i, name := range serviceNames {
+		quoted[i] = "'" + strings.ReplaceAll(name, "'", "\\'") + "'"
+	}
+	in := strings.Join(quoted, ", ")
+	chExec(t, "DELETE FROM otel_traces WHERE ServiceName IN ("+in+")", nil)
+	chExec(t, "DELETE FROM otel_traces_histogram WHERE ServiceName IN ("+in+")", nil)
+}

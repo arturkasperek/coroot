@@ -25,26 +25,6 @@
                 </v-tab>
             </v-tabs>
 
-            <div v-if="query.view === 'attributes' || query.view === 'latency'" class="d-flex align-center mt-2">
-                <div><div class="marker baseline trace-baseline-marker"></div></div>
-                Baseline: other events within the time window
-            </div>
-            <v-form v-if="query.view === 'latency'" :disabled="loading">
-                <div class="d-flex mt-2 mb-1 align-baseline" style="gap: 8px; min-width: 0">
-                    <div>View:</div>
-                    <v-btn-toggle :value="query.diff || false" @change="setDiffMode" mandatory>
-                        <v-btn :value="false" height="30">
-                            <v-icon small class="mr-1">mdi-chart-timeline</v-icon>
-                            FlameGraph
-                        </v-btn>
-                        <v-btn :value="true" height="30" :disabled="!selectionDefined">
-                            <v-icon small class="mr-1 mdi-flip-h">mdi-select-compare</v-icon>
-                            Diff
-                        </v-btn>
-                    </v-btn-toggle>
-                </div>
-            </v-form>
-
             <div v-if="query.trace_id" class="mt-5" style="min-height: 50vh">
                 <div class="d-flex">
                     <div class="text-md-h6 mb-3">
@@ -59,243 +39,277 @@
                 <TracingTrace v-if="view.trace" :spans="view.trace" />
             </div>
 
-            <div v-else-if="query.view === 'overview'" class="mt-5" style="min-height: 50vh">
-                <v-data-table
-                    :items="view.summary ? view.summary.stats : []"
-                    :items-per-page="50"
-                    sort-by="total"
-                    sort-desc
-                    must-sort
-                    dense
-                    class="table"
-                    mobile-breakpoint="0"
-                    no-data-text="No traces found"
-                    :headers="overviewHeaders"
-                    :footer-props="{ itemsPerPageOptions: [10, 20, 50, 100, -1] }"
-                >
-                    <template #item.service_name="{ item }">
-                        <router-link :to="filterTraces(item.service_name)">
-                            {{ item.service_name }}
-                        </router-link>
-                    </template>
-                    <template #item.span_name="{ item }">
-                        <router-link :to="filterTraces(item.service_name, item.span_name)">
-                            {{ item.span_name }}
-                        </router-link>
-                    </template>
-                    <template #item.cluster="{ item }">
-                        <span class="text-no-wrap">{{ item.cluster }}</span>
-                    </template>
-                    <template #item.total="{ item }">
-                        <span>{{ format(item.total) }}</span>
-                        <span class="caption grey--text">/s</span>
-                    </template>
-                    <template #item.failed="{ item }">
-                        <router-link v-if="item.failed" :to="filterTraces(item.service_name, item.span_name, true)">
-                            <span>{{ format(item.failed, '%') }}</span>
-                            <span class="caption grey--text">%</span>
-                        </router-link>
-                        <span v-else>—</span>
-                    </template>
-                    <template #item.duration_quantiles[0]="{ item }">
-                        <span>{{ format(item.duration_quantiles[0], 'ms') }}</span>
-                        <span class="caption grey--text"> ms</span>
-                    </template>
-                    <template #item.duration_quantiles[1]="{ item }">
-                        <span>{{ format(item.duration_quantiles[1], 'ms') }}</span>
-                        <span class="caption grey--text"> ms</span>
-                    </template>
-                    <template #item.duration_quantiles[2]="{ item }">
-                        <span>{{ format(item.duration_quantiles[2], 'ms') }}</span>
-                        <span class="caption grey--text"> ms</span>
-                    </template>
+            <div v-else class="traces-body">
+                <QuickFilters
+                    :groups="traceFilterGroups"
+                    :filters="traceQuickFilters"
+                    :local-search-keys="['ServiceName', 'SpanName']"
+                    aria-label="Trace filters"
+                    @toggle="toggleQuickFilter"
+                    @clear="clearQuickFilters"
+                />
+                <div class="traces-main">
+                    <div v-if="query.view === 'attributes' || query.view === 'latency'" class="d-flex align-center mt-2">
+                        <div><div class="marker baseline trace-baseline-marker"></div></div>
+                        Baseline: other events within the time window
+                    </div>
+                    <v-form v-if="query.view === 'latency'" :disabled="loading">
+                        <div class="d-flex mt-2 mb-1 align-baseline" style="gap: 8px; min-width: 0">
+                            <div>View:</div>
+                            <v-btn-toggle :value="query.diff || false" @change="setDiffMode" mandatory>
+                                <v-btn :value="false" height="30">
+                                    <v-icon small class="mr-1">mdi-chart-timeline</v-icon>
+                                    FlameGraph
+                                </v-btn>
+                                <v-btn :value="true" height="30" :disabled="!selectionDefined">
+                                    <v-icon small class="mr-1 mdi-flip-h">mdi-select-compare</v-icon>
+                                    Diff
+                                </v-btn>
+                            </v-btn-toggle>
+                        </div>
+                    </v-form>
 
-                    <template #foot>
-                        <tfoot>
-                            <tr v-for="item in view.summary ? [view.summary.overall] : []">
-                                <td class="font-weight-medium">OVERALL</td>
-                                <td></td>
-                                <td v-if="$api.context.multicluster"></td>
-                                <td class="text-right font-weight-medium">
-                                    <span>{{ format(item.total) }}</span>
-                                    <span class="caption grey--text">/s</span>
-                                </td>
-                                <td class="text-right font-weight-medium">
-                                    <router-link v-if="item.failed" :to="filterTraces(query.service_name, query.span_name, true)">
-                                        <span>{{ format(item.failed, '%') }}</span>
-                                        <span class="caption grey--text">%</span>
-                                    </router-link>
-                                    <span v-else>—</span>
-                                </td>
-                                <td class="text-right font-weight-medium">
-                                    <span>{{ format(item.duration_quantiles[0], 'ms') }}</span>
-                                    <span class="caption grey--text"> ms</span>
-                                </td>
-                                <td class="text-right font-weight-medium">
-                                    <span>{{ format(item.duration_quantiles[1], 'ms') }}</span>
-                                    <span class="caption grey--text"> ms</span>
-                                </td>
-                                <td class="text-right font-weight-medium">
-                                    <span>{{ format(item.duration_quantiles[2], 'ms') }}</span>
-                                    <span class="caption grey--text"> ms</span>
-                                </td>
-                            </tr>
-                        </tfoot>
-                    </template>
-                </v-data-table>
-            </div>
-
-            <div v-else-if="query.view === 'traces'" class="mt-5" style="min-height: 50vh">
-                <v-simple-table dense>
-                    <thead>
-                        <tr>
-                            <th>Trace ID</th>
-                            <th v-if="$api.context.multicluster">Cluster</th>
-                            <th>Root Service</th>
-                            <th>Name</th>
-                            <th>Status</th>
-                            <th>Duration</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr v-for="s in view.traces">
-                            <td>
-                                <router-link :to="openTrace(s.trace_id)" exact class="text-no-wrap">
-                                    <v-icon small style="vertical-align: baseline">mdi-chart-timeline</v-icon>
-                                    {{ s.trace_id.substring(0, 8) }}
-                                </router-link>
-                            </td>
-                            <td v-if="$api.context.multicluster" class="text-no-wrap">{{ s.cluster }}</td>
-                            <td class="text-no-wrap">{{ s.service }}</td>
-                            <td class="text-no-wrap">{{ s.name }}</td>
-                            <td class="text-no-wrap">
-                                <v-icon v-if="s.status.error" color="error" small class="ml-1" style="margin-bottom: 2px">mdi-alert-circle</v-icon>
-                                <v-icon v-else color="success" small class="ml-1" style="margin-bottom: 2px">mdi-check-circle</v-icon>
-                                {{ s.status.message }}
-                            </td>
-                            <td class="text-no-wrap">
-                                {{ format(s.duration, 'ms') }}
-                                <span class="caption grey--text"> ms</span>
-                            </td>
-                        </tr>
-                    </tbody>
-                </v-simple-table>
-                <div v-if="!loading && (!view.traces || !view.traces.length)" class="pa-3 text-center grey--text">No traces found</div>
-                <div v-if="!loading && view.traces && view.traces.length && view.limit" class="text-right caption grey--text">
-                    The output is capped at {{ view.limit }} traces.
-                </div>
-            </div>
-
-            <div v-else-if="query.view === 'attributes'">
-                <div class="d-flex grey--text mt-2 mb-3">
-                    <v-icon small class="mr-1">mdi-information-outline</v-icon>
-                    This section shows how the attributes of traces in the selected area differ from those of other traces.
-                </div>
-                <div class="attr-stats" :style="{ gap: statsStyles.gap }">
-                    <div v-for="attr in view.attr_stats" class="attr" :style="{ width: statsStyles.attrWidth }">
-                        <div class="name">{{ attr.name }}</div>
-                        <v-tooltip v-for="v in attr.values" bottom transition="none" attach=".attr-stats" content-class="attr-value-details">
-                            <template #activator="{ on }">
-                                <router-link :to="openTrace(v.sample_trace_id)">
-                                    <div class="value" v-on="on">
-                                        <div class="name">
-                                            {{ v.name }}
-                                        </div>
-                                        <div class="bars">
-                                            <div class="bar baseline" :style="{ width: v.baseline * 100 + '%' }"></div>
-                                            <div class="bar selection" :style="{ width: v.selection * 100 + '%' }"></div>
-                                        </div>
-                                    </div>
+                    <div v-if="query.view === 'overview'" class="mt-5" style="min-height: 50vh">
+                        <v-data-table
+                            :items="view.summary ? view.summary.stats : []"
+                            :items-per-page="50"
+                            sort-by="total"
+                            sort-desc
+                            must-sort
+                            dense
+                            class="table"
+                            mobile-breakpoint="0"
+                            no-data-text="No traces found"
+                            :headers="overviewHeaders"
+                            :footer-props="{ itemsPerPageOptions: [10, 20, 50, 100, -1] }"
+                        >
+                            <template #item.service_name="{ item }">
+                                <router-link :to="filterTraces(item.service_name)">
+                                    {{ item.service_name }}
                                 </router-link>
                             </template>
-                            <v-card class="pa-2">
-                                <div>Value:</div>
-                                <div class="font-weight-medium mb-1">{{ v.name }}</div>
-                                <div class="baseline">
-                                    <span class="marker" />
-                                    Baseline: {{ v.baseline ? format(v.baseline, '%') + '%' : '—' }}
+                            <template #item.span_name="{ item }">
+                                <router-link :to="filterTraces(item.service_name, item.span_name)">
+                                    {{ item.span_name }}
+                                </router-link>
+                            </template>
+                            <template #item.cluster="{ item }">
+                                <span class="text-no-wrap">{{ item.cluster }}</span>
+                            </template>
+                            <template #item.total="{ item }">
+                                <span>{{ format(item.total) }}</span>
+                                <span class="caption grey--text">/s</span>
+                            </template>
+                            <template #item.failed="{ item }">
+                                <router-link v-if="item.failed" :to="filterTraces(item.service_name, item.span_name, true)">
+                                    <span>{{ format(item.failed, '%') }}</span>
+                                    <span class="caption grey--text">%</span>
+                                </router-link>
+                                <span v-else>—</span>
+                            </template>
+                            <template #item.duration_quantiles[0]="{ item }">
+                                <span>{{ format(item.duration_quantiles[0], 'ms') }}</span>
+                                <span class="caption grey--text"> ms</span>
+                            </template>
+                            <template #item.duration_quantiles[1]="{ item }">
+                                <span>{{ format(item.duration_quantiles[1], 'ms') }}</span>
+                                <span class="caption grey--text"> ms</span>
+                            </template>
+                            <template #item.duration_quantiles[2]="{ item }">
+                                <span>{{ format(item.duration_quantiles[2], 'ms') }}</span>
+                                <span class="caption grey--text"> ms</span>
+                            </template>
+
+                            <template #foot>
+                                <tfoot>
+                                    <tr v-for="item in view.summary ? [view.summary.overall] : []">
+                                        <td class="font-weight-medium">OVERALL</td>
+                                        <td></td>
+                                        <td v-if="$api.context.multicluster"></td>
+                                        <td class="text-right font-weight-medium">
+                                            <span>{{ format(item.total) }}</span>
+                                            <span class="caption grey--text">/s</span>
+                                        </td>
+                                        <td class="text-right font-weight-medium">
+                                            <router-link v-if="item.failed" :to="filterTraces(query.service_name, query.span_name, true)">
+                                                <span>{{ format(item.failed, '%') }}</span>
+                                                <span class="caption grey--text">%</span>
+                                            </router-link>
+                                            <span v-else>—</span>
+                                        </td>
+                                        <td class="text-right font-weight-medium">
+                                            <span>{{ format(item.duration_quantiles[0], 'ms') }}</span>
+                                            <span class="caption grey--text"> ms</span>
+                                        </td>
+                                        <td class="text-right font-weight-medium">
+                                            <span>{{ format(item.duration_quantiles[1], 'ms') }}</span>
+                                            <span class="caption grey--text"> ms</span>
+                                        </td>
+                                        <td class="text-right font-weight-medium">
+                                            <span>{{ format(item.duration_quantiles[2], 'ms') }}</span>
+                                            <span class="caption grey--text"> ms</span>
+                                        </td>
+                                    </tr>
+                                </tfoot>
+                            </template>
+                        </v-data-table>
+                    </div>
+
+                    <div v-else-if="query.view === 'traces'" class="mt-5" style="min-height: 50vh">
+                        <v-simple-table dense>
+                            <thead>
+                                <tr>
+                                    <th>Trace ID</th>
+                                    <th v-if="$api.context.multicluster">Cluster</th>
+                                    <th>Root Service</th>
+                                    <th>Name</th>
+                                    <th>Status</th>
+                                    <th>Duration</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="s in view.traces">
+                                    <td>
+                                        <router-link :to="openTrace(s.trace_id)" exact class="text-no-wrap">
+                                            <v-icon small style="vertical-align: baseline">mdi-chart-timeline</v-icon>
+                                            {{ s.trace_id.substring(0, 8) }}
+                                        </router-link>
+                                    </td>
+                                    <td v-if="$api.context.multicluster" class="text-no-wrap">{{ s.cluster }}</td>
+                                    <td class="text-no-wrap">{{ s.service }}</td>
+                                    <td class="text-no-wrap">{{ s.name }}</td>
+                                    <td class="text-no-wrap">
+                                        <v-icon v-if="s.status.error" color="error" small class="ml-1" style="margin-bottom: 2px"
+                                            >mdi-alert-circle</v-icon
+                                        >
+                                        <v-icon v-else color="success" small class="ml-1" style="margin-bottom: 2px">mdi-check-circle</v-icon>
+                                        {{ s.status.message }}
+                                    </td>
+                                    <td class="text-no-wrap">
+                                        {{ format(s.duration, 'ms') }}
+                                        <span class="caption grey--text"> ms</span>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </v-simple-table>
+                        <div v-if="!loading && (!view.traces || !view.traces.length)" class="pa-3 text-center grey--text">No traces found</div>
+                        <div v-if="!loading && view.traces && view.traces.length && view.limit" class="text-right caption grey--text">
+                            The output is capped at {{ view.limit }} traces.
+                        </div>
+                    </div>
+
+                    <div v-else-if="query.view === 'attributes'">
+                        <div class="d-flex grey--text mt-2 mb-3">
+                            <v-icon small class="mr-1">mdi-information-outline</v-icon>
+                            This section shows how the attributes of traces in the selected area differ from those of other traces.
+                        </div>
+                        <div class="attr-stats" :style="{ gap: statsStyles.gap }">
+                            <div v-for="attr in view.attr_stats" class="attr" :style="{ width: statsStyles.attrWidth }">
+                                <div class="name">{{ attr.name }}</div>
+                                <v-tooltip v-for="v in attr.values" bottom transition="none" attach=".attr-stats" content-class="attr-value-details">
+                                    <template #activator="{ on }">
+                                        <router-link :to="openTrace(v.sample_trace_id)">
+                                            <div class="value" v-on="on">
+                                                <div class="name">
+                                                    {{ v.name }}
+                                                </div>
+                                                <div class="bars">
+                                                    <div class="bar baseline" :style="{ width: v.baseline * 100 + '%' }"></div>
+                                                    <div class="bar selection" :style="{ width: v.selection * 100 + '%' }"></div>
+                                                </div>
+                                            </div>
+                                        </router-link>
+                                    </template>
+                                    <v-card class="pa-2">
+                                        <div>Value:</div>
+                                        <div class="font-weight-medium mb-1">{{ v.name }}</div>
+                                        <div class="baseline">
+                                            <span class="marker" />
+                                            Baseline: {{ v.baseline ? format(v.baseline, '%') + '%' : '—' }}
+                                        </div>
+                                        <div class="selection">
+                                            <span class="marker" />
+                                            Selection: {{ v.selection ? format(v.selection, '%') + '%' : '—' }}
+                                        </div>
+                                        <div class="d-flex grey--text mt-2">
+                                            <v-icon x-small class="mr-1">mdi-information-outline</v-icon>
+                                            Click to view a sample trace containing this attribute
+                                        </div>
+                                    </v-card>
+                                </v-tooltip>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div v-else-if="query.view === 'errors'">
+                        <div class="d-flex grey--text mt-2 mb-3">
+                            <v-icon small class="mr-2">mdi-information-outline</v-icon>
+                            This section highlights the underlying reasons why traces within the selected range contain errors. It identifies the
+                            tracing spans where errors originated.
+                        </div>
+                        <v-data-table
+                            :items="view.errors || []"
+                            :items-per-page="20"
+                            sort-by="count"
+                            sort-desc
+                            must-sort
+                            class="table errors"
+                            mobile-breakpoint="0"
+                            no-data-text="No errors found"
+                            :headers="errorsHeaders"
+                            :footer-props="{ itemsPerPageOptions: [10, 20, 50, 100, -1] }"
+                        >
+                            <template #item.service_name="{ item }">
+                                <span :title="item.service_name" class="service nowrap" :style="{ borderColor: color(item.service_name) }">
+                                    {{ item.service_name }}
+                                </span>
+                            </template>
+                            <template #item.span_name="{ item }">
+                                <div class="nowrap" :title="item.span_name">{{ item.span_name }}</div>
+                                <div v-for="(v, k) in item.labels" :title="`${k}: ${v}`" class="caption nowrap" style="line-height: 1rem">
+                                    • {{ k }}: {{ v }}
                                 </div>
-                                <div class="selection">
-                                    <span class="marker" />
-                                    Selection: {{ v.selection ? format(v.selection, '%') + '%' : '—' }}
+                            </template>
+                            <template #item.sample_error="{ item }">
+                                <div v-if="item.sample_error" class="nowrap" :title="item.sample_error">
+                                    <v-icon color="error" small style="margin-bottom: 2px">mdi-alert-circle</v-icon>
+                                    {{ item.sample_error }}
                                 </div>
-                                <div class="d-flex grey--text mt-2">
-                                    <v-icon x-small class="mr-1">mdi-information-outline</v-icon>
-                                    Click to view a sample trace containing this attribute
+                            </template>
+                            <template #item.sample_trace_id="{ item }">
+                                <router-link :to="openTrace(item.sample_trace_id)" exact class="nowrap">
+                                    <v-icon small style="vertical-align: baseline">mdi-chart-timeline</v-icon>
+                                    {{ item.sample_trace_id.substring(0, 8) }}
+                                </router-link>
+                            </template>
+                            <template #item.count="{ item }">
+                                <div class="d-flex align-center" style="gap: 4px">
+                                    <div style="text-align: right; width: 4ch">
+                                        <span>{{ format(item.count, '%') }}</span>
+                                        <span class="caption grey--text">%</span>
+                                    </div>
+                                    <div class="flex-grow-1">
+                                        <v-progress-linear :value="item.count * 100" background-opacity="0" height="14" />
+                                    </div>
                                 </div>
-                            </v-card>
-                        </v-tooltip>
+                            </template>
+                        </v-data-table>
+                    </div>
+
+                    <div v-else-if="query.view === 'latency'">
+                        <div class="d-flex grey--text mt-2 mb-3">
+                            <v-icon small class="mr-1">mdi-information-outline</v-icon>
+                            This section shows the latency FlameGraph for the selected traces. A wider frame indicates greater time consumption by
+                            that tracing span.
+                        </div>
+                        <FlameGraph
+                            v-if="view.latency"
+                            :profile="view.latency"
+                            :actions="[{ title: 'Open a sample trace', icon: 'mdi-chart-timeline', to: (s) => openTrace(s.data['trace_id']) }]"
+                            class="pt-2"
+                        />
                     </div>
                 </div>
-            </div>
-
-            <div v-else-if="query.view === 'errors'">
-                <div class="d-flex grey--text mt-2 mb-3">
-                    <v-icon small class="mr-2">mdi-information-outline</v-icon>
-                    This section highlights the underlying reasons why traces within the selected range contain errors. It identifies the tracing
-                    spans where errors originated.
-                </div>
-                <v-data-table
-                    :items="view.errors || []"
-                    :items-per-page="20"
-                    sort-by="count"
-                    sort-desc
-                    must-sort
-                    class="table errors"
-                    mobile-breakpoint="0"
-                    no-data-text="No errors found"
-                    :headers="errorsHeaders"
-                    :footer-props="{ itemsPerPageOptions: [10, 20, 50, 100, -1] }"
-                >
-                    <template #item.service_name="{ item }">
-                        <span :title="item.service_name" class="service nowrap" :style="{ borderColor: color(item.service_name) }">
-                            {{ item.service_name }}
-                        </span>
-                    </template>
-                    <template #item.span_name="{ item }">
-                        <div class="nowrap" :title="item.span_name">{{ item.span_name }}</div>
-                        <div v-for="(v, k) in item.labels" :title="`${k}: ${v}`" class="caption nowrap" style="line-height: 1rem">
-                            • {{ k }}: {{ v }}
-                        </div>
-                    </template>
-                    <template #item.sample_error="{ item }">
-                        <div v-if="item.sample_error" class="nowrap" :title="item.sample_error">
-                            <v-icon color="error" small style="margin-bottom: 2px">mdi-alert-circle</v-icon>
-                            {{ item.sample_error }}
-                        </div>
-                    </template>
-                    <template #item.sample_trace_id="{ item }">
-                        <router-link :to="openTrace(item.sample_trace_id)" exact class="nowrap">
-                            <v-icon small style="vertical-align: baseline">mdi-chart-timeline</v-icon>
-                            {{ item.sample_trace_id.substring(0, 8) }}
-                        </router-link>
-                    </template>
-                    <template #item.count="{ item }">
-                        <div class="d-flex align-center" style="gap: 4px">
-                            <div style="text-align: right; width: 4ch">
-                                <span>{{ format(item.count, '%') }}</span>
-                                <span class="caption grey--text">%</span>
-                            </div>
-                            <div class="flex-grow-1">
-                                <v-progress-linear :value="item.count * 100" background-opacity="0" height="14" />
-                            </div>
-                        </div>
-                    </template>
-                </v-data-table>
-            </div>
-
-            <div v-else-if="query.view === 'latency'">
-                <div class="d-flex grey--text mt-2 mb-3">
-                    <v-icon small class="mr-1">mdi-information-outline</v-icon>
-                    This section shows the latency FlameGraph for the selected traces. A wider frame indicates greater time consumption by that
-                    tracing span.
-                </div>
-                <FlameGraph
-                    v-if="view.latency"
-                    :profile="view.latency"
-                    :actions="[{ title: 'Open a sample trace', icon: 'mdi-chart-timeline', to: (s) => openTrace(s.data['trace_id']) }]"
-                    class="pt-2"
-                />
             </div>
         </template>
     </Views>
@@ -308,10 +322,12 @@ import Heatmap from '../components/Heatmap.vue';
 import TracingTrace from '../components/TracingTrace.vue';
 import FlameGraph from '../components/FlameGraph.vue';
 import QueryPanel from '@/components/QueryPanel.vue';
+import QuickFilters from '@/components/QuickFilters.vue';
 import { TRACE_QUERY_FIELDS, fromQueryBuilderFilters, toQueryBuilderFilters } from '@/utils/traceQuery';
+import { buildTraceQuickFilters, toTraceQuickFilters } from '@/utils/traceQuickFilters';
 
 export default {
-    components: { Views, FlameGraph, TracingTrace, Heatmap, QueryPanel },
+    components: { Views, FlameGraph, TracingTrace, Heatmap, QueryPanel, QuickFilters },
 
     data() {
         return {
@@ -436,6 +452,12 @@ export default {
             const query = JSON.stringify({ view: 'messages', filters: [{ name: 'TraceId', op: '=', value: this.query.trace_id }] });
             return { params: { view: 'logs' }, query: { query, ...this.$utils.contextQuery() } };
         },
+        traceFilterGroups() {
+            return buildTraceQuickFilters(this.view.facets);
+        },
+        traceQuickFilters() {
+            return toTraceQuickFilters(this.query.filters);
+        },
     },
 
     methods: {
@@ -458,6 +480,28 @@ export default {
         setQuery(q, from, to) {
             const query = q ? JSON.stringify(q) : undefined;
             return { query: { query, from, to } };
+        },
+        clearQuickFilters() {
+            const { from, to } = this.$route.query;
+            const q = { ...this.query };
+            q.filters = undefined;
+            this.push(this.setQuery(q, from, to));
+        },
+        toggleQuickFilter({ name, op, value }) {
+            const { from, to } = this.$route.query;
+            const q = { ...this.query };
+            const filters = [...(q.filters || [])];
+            const idx = filters.findIndex((f) => f.field === name && f.op === op && f.value === value);
+            if (idx >= 0) {
+                filters.splice(idx, 1);
+            } else {
+                q.filters = filters.filter((f) => !(f.field === name && f.value === value));
+                q.filters.push({ field: name, op, value });
+                this.push(this.setQuery(q, from, to));
+                return;
+            }
+            q.filters = filters.length ? filters : undefined;
+            this.push(this.setQuery(q, from, to));
         },
         filterTraces(serviceName, spanName, errors) {
             const { from, to } = this.$route.query;
@@ -618,6 +662,18 @@ export default {
 .view.active {
     color: var(--text-color);
     border-bottom: 2px solid var(--text-color);
+}
+
+.traces-body {
+    display: flex;
+    align-items: stretch;
+    gap: 16px;
+    min-height: 50vh;
+    margin-top: 12px;
+}
+.traces-main {
+    flex: 1 1 auto;
+    min-width: 0;
 }
 
 .trace-baseline-marker {

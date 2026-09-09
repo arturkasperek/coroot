@@ -7,6 +7,7 @@ import (
 	"net"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/coroot/coroot/clickhouse"
@@ -33,6 +34,7 @@ type Traces struct {
 	AttrStats []model.TraceSpanAttrStats `json:"attr_stats"`
 	Errors    []model.TraceErrorsStat    `json:"errors"`
 	Latency   *model.Profile             `json:"latency"`
+	Facets    []clickhouse.FacetGroup    `json:"facets"`
 }
 
 type Span struct {
@@ -177,6 +179,33 @@ func RenderTraces(ctx context.Context, chs clickhouse.Clients, w *model.World, q
 	sq.Errors = q.errors
 	sq.Limit = spansLimit
 	sq.Diff = q.Diff
+	facetQuery := sq
+	mergedFacets := map[string]map[string]uint64{}
+	var facetMu sync.Mutex
+	var facetWg sync.WaitGroup
+	addFacet := func(ch *clickhouse.Client, name string) {
+		facetWg.Add(1)
+		go func() {
+			defer facetWg.Done()
+			values, e := ch.GetTraceFacetCounts(ctx, facetQuery, name)
+			if e != nil {
+				klog.Warningln(e)
+				return
+			}
+			facetMu.Lock()
+			if mergedFacets[name] == nil {
+				mergedFacets[name] = map[string]uint64{}
+			}
+			mergeFacetValues(mergedFacets[name], values)
+			facetMu.Unlock()
+		}()
+	}
+	defer func() {
+		facetWg.Wait()
+		if q.TraceId == "" {
+			res.Facets = traceFacetGroupsFromMerged(mergedFacets)
+		}
+	}()
 
 	var overallSpans []*model.TraceSpan
 	overallErrors := map[model.TraceSpanKey]*model.TraceErrorsStat{}
@@ -186,6 +215,10 @@ func RenderTraces(ctx context.Context, chs clickhouse.Clients, w *model.World, q
 	var overallSelectionTraces, overallBaselineTraces []*model.Trace
 
 	for _, ch := range chs.Clients {
+		if q.TraceId == "" {
+			addFacet(ch, "ServiceName")
+			addFacet(ch, "SpanName")
+		}
 		switch {
 		case q.TraceId != "":
 			spans, err := ch.GetSpansByTraceId(ctx, q.TraceId)

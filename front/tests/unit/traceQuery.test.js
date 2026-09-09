@@ -78,3 +78,11 @@ test('traces puts Query above the heatmap and hides unsupported controls', async
     assert.match(traces, /include_aux: true/);
     assert.doesNotMatch(traces, /select a chart area to see traces/);
 });
+
+test('traces sidebar only exposes root service and span name groups', async () => {
+    const traces = await readFile(path.resolve(__dirname, '../../src/views/Traces.vue'), 'utf8');
+
+    assert.match(traces, /buildTraceQuickFilters/);
+    assert.match(traces, /view\.facets/);
+    assert.doesNotMatch(traces, /Root ID/);
+});
