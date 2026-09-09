@@ -6,6 +6,29 @@ const CORE_FACETS = [
 ];
 
 const SKIP_COLUMN_KEYS = new Set(['date', 'message', 'application', 'cluster']);
+const LOCAL_SEARCH_FACETS = new Set(['service.name', 'host.name']);
+
+export function groupHasLocalSearch(key) {
+    return LOCAL_SEARCH_FACETS.has(key);
+}
+
+export function filterFacetValues(values, query) {
+    const q = String(query || '')
+        .trim()
+        .toLowerCase();
+    if (!q) {
+        return values || [];
+    }
+    return (values || []).filter(
+        (v) =>
+            String(v.label || '')
+                .toLowerCase()
+                .includes(q) ||
+            String(v.value || '')
+                .toLowerCase()
+                .includes(q),
+    );
+}
 
 export function displayServiceName(value) {
     if (!value) {

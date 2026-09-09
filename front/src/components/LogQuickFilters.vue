@@ -42,6 +42,20 @@
                     </button>
 
                     <div v-if="!isCollapsed(group.key)" class="group-values">
+                        <v-text-field
+                            v-if="groupHasLocalSearch(group.key)"
+                            :value="groupSearch[group.key] || ''"
+                            :placeholder="`Search ${group.label.toLowerCase()}`"
+                            :aria-label="`Search ${group.label}`"
+                            dense
+                            hide-details
+                            outlined
+                            clearable
+                            prepend-inner-icon="mdi-magnify"
+                            class="search group-search"
+                            @input="setGroupSearch(group.key, $event)"
+                            @click.stop
+                        />
                         <div v-for="opt in shownValues(group)" :key="opt.value" class="facet-row" :title="opt.value">
                             <span class="filter-actions">
                                 <button
@@ -71,6 +85,9 @@
                             <span class="name">{{ opt.label }}</span>
                             <span class="count">{{ formatCount(opt.count) }}</span>
                         </div>
+                        <div v-if="groupSearch[group.key] && !filteredValues(group).length" class="group-empty">
+                            No matching {{ group.label.toLowerCase() }}
+                        </div>
                         <button v-if="hasMore(group)" type="button" class="more" @click="loadMore(group)">
                             Show more
                             <v-icon x-small>mdi-chevron-down</v-icon>
@@ -85,7 +102,14 @@
 </template>
 
 <script>
-import { buildLogQuickFilters, buildStableLogQuickFilters, formatCount, isLogFacetActive } from '@/utils/logQuickFilters';
+import {
+    buildLogQuickFilters,
+    buildStableLogQuickFilters,
+    filterFacetValues,
+    formatCount,
+    groupHasLocalSearch,
+    isLogFacetActive,
+} from '@/utils/logQuickFilters';
 
 const PAGE = 10;
 
@@ -101,6 +125,7 @@ export default {
     data() {
         return {
             search: '',
+            groupSearch: {},
             extra: {},
             collapsedGroups: {},
             collapsed: false,
@@ -171,6 +196,14 @@ export default {
     },
     methods: {
         formatCount,
+        groupHasLocalSearch,
+        setGroupSearch(key, value) {
+            this.$set(this.groupSearch, key, value || '');
+            this.$set(this.extra, key, 0);
+        },
+        filteredValues(group) {
+            return filterFacetValues(group.values, this.groupSearch[group.key]);
+        },
         isActive(name, op, value) {
             return isLogFacetActive(this.filters, name, op, value);
         },
@@ -181,10 +214,10 @@ export default {
             this.$set(this.collapsedGroups, key, !this.collapsedGroups[key]);
         },
         shownValues(group) {
-            return group.values.slice(0, PAGE + (this.extra[group.key] || 0));
+            return this.filteredValues(group).slice(0, PAGE + (this.extra[group.key] || 0));
         },
         hasMore(group) {
-            return this.shownValues(group).length < group.values.length;
+            return this.shownValues(group).length < this.filteredValues(group).length;
         },
         loadMore(group) {
             this.$set(this.extra, group.key, (this.extra[group.key] || 0) + PAGE);
@@ -314,6 +347,14 @@ export default {
 }
 .search:deep(input) {
     font-size: 13px;
+}
+.group-search {
+    margin: 0 7px 6px;
+}
+.group-empty {
+    padding: 6px 7px 10px 58px;
+    color: var(--text-color-dimmed);
+    font-size: 12px;
 }
 .groups {
     padding-right: 4px;

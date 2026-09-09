@@ -63,7 +63,13 @@ const backendFacets = [
             { value: '/k8s/coroot-dev/nextjs-demo', count: 2 },
         ],
     },
-    { key: 'host.name', values: [{ value: 'node-a', count: 10 }, { value: 'node-b', count: 2 }] },
+    {
+        key: 'host.name',
+        values: [
+            { value: 'node-a', count: 10 },
+            { value: 'node-b', count: 2 },
+        ],
+    },
     { key: 'Cluster', values: [{ value: 'default', count: 12 }] },
 ];
 
@@ -93,10 +99,59 @@ test('falls back to counting entries when facets is omitted', async () => {
     assert.equal(apps.values.find((v) => v.value.includes('express-demo')).count, 90);
 });
 
+const facetValues = [
+    { value: '/k8s/coroot-dev/express-demo', label: 'coroot-dev/express-demo', count: 10 },
+    { value: '/k8s/coroot-dev/nextjs-demo', label: 'coroot-dev/nextjs-demo', count: 2 },
+    { value: 'ssh.service', label: 'ssh.service', count: 848 },
+    { value: 'ollama', label: 'ollama', count: 26 },
+];
+
+test('group search is available for Application and Host only', async () => {
+    const { groupHasLocalSearch } = await loadLogQuickFilters();
+    assert.equal(groupHasLocalSearch('service.name'), true);
+    assert.equal(groupHasLocalSearch('host.name'), true);
+    assert.equal(groupHasLocalSearch('Severity'), false);
+    assert.equal(groupHasLocalSearch('Cluster'), false);
+});
+
+test('empty group search keeps all facet values', async () => {
+    const { filterFacetValues } = await loadLogQuickFilters();
+    assert.equal(filterFacetValues(facetValues, '').length, 4);
+    assert.equal(filterFacetValues(facetValues, '   ').length, 4);
+});
+
+test('group search matches display label case-insensitively', async () => {
+    const { filterFacetValues } = await loadLogQuickFilters();
+    const matched = filterFacetValues(facetValues, 'Express');
+    assert.deepEqual(
+        matched.map((v) => v.label),
+        ['coroot-dev/express-demo'],
+    );
+});
+
+test('group search matches raw facet value when the label is shortened', async () => {
+    const { filterFacetValues } = await loadLogQuickFilters();
+    const matched = filterFacetValues(facetValues, 'k8s');
+    assert.deepEqual(
+        matched.map((v) => v.value),
+        ['/k8s/coroot-dev/express-demo', '/k8s/coroot-dev/nextjs-demo'],
+    );
+});
+
 test('does not mix backend severity with client-side application when facets is present', async () => {
     const { buildLogQuickFilters } = await loadLogQuickFilters();
     const groups = buildLogQuickFilters(pageEntries, {
-        facets: [{ key: 'Severity', values: [{ value: 'info', count: 38 }, { value: 'error', count: 12 }, { value: 'unknown', count: 0 }, { value: 'warning', count: 0 }] }],
+        facets: [
+            {
+                key: 'Severity',
+                values: [
+                    { value: 'info', count: 38 },
+                    { value: 'error', count: 12 },
+                    { value: 'unknown', count: 0 },
+                    { value: 'warning', count: 0 },
+                ],
+            },
+        ],
     });
     const apps = groups.find((g) => g.key === 'service.name');
     assert.equal(apps, undefined);
