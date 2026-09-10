@@ -387,8 +387,8 @@ export default {
     computed: {
         views() {
             return [
-                { name: 'overview', title: 'overview', icon: 'mdi-format-list-checkbox' },
                 { name: 'traces', title: 'traces', icon: 'mdi-chart-timeline' },
+                { name: 'overview', title: 'overview', icon: 'mdi-format-list-checkbox' },
                 { name: 'errors', title: 'error causes', icon: 'mdi-target' },
                 { name: 'latency', title: 'latency explorer', icon: 'mdi-clock-fast' },
                 { name: 'attributes', title: 'compare attributes', icon: 'mdi-select-compare' },
@@ -432,7 +432,7 @@ export default {
                 //
             }
             if (!q.view) {
-                q.view = 'overview';
+                q.view = 'traces';
             }
             return q;
         },
