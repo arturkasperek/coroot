@@ -162,50 +162,27 @@
                     </div>
 
                     <div v-else-if="query.view === 'traces'" class="mt-5" style="min-height: 50vh">
-                        <v-simple-table dense>
-                            <thead>
-                                <tr>
-                                    <th>Date</th>
-                                    <th>Trace ID</th>
-                                    <th v-if="$api.context.multicluster">Cluster</th>
-                                    <th>Root Service</th>
-                                    <th>Name</th>
-                                    <th>Status</th>
-                                    <th>Duration</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <router-link
-                                    v-for="s in view.traces"
-                                    :key="s.trace_id"
-                                    tag="tr"
-                                    :to="openTrace(s.trace_id)"
-                                    exact
-                                    class="trace-row"
-                                >
-                                    <td class="text-no-wrap">{{ $format.date(s.timestamp, '{MMM} {DD} {HH}:{mm}:{ss}') }}</td>
-                                    <td class="text-no-wrap">
-                                        <v-icon small style="vertical-align: baseline">mdi-chart-timeline</v-icon>
-                                        {{ s.trace_id.substring(0, 8) }}
-                                    </td>
-                                    <td v-if="$api.context.multicluster" class="text-no-wrap">{{ s.cluster }}</td>
-                                    <td class="text-no-wrap">{{ s.service }}</td>
-                                    <td class="text-no-wrap">{{ s.name }}</td>
-                                    <td class="text-no-wrap">
-                                        <v-icon v-if="s.status.error" color="error" small class="ml-1" style="margin-bottom: 2px"
-                                            >mdi-alert-circle</v-icon
-                                        >
-                                        <v-icon v-else color="success" small class="ml-1" style="margin-bottom: 2px">mdi-check-circle</v-icon>
-                                        {{ s.status.message }}
-                                    </td>
-                                    <td class="text-no-wrap">
-                                        {{ format(s.duration, 'ms') }}
-                                        <span class="caption grey--text"> ms</span>
-                                    </td>
-                                </router-link>
-                            </tbody>
-                        </v-simple-table>
-                        <div v-if="!loading && (!view.traces || !view.traces.length)" class="pa-3 text-center grey--text">No traces found</div>
+                        <ObservabilityTable
+                            :headers="traceHeaders"
+                            :items="view.traces || []"
+                            :loading="loading"
+                            row-key="trace_id"
+                            :row-link="(item) => openTrace(item.trace_id)"
+                            :row-color="traceStatusColor"
+                            empty-text="No traces found"
+                            mono
+                        >
+                            <template #item.date="{ item }">{{ $format.date(item.timestamp, '{MMM} {DD} {HH}:{mm}:{ss}') }}</template>
+                            <template #item.trace_id="{ item }">
+                                <v-icon small style="vertical-align: baseline">mdi-chart-timeline</v-icon>
+                                {{ item.trace_id.substring(0, 8) }}
+                            </template>
+                            <template #item.status="{ item }">{{ item.status.message }}</template>
+                            <template #item.duration="{ item }">
+                                {{ format(item.duration, 'ms') }}
+                                <span class="caption grey--text"> ms</span>
+                            </template>
+                        </ObservabilityTable>
                         <div v-if="!loading && view.traces && view.traces.length && view.limit" class="text-right caption grey--text">
                             The output is capped at {{ view.limit }} traces.
                         </div>
@@ -336,11 +313,12 @@ import TracingTrace from '../components/TracingTrace.vue';
 import FlameGraph from '../components/FlameGraph.vue';
 import QueryPanel from '@/components/QueryPanel.vue';
 import QuickFilters from '@/components/QuickFilters.vue';
+import ObservabilityTable from '@/components/ObservabilityTable.vue';
 import { TRACE_QUERY_FIELDS, fromQueryBuilderFilters, toQueryBuilderFilters } from '@/utils/traceQuery';
 import { buildTraceQuickFilters, toTraceQuickFilters } from '@/utils/traceQuickFilters';
 
 export default {
-    components: { Views, FlameGraph, TracingTrace, Heatmap, QueryPanel, QuickFilters },
+    components: { Views, FlameGraph, TracingTrace, Heatmap, QueryPanel, QuickFilters, ObservabilityTable },
 
     data() {
         return {
@@ -400,6 +378,22 @@ export default {
                 { name: 'latency', title: 'latency explorer', icon: 'mdi-clock-fast' },
                 { name: 'attributes', title: 'compare attributes', icon: 'mdi-select-compare' },
             ];
+        },
+        traceHeaders() {
+            const headers = [
+                { value: 'date', text: 'Date' },
+                { value: 'trace_id', text: 'Trace ID', cellClass: 'blue--text text--lighten-2 font-weight-medium' },
+                { value: 'cluster', text: 'Cluster' },
+                { value: 'service', text: 'Root Service' },
+                { value: 'name', text: 'Name' },
+                {
+                    value: 'status',
+                    text: 'Status',
+                    cellClass: (trace) => (trace.status.error ? 'red--text text--lighten-1' : 'green--text text--lighten-1'),
+                },
+                { value: 'duration', text: 'Duration' },
+            ];
+            return this.$api.context.multicluster ? headers : headers.filter((header) => header.value !== 'cluster');
         },
         overviewHeaders() {
             const headers = [
@@ -642,6 +636,9 @@ export default {
         color(s) {
             return palette.hash2(s);
         },
+        traceStatusColor(trace) {
+            return palette.get(trace.status.error ? 'red-darken1' : 'green');
+        },
         format(v, unit) {
             if (unit === 'ts') {
                 return this.$format.date(v, '{MMM} {DD}, {HH}:{mm}');
@@ -755,10 +752,6 @@ export default {
     z-index: 2;
     background: var(--background-color);
 }
-.trace-row {
-    cursor: pointer;
-}
-
 .trace-baseline-marker {
     height: 16px;
     width: 16px;

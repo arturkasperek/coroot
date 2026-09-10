@@ -68,6 +68,33 @@ test('overview logs and traces use the shared query panel', async () => {
     }
 });
 
+test('logs and trace results use the shared observability table', async () => {
+    const [logs, traces, table] = await Promise.all([
+        readFile(path.resolve(__dirname, '../../src/components/Logs.vue'), 'utf8'),
+        readFile(path.resolve(__dirname, '../../src/views/Traces.vue'), 'utf8'),
+        readFile(path.resolve(__dirname, '../../src/components/ObservabilityTable.vue'), 'utf8'),
+    ]);
+
+    for (const source of [logs, traces]) {
+        assert.match(source, /import ObservabilityTable from ['"]@\/components\/ObservabilityTable\.vue['"]/);
+        assert.match(source, /<ObservabilityTable\b/);
+    }
+    assert.match(table, /<v-simple-table\b/);
+    assert.match(table, /class="observability-table"/);
+    assert.match(table, /class="marker"/);
+});
+
+test('shared observability table supports per-row cell classes for trace emphasis', async () => {
+    const [traces, table] = await Promise.all([
+        readFile(path.resolve(__dirname, '../../src/views/Traces.vue'), 'utf8'),
+        readFile(path.resolve(__dirname, '../../src/components/ObservabilityTable.vue'), 'utf8'),
+    ]);
+
+    assert.match(table, /cellClassValue\(header, item\)/);
+    assert.match(traces, /blue--text text--lighten-2/);
+    assert.match(traces, /trace\.status\.error \? 'red--text text--lighten-1' : 'green--text text--lighten-1'/);
+});
+
 test('traces puts Query above the heatmap and hides unsupported controls', async () => {
     const traces = await readFile(path.resolve(__dirname, '../../src/views/Traces.vue'), 'utf8');
 

@@ -57,57 +57,48 @@
                     @clear="clearQuickFilters"
                 />
                 <div class="logs-table">
-                    <v-simple-table v-if="entries" :key="entries.length" dense class="entries">
-                        <thead>
-                            <tr>
-                                <template v-for="col in columns">
-                                    <th :key="col.key" class="px-2">{{ col.label }}</th>
+                    <ObservabilityTable
+                        :headers="columns"
+                        :items="entries"
+                        :loading="loading"
+                        :row-key="(item, index) => `${item.timestamp}-${index}`"
+                        :row-color="(item) => item.color"
+                        :value-getter="getColumnValue"
+                        empty-text="No messages found"
+                        mono
+                        clickable
+                        @row-click="entry = $event"
+                    >
+                        <template #item.application="{ item, value }">
+                            <v-menu offset-y @click.stop>
+                                <template #activator="{ on }">
+                                    <a v-on="on" class="nowrap" style="display: inline-block; max-width: 20ch" @click.stop>{{ value }}</a>
                                 </template>
-                            </tr>
-                        </thead>
-                        <tbody class="mono">
-                            <tr v-for="(e, index) in entries" :key="`${e.timestamp}-${index}`" @click="entry = e" style="cursor: pointer">
-                                <template v-for="col in cols">
-                                    <td :key="col.key" class="text-no-wrap px-2" :class="{ 'pl-0': col.key === columns[0].key }">
-                                        <div v-if="col.key === 'date'" class="d-flex gap-1">
-                                            <div class="marker" :style="{ backgroundColor: e.color }" />
-                                            <div>{{ getColumnValue(e, col) }}</div>
-                                        </div>
-                                        <v-menu v-else-if="col.key === 'application'" offset-y @click.stop>
-                                            <template #activator="{ on }">
-                                                <a v-on="on" class="nowrap" style="display: inline-block; max-width: 20ch" @click.stop>{{
-                                                    getColumnValue(e, col)
-                                                }}</a>
-                                            </template>
-                                            <v-list dense>
-                                                <template v-if="e.attributes['service.name']">
-                                                    <v-list-item @click="qbAdd('service.name', '=', e.attributes['service.name'])">
-                                                        <v-icon small class="mr-1">mdi-plus</v-icon>
-                                                        add to search
-                                                    </v-list-item>
-                                                    <v-list-item @click="qbAdd('service.name', '!=', e.attributes['service.name'])">
-                                                        <v-icon small class="mr-1">mdi-minus</v-icon>
-                                                        exclude from search
-                                                    </v-list-item>
-                                                </template>
-                                                <v-list-item v-if="e.link" :to="e.link">
-                                                    <v-icon small class="mr-1">mdi-open-in-new</v-icon>
-                                                    go to application
-                                                </v-list-item>
-                                            </v-list>
-                                        </v-menu>
-                                        <div v-else>
-                                            <span v-if="col.maxWidth" :title="getColumnValue(e, col)">
-                                                {{ truncateText(getColumnValue(e, col), col.maxWidth) }}
-                                            </span>
-                                            <span v-else>{{ getColumnValue(e, col) }}</span>
-                                        </div>
-                                    </td>
-                                </template>
-                            </tr>
-                        </tbody>
-                    </v-simple-table>
-                    <div v-else-if="!loading" class="pa-3 text-center grey--text">No messages found</div>
+                                <v-list dense>
+                                    <template v-if="item.attributes['service.name']">
+                                        <v-list-item @click="qbAdd('service.name', '=', item.attributes['service.name'])">
+                                            <v-icon small class="mr-1">mdi-plus</v-icon>
+                                            add to search
+                                        </v-list-item>
+                                        <v-list-item @click="qbAdd('service.name', '!=', item.attributes['service.name'])">
+                                            <v-icon small class="mr-1">mdi-minus</v-icon>
+                                            exclude from search
+                                        </v-list-item>
+                                    </template>
+                                    <v-list-item v-if="item.link" :to="item.link">
+                                        <v-icon small class="mr-1">mdi-open-in-new</v-icon>
+                                        go to application
+                                    </v-list-item>
+                                </v-list>
+                            </v-menu>
+                        </template>
+                        <template v-for="col in columns.filter((col) => col.key !== 'application')" #[`item.${col.key}`]="{ value }">
+                            <span v-if="col.maxWidth" :key="col.key" :title="value">
+                                {{ truncateText(value, col.maxWidth) }}
+                            </span>
+                            <span v-else :key="col.key">{{ value }}</span>
+                        </template>
+                    </ObservabilityTable>
                     <div v-if="entries.length === query.limit" class="text-right caption grey--text mt-1">
                         The output is capped at
                         <InlineSelect v-model="query.limit" :items="limits" />
@@ -128,6 +119,7 @@ import LogEntry from '@/components/LogEntry.vue';
 import InlineSelect from '@/components/InlineSelect.vue';
 import LogSearchButtons from '@/components/LogSearchButtons.vue';
 import LogQuickFilters from '@/components/LogQuickFilters.vue';
+import ObservabilityTable from '@/components/ObservabilityTable.vue';
 
 const SEVERITY_FACETS = [
     { value: 'unknown', color: 'grey-lighten1' },
@@ -137,7 +129,7 @@ const SEVERITY_FACETS = [
 ];
 
 export default {
-    components: { LogQuickFilters, LogSearchButtons, InlineSelect, LogEntry, Chart, QueryPanel },
+    components: { ObservabilityTable, LogQuickFilters, LogSearchButtons, InlineSelect, LogEntry, Chart, QueryPanel },
 
     props: {
         defaultFilters: {
@@ -239,9 +231,6 @@ export default {
     },
 
     computed: {
-        cols() {
-            return this.columns;
-        },
         queryWithDefaults() {
             return {
                 ...this.query,
@@ -521,14 +510,6 @@ export default {
 .view.active {
     color: var(--text-color);
     border-bottom: 2px solid var(--text-color);
-}
-.mono {
-    font-family: monospace, monospace;
-}
-.marker {
-    height: 20px;
-    width: 4px;
-    filter: brightness(var(--brightness));
 }
 .logs-body {
     display: flex;
