@@ -165,6 +165,7 @@
                         <v-simple-table dense>
                             <thead>
                                 <tr>
+                                    <th>Date</th>
                                     <th>Trace ID</th>
                                     <th v-if="$api.context.multicluster">Cluster</th>
                                     <th>Root Service</th>
@@ -174,12 +175,18 @@
                                 </tr>
                             </thead>
                             <tbody>
-                                <tr v-for="s in view.traces">
-                                    <td>
-                                        <router-link :to="openTrace(s.trace_id)" exact class="text-no-wrap">
-                                            <v-icon small style="vertical-align: baseline">mdi-chart-timeline</v-icon>
-                                            {{ s.trace_id.substring(0, 8) }}
-                                        </router-link>
+                                <router-link
+                                    v-for="s in view.traces"
+                                    :key="s.trace_id"
+                                    tag="tr"
+                                    :to="openTrace(s.trace_id)"
+                                    exact
+                                    class="trace-row"
+                                >
+                                    <td class="text-no-wrap">{{ $format.date(s.timestamp, '{MMM} {DD} {HH}:{mm}:{ss}') }}</td>
+                                    <td class="text-no-wrap">
+                                        <v-icon small style="vertical-align: baseline">mdi-chart-timeline</v-icon>
+                                        {{ s.trace_id.substring(0, 8) }}
                                     </td>
                                     <td v-if="$api.context.multicluster" class="text-no-wrap">{{ s.cluster }}</td>
                                     <td class="text-no-wrap">{{ s.service }}</td>
@@ -195,7 +202,7 @@
                                         {{ format(s.duration, 'ms') }}
                                         <span class="caption grey--text"> ms</span>
                                     </td>
-                                </tr>
+                                </router-link>
                             </tbody>
                         </v-simple-table>
                         <div v-if="!loading && (!view.traces || !view.traces.length)" class="pa-3 text-center grey--text">No traces found</div>
@@ -747,6 +754,9 @@ export default {
     top: 0;
     z-index: 2;
     background: var(--background-color);
+}
+.trace-row {
+    cursor: pointer;
 }
 
 .trace-baseline-marker {
