@@ -26,6 +26,15 @@ if (globalThis.__nextjsDemoOtelStarted) {
     instrumentations: [
       getNodeAutoInstrumentations({
         '@opentelemetry/instrumentation-fs': { enabled: false },
+        '@opentelemetry/instrumentation-http': {
+          requestHook(span, request) {
+            if (typeof request.httpVersion !== 'string' || typeof request.url !== 'string') {
+              return;
+            }
+            const path = request.url.split('?')[0] || '/';
+            span.updateName(`${request.method} ${path}`);
+          },
+        },
       }),
     ],
   });
