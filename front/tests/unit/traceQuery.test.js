@@ -99,6 +99,21 @@ test('shared observability table supports per-row cell classes for trace emphasi
     assert.match(traces, /trace\.status\.error \? 'red--text text--lighten-1' : 'green--text text--lighten-1'/);
 });
 
+test('trace details show correlated logs below the trace with a link to the full logs view', async () => {
+    const traces = await readFile(path.resolve(__dirname, '../../src/views/Traces.vue'), 'utf8');
+    const tracePosition = traces.indexOf('<TracingTrace');
+    const logsLinkPosition = traces.indexOf('View in Logs');
+    const logsTablePosition = traces.indexOf(':headers="traceLogHeaders"');
+
+    assert.ok(tracePosition >= 0);
+    assert.ok(logsLinkPosition > tracePosition);
+    assert.ok(logsTablePosition > logsLinkPosition);
+    assert.match(traces, /getTraceLogs\(\)/);
+    assert.match(traces, /name: 'TraceId', op: '=', value: this\.query\.trace_id/);
+    assert.match(traces, /:items="traceLogEntries"/);
+    assert.match(traces, /empty-text="No correlated logs found"/);
+});
+
 test('traces puts Query above the heatmap and hides unsupported controls', async () => {
     const traces = await readFile(path.resolve(__dirname, '../../src/views/Traces.vue'), 'utf8');
 

@@ -31,18 +31,44 @@
                 </v-tab>
             </v-tabs>
 
-            <div v-if="query.trace_id" class="mt-5" style="min-height: 50vh">
-                <div class="d-flex">
-                    <div class="text-md-h6 mb-3">
-                        <router-link :to="openView('traces')">
-                            <v-icon>mdi-arrow-left</v-icon>
-                        </router-link>
-                        Trace {{ query.trace_id }}
-                    </div>
-                    <v-spacer />
-                    <v-btn v-if="logsLink" :to="logsLink" small color="primary"> Show logs </v-btn>
+            <div v-if="query.trace_id" class="mt-5 trace-detail" style="min-height: 50vh">
+                <div class="text-md-h6 mb-3">
+                    <router-link :to="openView('traces')">
+                        <v-icon>mdi-arrow-left</v-icon>
+                    </router-link>
+                    Trace {{ query.trace_id }}
                 </div>
                 <TracingTrace v-if="view.trace" :spans="view.trace" />
+
+                <section class="trace-logs mt-6" aria-labelledby="trace-logs-title">
+                    <div class="d-flex align-center mb-2">
+                        <div id="trace-logs-title" class="text-subtitle-1 font-weight-medium">Correlated logs</div>
+                        <v-spacer />
+                        <v-btn v-if="logsLink" :to="logsLink" small outlined color="primary">View in Logs</v-btn>
+                    </div>
+                    <v-alert v-if="traceLogsError" color="error" icon="mdi-alert-octagon-outline" outlined text class="mb-2">
+                        {{ traceLogsError }}
+                    </v-alert>
+                    <ObservabilityTable
+                        v-else
+                        :headers="traceLogHeaders"
+                        :items="traceLogEntries"
+                        :loading="traceLogsLoading"
+                        :row-key="(item, index) => `${item.timestamp}-${index}`"
+                        :row-color="(item) => item.color"
+                        empty-text="No correlated logs found"
+                        class="trace-logs-table"
+                        mono
+                    >
+                        <template #item.application="{ item, value }">
+                            <router-link v-if="item.link" :to="item.link">{{ value }}</router-link>
+                            <span v-else>{{ value }}</span>
+                        </template>
+                        <template #item.message="{ value }">
+                            <span :title="value">{{ value }}</span>
+                        </template>
+                    </ObservabilityTable>
+                </section>
             </div>
 
             <div v-else ref="tracesBody" class="traces-body" :style="{ height: `${tracesBodyHeight}px` }">
@@ -331,6 +357,9 @@ export default {
             },
             loading: false,
             error: '',
+            traceLogs: {},
+            traceLogsLoading: false,
+            traceLogsError: '',
             tracesBodyHeight: 0,
             heatmapCollapsed: false,
         };
@@ -394,6 +423,42 @@ export default {
                 { value: 'duration', text: 'Duration' },
             ];
             return this.$api.context.multicluster ? headers : headers.filter((header) => header.value !== 'cluster');
+        },
+        traceLogHeaders() {
+            const headers = [
+                { value: 'date', text: 'Date' },
+                { value: 'cluster', text: 'Cluster' },
+                { value: 'application', text: 'Application', cellClass: 'blue--text text--lighten-2' },
+                { value: 'message', text: 'Message' },
+            ];
+            return this.$api.context.multicluster ? headers : headers.filter((header) => header.value !== 'cluster');
+        },
+        traceLogEntries() {
+            return [...(this.traceLogs.entries || [])]
+                .sort((a, b) => b.timestamp - a.timestamp)
+                .map((entry) => {
+                    let application = entry.application;
+                    let link;
+                    if (application && application.includes(':')) {
+                        const id = this.$utils.appId(application);
+                        application = id.name;
+                        link = {
+                            name: 'overview',
+                            params: { view: 'applications', id: entry.application, report: 'Logs' },
+                            query: this.$utils.contextQuery(),
+                        };
+                    }
+                    const message = (entry.message || '').trim();
+                    const newline = message.indexOf('\n');
+                    return {
+                        ...entry,
+                        application,
+                        link,
+                        message: newline > 0 ? message.substring(0, newline) : message,
+                        color: palette.get(entry.color),
+                        date: this.$format.date(entry.timestamp, '{MMM} {DD} {HH}:{mm}:{ss}'),
+                    };
+                });
         },
         overviewHeaders() {
             const headers = [
@@ -506,6 +571,13 @@ export default {
         },
         get() {
             const query = JSON.stringify({ ...this.query, include_aux: true });
+            if (this.query.trace_id) {
+                this.getTraceLogs();
+            } else {
+                this.traceLogs = {};
+                this.traceLogsLoading = false;
+                this.traceLogsError = '';
+            }
             this.loading = true;
             this.error = '';
             this.$api.getOverview('traces', query, (data, error) => {
@@ -515,6 +587,25 @@ export default {
                     return;
                 }
                 this.view = data.traces || {};
+            });
+        },
+        getTraceLogs() {
+            const traceId = this.query.trace_id;
+            const query = JSON.stringify({ view: 'messages', filters: [{ name: 'TraceId', op: '=', value: this.query.trace_id }], limit: 100 });
+            this.traceLogs = {};
+            this.traceLogsLoading = true;
+            this.traceLogsError = '';
+            this.$api.getOverview('logs', query, (data, error) => {
+                if (this.query.trace_id !== traceId) {
+                    return;
+                }
+                this.traceLogsLoading = false;
+                if (error) {
+                    this.traceLogsError = error;
+                    return;
+                }
+                this.traceLogs = data.logs || {};
+                this.traceLogsError = this.traceLogs.error || '';
             });
         },
         push(to) {
@@ -754,6 +845,21 @@ export default {
     overflow: visible;
 }
 .traces-main:deep(thead th) {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--background-color);
+}
+.trace-logs-table {
+    max-height: 360px;
+    overflow: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+}
+.trace-logs-table:deep(.v-data-table__wrapper) {
+    overflow: visible;
+}
+.trace-logs-table:deep(thead th) {
     position: sticky;
     top: 0;
     z-index: 2;
