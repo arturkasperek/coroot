@@ -16,7 +16,13 @@
                 {{ view.error }}
             </v-alert>
 
-            <Heatmap v-if="view.heatmap" :heatmap="view.heatmap" :selection="selection" @select="setSelection" :loading="loading" />
+            <div v-if="view.heatmap" class="heatmap-section" :class="{ collapsed: heatmapCollapsed }">
+                <v-btn text small class="heatmap-toggle" :aria-expanded="String(!heatmapCollapsed)" @click="heatmapCollapsed = !heatmapCollapsed">
+                    <v-icon small class="mr-1">{{ heatmapCollapsed ? 'mdi-chevron-down' : 'mdi-chevron-up' }}</v-icon>
+                    {{ heatmapCollapsed ? 'Show heatmap' : 'Hide heatmap' }}
+                </v-btn>
+                <Heatmap v-if="!heatmapCollapsed" :heatmap="view.heatmap" :selection="selection" @select="setSelection" :loading="loading" />
+            </div>
 
             <v-tabs height="32" show-arrows hide-slider>
                 <v-tab v-for="v in views" :key="v.name" :to="openView(v.name)" class="view" :class="{ active: query.view === v.name }">
@@ -39,7 +45,7 @@
                 <TracingTrace v-if="view.trace" :spans="view.trace" />
             </div>
 
-            <div v-else class="traces-body">
+            <div v-else ref="tracesBody" class="traces-body" :style="{ height: `${tracesBodyHeight}px` }">
                 <QuickFilters
                     :groups="traceFilterGroups"
                     :filters="traceQuickFilters"
@@ -340,11 +346,26 @@ export default {
             },
             loading: false,
             error: '',
+            tracesBodyHeight: 0,
+            heatmapCollapsed: false,
         };
     },
 
     mounted() {
         this.$events.watch(this, this.get, 'refresh');
+        window.addEventListener('resize', this.scheduleTracesBodyResize);
+        window.visualViewport?.addEventListener('resize', this.scheduleTracesBodyResize);
+        this.scheduleTracesBodyResize();
+    },
+
+    updated() {
+        this.scheduleTracesBodyResize();
+    },
+
+    beforeDestroy() {
+        window.removeEventListener('resize', this.scheduleTracesBodyResize);
+        window.visualViewport?.removeEventListener('resize', this.scheduleTracesBodyResize);
+        cancelAnimationFrame(this._tracesBodyResizeFrame);
     },
 
     watch: {
@@ -461,6 +482,27 @@ export default {
     },
 
     methods: {
+        scheduleTracesBodyResize() {
+            cancelAnimationFrame(this._tracesBodyResizeFrame);
+            this._tracesBodyResizeFrame = requestAnimationFrame(() => {
+                this._tracesBodyResizeFrame = 0;
+                this.updateTracesBodyHeight();
+            });
+        },
+        updateTracesBodyHeight() {
+            const body = this.$refs.tracesBody;
+            if (!body) {
+                return;
+            }
+            const container = body.closest('.container');
+            const bottomPadding = container ? Number.parseFloat(getComputedStyle(container).paddingBottom) || 0 : 0;
+            const viewport = window.visualViewport;
+            const viewportBottom = viewport ? viewport.offsetTop + viewport.height : window.innerHeight;
+            const nextHeight = Math.max(0, Math.floor(viewportBottom - body.getBoundingClientRect().top - bottomPadding));
+            if (this.tracesBodyHeight !== nextHeight) {
+                this.tracesBodyHeight = nextHeight;
+            }
+        },
         get() {
             const query = JSON.stringify({ ...this.query, include_aux: true });
             this.loading = true;
@@ -664,16 +706,47 @@ export default {
     border-bottom: 2px solid var(--text-color);
 }
 
+.heatmap-section {
+    position: relative;
+}
+.heatmap-section.collapsed {
+    height: 32px;
+}
+.heatmap-toggle {
+    position: absolute;
+    top: -6px;
+    left: 0;
+    z-index: 2;
+    color: var(--text-color-dimmed);
+}
+.heatmap-section.collapsed .heatmap-toggle {
+    top: 0;
+}
+
 .traces-body {
     display: flex;
     align-items: stretch;
     gap: 16px;
-    min-height: 50vh;
+    min-height: 0;
     margin-top: 12px;
+    overflow: hidden;
 }
 .traces-main {
     flex: 1 1 auto;
     min-width: 0;
+    height: 100%;
+    overflow: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+}
+.traces-main:deep(.v-data-table__wrapper) {
+    overflow: visible;
+}
+.traces-main:deep(thead th) {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--background-color);
 }
 
 .trace-baseline-marker {
