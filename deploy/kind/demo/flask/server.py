@@ -4,6 +4,7 @@ import sys
 import time
 
 from flask import Flask, jsonify, request
+from opentelemetry import trace
 
 app = Flask(__name__)
 requests_counter = None
@@ -11,6 +12,11 @@ hellos_counter = None
 
 
 def emit(severity, body, is_error=False, **attrs):
+    span = trace.get_current_span()
+    ctx = span.get_span_context()
+    if ctx.is_valid:
+        attrs.setdefault("trace_id", format(ctx.trace_id, "032x"))
+        attrs.setdefault("span_id", format(ctx.span_id, "016x"))
     line = json.dumps({"severityText": severity, "body": body, **attrs})
     print(line, file=sys.stderr if is_error else sys.stdout, flush=True)
 

@@ -1,6 +1,1 @@
-export async function register() {
-  if (process.env.NEXT_RUNTIME === 'edge') {
-    return;
-  }
-  await import('./otel.js');
-}
+export async function register() {}
