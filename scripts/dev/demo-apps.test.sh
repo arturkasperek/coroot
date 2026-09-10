@@ -83,5 +83,11 @@ grep -q 'OTLPSpanExporter' "$FLASK_OTEL" || fail "otel.py missing OTLPSpanExport
 grep -q '/v1/traces' "$FLASK_OTEL" || fail "otel.py must export traces to /v1/traces"
 grep -q 'FlaskInstrumentor' "$FLASK_OTEL" || fail "otel.py missing FlaskInstrumentor"
 
+grep -q 'http://nextjs-demo:3000/chain' "$APPS" || fail "demo-traffic missing http://nextjs-demo:3000/chain"
+grep -q 'FLASK_URL' "$APPS" || fail "express-demo missing FLASK_URL"
+grep -q '/api/chain' "$ROOT/deploy/kind/demo/express/server.js" || fail "express server.js missing /api/chain"
+[[ -f "$ROOT/deploy/kind/demo/nextjs/pages/chain.js" ]] || fail "missing nextjs pages/chain.js"
+grep -q '/api/chain' "$ROOT/deploy/kind/demo/nextjs/pages/chain.js" || fail "nextjs chain page missing /api/chain"
+
 grep -q 'Flask' "$DEV" || fail "dev.sh banner missing Flask demo"
 grep -q '13003' "$DEV" || fail "dev.sh banner missing Flask port 13003"

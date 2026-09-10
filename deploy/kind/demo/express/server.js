@@ -45,6 +45,21 @@ app.get('/api/error', (_req, res) => {
   res.status(500).json({ service: 'express-demo', error: 'simulated' });
 });
 
+app.get('/api/chain', async (req, res) => {
+  const token = typeof req.query.token === 'string' ? req.query.token : '';
+  const flaskBase = process.env.FLASK_URL || 'http://flask-demo:3000';
+  const url = token ? `${flaskBase}/api/hello?token=${encodeURIComponent(token)}` : `${flaskBase}/api/hello`;
+  log.info(token ? `express chain ${token}` : 'express chain', { url });
+  try {
+    const r = await fetch(url);
+    const flask = await r.json();
+    res.json({ service: 'express-demo', flask });
+  } catch (err) {
+    log.error('express chain flask fetch failed', { message: String(err) });
+    res.status(502).json({ service: 'express-demo', error: 'flask unreachable' });
+  }
+});
+
 app.listen(port, '0.0.0.0', () => {
   log.info('express-demo listening', { port: String(port) });
 });

@@ -156,7 +156,7 @@ k8s_resource(
 k8s_resource(
     'express-demo',
     port_forwards=['13001:3000'],
-    resource_deps=['coroot'],
+    resource_deps=['coroot', 'flask-demo'],
     trigger_mode=TRIGGER_MODE_MANUAL,
 )
 k8s_resource(

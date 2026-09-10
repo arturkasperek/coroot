@@ -27,6 +27,20 @@ func expressBase() string {
 	return "http://127.0.0.1:13001"
 }
 
+func nextjsBase() string {
+	if v := os.Getenv("COROOT_E2E_NEXTJS_URL"); v != "" {
+		return strings.TrimRight(v, "/")
+	}
+	return "http://127.0.0.1:13000"
+}
+
+func flaskBase() string {
+	if v := os.Getenv("COROOT_E2E_FLASK_URL"); v != "" {
+		return strings.TrimRight(v, "/")
+	}
+	return "http://127.0.0.1:13003"
+}
+
 func httpGetJSON(t *testing.T, rawURL string, dest any) {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
@@ -296,10 +310,12 @@ type overviewLogs struct {
 	Error   string `json:"error"`
 	Message string `json:"message"`
 	Entries []struct {
-		Message    string            `json:"message"`
-		Severity   string            `json:"severity"`
-		Attributes map[string]string `json:"attributes"`
-		Cluster    string            `json:"cluster"`
+		Application string            `json:"application"`
+		Message     string            `json:"message"`
+		Severity    string            `json:"severity"`
+		Attributes  map[string]string `json:"attributes"`
+		TraceId     string            `json:"trace_id"`
+		Cluster     string            `json:"cluster"`
 	} `json:"entries"`
 	Facets apiFacetGroups `json:"facets"`
 }
@@ -334,10 +350,20 @@ type apiFacetGroups []struct {
 	} `json:"values"`
 }
 
+type overviewTraceSpan struct {
+	Service  string `json:"service"`
+	TraceId  string `json:"trace_id"`
+	Id       string `json:"id"`
+	ParentId string `json:"parent_id"`
+	Name     string `json:"name"`
+}
+
 type overviewTraces struct {
-	Error   string         `json:"error"`
-	Message string         `json:"message"`
-	Facets  apiFacetGroups `json:"facets"`
+	Error   string              `json:"error"`
+	Message string              `json:"message"`
+	Facets  apiFacetGroups      `json:"facets"`
+	Trace   []overviewTraceSpan `json:"trace"`
+	Traces  []overviewTraceSpan `json:"traces"`
 }
 
 func fetchOverviewTraces(t *testing.T, projectID string, query map[string]any) overviewTraces {

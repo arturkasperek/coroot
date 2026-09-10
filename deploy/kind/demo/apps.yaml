@@ -46,6 +46,8 @@ spec:
               value: http/protobuf
             - name: OTEL_LOGS_EXPORTER
               value: none
+            - name: FLASK_URL
+              value: http://flask-demo:3000
           ports:
             - containerPort: 3000
               name: http
@@ -199,6 +201,7 @@ spec:
             - |
               while true; do
                 curl -sf -m 5 http://nextjs-demo:3000/ || true
+                curl -sf -m 5 http://nextjs-demo:3000/chain || true
                 curl -sf -m 5 http://express-demo:3000/api/hello || true
                 curl -sf -m 5 http://express-demo:3000/api/slow || true
                 curl -sf -m 5 http://express-demo:3000/api/error || true
