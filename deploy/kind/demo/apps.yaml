@@ -40,6 +40,12 @@ spec:
           env:
             - name: OTEL_SERVICE_NAME
               value: express-demo
+            - name: K8S_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: "k8s.namespace.name=$(K8S_NAMESPACE)"
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: http://coroot:8080
             - name: OTEL_EXPORTER_OTLP_PROTOCOL
@@ -101,6 +107,12 @@ spec:
           env:
             - name: OTEL_SERVICE_NAME
               value: flask-demo
+            - name: K8S_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: "k8s.namespace.name=$(K8S_NAMESPACE)"
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: http://coroot:8080
             - name: OTEL_EXPORTER_OTLP_PROTOCOL
@@ -156,6 +168,12 @@ spec:
           env:
             - name: OTEL_SERVICE_NAME
               value: nextjs-demo
+            - name: K8S_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: "k8s.namespace.name=$(K8S_NAMESPACE)"
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: http://coroot:8080
             - name: OTEL_EXPORTER_OTLP_PROTOCOL

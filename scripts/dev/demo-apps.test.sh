@@ -89,5 +89,9 @@ grep -q '/api/chain' "$ROOT/deploy/kind/demo/express/server.js" || fail "express
 [[ -f "$ROOT/deploy/kind/demo/nextjs/pages/chain.js" ]] || fail "missing nextjs pages/chain.js"
 grep -q '/api/chain' "$ROOT/deploy/kind/demo/nextjs/pages/chain.js" || fail "nextjs chain page missing /api/chain"
 
+ns_count="$(grep -c 'k8s.namespace.name=$(K8S_NAMESPACE)' "$APPS" || true)"
+[[ "$ns_count" -eq 3 ]] || fail "apps.yaml must set k8s.namespace.name on express/flask/nextjs (got $ns_count)"
+grep -q 'fieldPath: metadata.namespace' "$APPS" || fail "apps.yaml missing Downward API metadata.namespace"
+
 grep -q 'Flask' "$DEV" || fail "dev.sh banner missing Flask demo"
 grep -q '13003' "$DEV" || fail "dev.sh banner missing Flask port 13003"

@@ -48,6 +48,12 @@
                                 <pre>{{ span.service }}</pre>
                             </td>
                         </tr>
+                        <tr v-if="namespace">
+                            <td>namespace</td>
+                            <td>
+                                <pre>{{ namespace }}</pre>
+                            </td>
+                        </tr>
                         <tr>
                             <td>duration</td>
                             <td>
@@ -101,6 +107,8 @@
 </template>
 
 <script>
+import { spanK8sNamespace } from '@/utils/spanNamespace';
+
 export default {
     name: 'TracingSpan',
 
@@ -126,6 +134,9 @@ export default {
         },
         service() {
             return { borderColor: this.span.color };
+        },
+        namespace() {
+            return spanK8sNamespace(this.span.attributes);
         },
         bar() {
             return {

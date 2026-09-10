@@ -1,5 +1,6 @@
 const TRACE_FIELD_LABELS = {
-    ServiceName: 'Root Service Name',
+    Namespace: 'Namespace',
+    ServiceName: 'Application',
     SpanName: 'Root Span Name',
     TraceId: 'Trace ID',
 };

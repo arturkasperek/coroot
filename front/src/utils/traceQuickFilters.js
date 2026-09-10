@@ -1,5 +1,6 @@
 const TRACE_FACETS = [
-    { key: 'ServiceName', label: 'Root service name' },
+    { key: 'Namespace', label: 'Namespace' },
+    { key: 'ServiceName', label: 'Application' },
     { key: 'SpanName', label: 'Root span name' },
 ];
 
@@ -10,7 +11,7 @@ export function buildTraceQuickFilters(facets = []) {
             .filter((facet) => facet && facet.value)
             .map((facet) => ({
                 value: facet.value,
-                label: facet.value,
+                label: def.key === 'Namespace' && facet.value === 'n/a' ? 'Not applicable' : facet.value,
                 count: facet.count || 0,
                 color: '',
             }));

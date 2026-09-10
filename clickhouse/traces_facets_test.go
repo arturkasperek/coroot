@@ -25,6 +25,45 @@ func TestSpanQueryFilterSkipsNamedField(t *testing.T) {
 	assert.NotContains(t, joined, "SpanName")
 }
 
+func TestTraceNamespaceExprUsesResourceAttribute(t *testing.T) {
+	expr := traceNamespaceExpr()
+	assert.Contains(t, expr, "ResourceAttributes['k8s.namespace.name']")
+	assert.Contains(t, expr, "'n/a'")
+	assert.NotContains(t, expr, "LogAttributes")
+}
+
+func TestSpanQueryFilterNamespaceUsesExprNotColumn(t *testing.T) {
+	q := SpanQuery{}
+	q.AddFilter("Namespace", "=", "coroot-dev")
+	q.AddFilter("ServiceName", "=", "express-demo")
+
+	filter, args := q.filter("")
+	joined := strings.Join(filter, " AND ")
+	assert.Contains(t, joined, traceNamespaceExpr())
+	assert.NotContains(t, joined, "Namespace =")
+	assert.Contains(t, joined, "ServiceName =")
+	assertArgsContain(t, args, "coroot-dev")
+
+	filter, _ = q.filter("Namespace")
+	joined = strings.Join(filter, " AND ")
+	assert.NotContains(t, joined, traceNamespaceExpr())
+	assert.Contains(t, joined, "ServiceName =")
+
+	q.Filters = []SpanFilter{{Field: "Namespace", Op: "!=", Value: "n/a"}}
+	filter, _ = q.filter("")
+	assert.Contains(t, strings.Join(filter, " AND "), "NOT (")
+}
+
+func TestFiltersOnHistogramDimensionsRejectsNamespace(t *testing.T) {
+	q := SpanQuery{}
+	q.AddFilter("Namespace", "=", "coroot-dev")
+	assert.False(t, q.filtersOnHistogramDimensions())
+
+	q = SpanQuery{}
+	q.AddFilter("ServiceName", "=", "express-demo")
+	assert.True(t, q.filtersOnHistogramDimensions())
+}
+
 func TestTraceFacetSelectSQL(t *testing.T) {
 	q, ok := traceFacetSelectSQL("ServiceName", false)
 	require.True(t, ok)
@@ -39,6 +78,15 @@ func TestTraceFacetSelectSQL(t *testing.T) {
 	assert.Contains(t, q, "@@table_otel_traces_histogram@@")
 
 	_, ok = traceFacetSelectSQL("TraceId", false)
+	assert.False(t, ok)
+
+	q, ok = traceFacetSelectSQL("Namespace", false)
+	require.True(t, ok)
+	assert.Contains(t, q, traceNamespaceExpr())
+	assert.Contains(t, q, "@@table_otel_traces@@")
+	assert.NotContains(t, q, "@@table_otel_traces_histogram@@")
+
+	_, ok = traceFacetSelectSQL("Namespace", true)
 	assert.False(t, ok)
 }
 

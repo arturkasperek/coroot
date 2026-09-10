@@ -13,7 +13,7 @@ async function loadTraceQuery() {
 test('shows trace fields with user-facing names in the query builder', async () => {
     const { TRACE_QUERY_FIELDS } = await loadTraceQuery();
 
-    assert.deepEqual(TRACE_QUERY_FIELDS, ['Root Service Name', 'Root Span Name', 'Trace ID']);
+    assert.deepEqual(TRACE_QUERY_FIELDS, ['Namespace', 'Application', 'Root Span Name', 'Trace ID']);
 });
 
 test('maps existing trace filters to query-builder filters', async () => {
@@ -21,12 +21,14 @@ test('maps existing trace filters to query-builder filters', async () => {
 
     assert.deepEqual(
         toQueryBuilderFilters([
+            { field: 'Namespace', op: '=', value: 'coroot-dev' },
             { field: 'ServiceName', op: '=', value: 'express-demo' },
             { field: 'SpanName', op: '~', value: 'GET.*' },
             { field: 'TraceId', op: '=', value: 'abc123' },
         ]),
         [
-            { name: 'Root Service Name', op: '=', value: 'express-demo' },
+            { name: 'Namespace', op: '=', value: 'coroot-dev' },
+            { name: 'Application', op: '=', value: 'express-demo' },
             { name: 'Root Span Name', op: '~', value: 'GET.*' },
             { name: 'Trace ID', op: '=', value: 'abc123' },
         ],
@@ -38,11 +40,13 @@ test('maps query-builder filters back to the trace API schema', async () => {
 
     assert.deepEqual(
         fromQueryBuilderFilters([
-            { name: 'Root Service Name', op: '!=', value: 'worker' },
+            { name: 'Namespace', op: '=', value: 'coroot-dev' },
+            { name: 'Application', op: '!=', value: 'worker' },
             { name: 'Root Span Name', op: '=', value: 'GET /api/hello' },
             { name: 'Trace ID', op: '=', value: 'abc123' },
         ]),
         [
+            { field: 'Namespace', op: '=', value: 'coroot-dev' },
             { field: 'ServiceName', op: '!=', value: 'worker' },
             { field: 'SpanName', op: '=', value: 'GET /api/hello' },
             { field: 'TraceId', op: '=', value: 'abc123' },
@@ -106,10 +110,13 @@ test('traces puts Query above the heatmap and hides unsupported controls', async
     assert.doesNotMatch(traces, /select a chart area to see traces/);
 });
 
-test('traces sidebar only exposes root service and span name groups', async () => {
+test('traces sidebar exposes namespace, root service, and span name groups', async () => {
     const traces = await readFile(path.resolve(__dirname, '../../src/views/Traces.vue'), 'utf8');
 
     assert.match(traces, /buildTraceQuickFilters/);
     assert.match(traces, /view\.facets/);
+    assert.match(traces, /local-search-keys="\['Namespace', 'ServiceName', 'SpanName'\]"/);
+    assert.match(traces, /case 'Application':/);
+    assert.doesNotMatch(traces, /case 'Root Service Name':/);
     assert.doesNotMatch(traces, /Root ID/);
 });

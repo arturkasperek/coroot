@@ -227,10 +227,11 @@ func deleteFacetFixture(t *testing.T, token string) {
 }
 
 type traceFixtureRow struct {
-	Count        int
-	ServiceName  string
-	SpanName     string
-	ParentSpanId string
+	Count              int
+	ServiceName        string
+	SpanName           string
+	ParentSpanId       string
+	ResourceAttributes map[string]string
 }
 
 func insertTraceFixture(t *testing.T, rows []traceFixtureRow) {
@@ -244,6 +245,10 @@ func insertTraceFixture(t *testing.T, rows []traceFixtureRow) {
 		parent := s.ParentSpanId
 		for i := 0; i < s.Count; i++ {
 			n++
+			attrs := map[string]string{"service.name": s.ServiceName}
+			for k, v := range s.ResourceAttributes {
+				attrs[k] = v
+			}
 			line, err := json.Marshal(map[string]any{
 				"Timestamp":          now.Format("2006-01-02 15:04:05.000000000"),
 				"TraceId":            fmt.Sprintf("%016x%016x", base, n),
@@ -253,7 +258,7 @@ func insertTraceFixture(t *testing.T, rows []traceFixtureRow) {
 				"SpanName":           s.SpanName,
 				"SpanKind":           "SPAN_KIND_SERVER",
 				"ServiceName":        s.ServiceName,
-				"ResourceAttributes": map[string]string{"service.name": s.ServiceName},
+				"ResourceAttributes": attrs,
 				"SpanAttributes":     map[string]string{},
 				"Duration":           int64(5_000_000),
 				"StatusCode":         "STATUS_CODE_UNSET",

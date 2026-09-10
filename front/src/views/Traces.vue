@@ -49,7 +49,7 @@
                 <QuickFilters
                     :groups="traceFilterGroups"
                     :filters="traceQuickFilters"
-                    :local-search-keys="['ServiceName', 'SpanName']"
+                    :local-search-keys="['Namespace', 'ServiceName', 'SpanName']"
                     aria-label="Trace filters"
                     @toggle="toggleQuickFilter"
                     @clear="clearQuickFilters"
@@ -595,7 +595,14 @@ export default {
             }
             const stats = (this.view.summary && this.view.summary.stats) || [];
             switch (name) {
-                case 'Root Service Name':
+                case 'Namespace':
+                    this.qb.items = [
+                        ...new Set(
+                            ((this.view.facets || []).find((group) => group.key === 'Namespace') || { values: [] }).values.map((item) => item.value),
+                        ),
+                    ];
+                    break;
+                case 'Application':
                     this.qb.items = [...new Set(stats.map((item) => item.service_name))];
                     break;
                 case 'Root Span Name':

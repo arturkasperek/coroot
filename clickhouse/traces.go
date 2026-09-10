@@ -813,6 +813,26 @@ func (q *SpanQuery) filter(skipField string) ([]string, []any) {
 		if skipField != "" && f.Field == skipField {
 			continue
 		}
+		name := fmt.Sprintf("filter_%d", i)
+		if f.Field == "Namespace" {
+			base := traceNamespaceExpr()
+			var sql string
+			switch f.Op {
+			case "=":
+				sql = fmt.Sprintf("(%s) = @%s", base, name)
+			case "!=":
+				sql = fmt.Sprintf("NOT ((%s) = @%s)", base, name)
+			case "~":
+				sql = fmt.Sprintf("match(%s, @%s)", base, name)
+			case "!~":
+				sql = fmt.Sprintf("NOT match(%s, @%s)", base, name)
+			default:
+				continue
+			}
+			filter = append(filter, sql)
+			args = append(args, clickhouse.Named(name, f.Value))
+			continue
+		}
 		if strings.ContainsFunc(f.Field, func(r rune) bool { return !unicode.IsLetter(r) }) {
 			continue
 		}
@@ -829,7 +849,6 @@ func (q *SpanQuery) filter(skipField string) ([]string, []any) {
 		default:
 			continue
 		}
-		name := fmt.Sprintf("filter_%d", i)
 		expr = fmt.Sprintf(expr, f.Field, name)
 		filter = append(filter, expr)
 		args = append(args, clickhouse.Named(name, f.Value))

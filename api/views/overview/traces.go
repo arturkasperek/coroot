@@ -216,6 +216,7 @@ func RenderTraces(ctx context.Context, chs clickhouse.Clients, w *model.World, q
 
 	for _, ch := range chs.Clients {
 		if q.TraceId == "" {
+			addFacet(ch, "Namespace")
 			addFacet(ch, "ServiceName")
 			addFacet(ch, "SpanName")
 		}

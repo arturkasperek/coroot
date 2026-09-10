@@ -10,9 +10,21 @@ import (
 
 const maxTraceFacetValues = 1000
 
+func traceNamespaceExpr() string {
+	return `if(ResourceAttributes['k8s.namespace.name'] != '', ResourceAttributes['k8s.namespace.name'], 'n/a')`
+}
+
 func traceFacetSelectSQL(field string, fromMV bool) (string, bool) {
 	switch field {
 	case "ServiceName", "SpanName":
+	case "Namespace":
+		if fromMV {
+			return "", false
+		}
+		return fmt.Sprintf(
+			"SELECT %s, count(1) FROM @@table_otel_traces@@ WHERE %%s GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT %d",
+			traceNamespaceExpr(), maxTraceFacetValues,
+		), true
 	default:
 		return "", false
 	}
@@ -53,6 +65,9 @@ func buildTraceFacetQuery(q SpanQuery, field string, fromMV bool) (string, []any
 
 func (c *Client) GetTraceFacetCounts(ctx context.Context, q SpanQuery, field string) ([]FacetValue, error) {
 	fromMV := q.DurFrom == 0 && q.DurTo == 0 && !q.Errors && c.useTracesHistogram(ctx, q, q.TsFrom)
+	if field == "Namespace" {
+		fromMV = false
+	}
 	query, args, ok := buildTraceFacetQuery(q, field, fromMV)
 	if !ok {
 		return nil, fmt.Errorf("unsupported trace facet %q", field)
