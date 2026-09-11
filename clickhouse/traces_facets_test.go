@@ -138,6 +138,20 @@ func TestFiltersOnHistogramDimensionsRejectsApiRoute(t *testing.T) {
 	assert.False(t, q.filtersOnHistogramDimensions())
 }
 
+func TestTraceFacetCountsStayOnOtelTracesWhenHistogramExists(t *testing.T) {
+	q := SpanQuery{
+		Ctx:    timeseries.NewContext(1_700_000_000, 1_700_003_600, 15),
+		TsFrom: 1_700_000_000,
+		TsTo:   1_700_003_600,
+	}
+	for _, field := range []string{"ServiceName", "SpanName", "Namespace", "ApiRoute"} {
+		query, _, ok := buildTraceFacetQuery(q, field, false)
+		require.True(t, ok, field)
+		assert.Contains(t, query, "@@table_otel_traces@@", field)
+		assert.NotContains(t, query, "@@table_otel_traces_histogram@@", field)
+	}
+}
+
 func TestBuildTraceFacetQueryExcludesOwnField(t *testing.T) {
 	q := SpanQuery{
 		Ctx:    timeseries.NewContext(1_700_000_000, 1_700_003_600, 15),

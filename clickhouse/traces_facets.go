@@ -105,11 +105,10 @@ func buildTraceFacetQuery(q SpanQuery, field string, fromMV bool) (string, []any
 }
 
 func (c *Client) GetTraceFacetCounts(ctx context.Context, q SpanQuery, field string) ([]FacetValue, error) {
-	fromMV := q.DurFrom == 0 && q.DurTo == 0 && !q.Errors && c.useTracesHistogram(ctx, q, q.TsFrom)
-	if _, derived := traceDerivedFieldExpr(field); derived {
-		fromMV = false
-	}
-	query, args, ok := buildTraceFacetQuery(q, field, fromMV)
+	// Facets always count otel_traces. The latency histogram MV is minute-truncated
+	// and has no Namespace/ApiRoute; using it for ServiceName/SpanName made those
+	// counts jump when a derived filter disabled the MV.
+	query, args, ok := buildTraceFacetQuery(q, field, false)
 	if !ok {
 		return nil, fmt.Errorf("unsupported trace facet %q", field)
 	}
