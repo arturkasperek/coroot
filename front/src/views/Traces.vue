@@ -195,6 +195,7 @@
                             row-key="trace_id"
                             :row-link="(item) => openTrace(item.trace_id)"
                             :row-color="traceStatusColor"
+                            :value-getter="traceColumnValue"
                             empty-text="No traces found"
                             mono
                         >
@@ -202,6 +203,10 @@
                             <template #item.trace_id="{ item }">
                                 <v-icon small style="vertical-align: baseline">mdi-chart-timeline</v-icon>
                                 {{ item.trace_id.substring(0, 8) }}
+                            </template>
+                            <template #item.api_route="{ item }">{{ traceApiRoute(item.attributes) || '—' }}</template>
+                            <template #item.name="{ item }">
+                                <span :title="item.name">{{ traceDisplayName(item.name, traceApiRoute(item.attributes)) }}</span>
                             </template>
                             <template #item.status="{ item }">{{ item.status.message }}</template>
                             <template #item.duration="{ item }">
@@ -342,6 +347,7 @@ import QuickFilters from '@/components/QuickFilters.vue';
 import ObservabilityTable from '@/components/ObservabilityTable.vue';
 import { TRACE_QUERY_FIELDS, fromQueryBuilderFilters, toQueryBuilderFilters } from '@/utils/traceQuery';
 import { buildTraceQuickFilters, toTraceQuickFilters } from '@/utils/traceQuickFilters';
+import { TRACE_NAME_SAME_MARK, traceApiRoute, traceColumnValue, traceDisplayName } from '@/utils/traceColumns';
 
 export default {
     components: { Views, FlameGraph, TracingTrace, Heatmap, QueryPanel, QuickFilters, ObservabilityTable },
@@ -414,7 +420,13 @@ export default {
                 { value: 'trace_id', text: 'Trace ID', cellClass: 'blue--text text--lighten-2 font-weight-medium' },
                 { value: 'cluster', text: 'Cluster' },
                 { value: 'service', text: 'Root Service' },
-                { value: 'name', text: 'Name' },
+                { value: 'api_route', text: 'API Route' },
+                {
+                    value: 'name',
+                    text: 'Name',
+                    cellClass: (trace) =>
+                        traceDisplayName(trace.name, traceApiRoute(trace.attributes)) === TRACE_NAME_SAME_MARK ? 'grey--text' : '',
+                },
                 {
                     value: 'status',
                     text: 'Status',
@@ -548,6 +560,9 @@ export default {
     },
 
     methods: {
+        traceApiRoute,
+        traceDisplayName,
+        traceColumnValue,
         scheduleTracesBodyResize() {
             cancelAnimationFrame(this._tracesBodyResizeFrame);
             this._tracesBodyResizeFrame = requestAnimationFrame(() => {
