@@ -58,6 +58,25 @@ func encodeJSONEachRow(r LogRecord) ([]byte, error) {
 	return json.Marshal(row)
 }
 
+func encodeTraceJSONEachRow(r TraceRecord) ([]byte, error) {
+	row := map[string]any{
+		"Timestamp":          r.Timestamp.UTC().Format("2006-01-02 15:04:05.000000000"),
+		"TraceId":            r.TraceId,
+		"SpanId":             r.SpanId,
+		"ParentSpanId":       r.ParentSpanId,
+		"TraceState":         "",
+		"SpanName":           r.SpanName,
+		"SpanKind":           r.SpanKind,
+		"ServiceName":        r.ServiceName,
+		"ResourceAttributes": r.ResourceAttributes,
+		"SpanAttributes":     r.SpanAttributes,
+		"Duration":           r.Duration,
+		"StatusCode":         r.StatusCode,
+		"StatusMessage":      r.StatusMessage,
+	}
+	return json.Marshal(row)
+}
+
 func (c *chClient) do(ctx context.Context, query string, body io.Reader) ([]byte, error) {
 	u, err := clickHouseQueryURL(c.baseURL, c.database, query)
 	if err != nil {

@@ -9,6 +9,8 @@
 </template>
 
 <script>
+import { tooltipTranslate } from '../utils/chartTooltipPosition';
+
 const tsFormat = '{MMM} {DD}, {HH}:{mm}:{ss}';
 const tsFormatShort = '{MMM} {DD}, {HH}:{mm}';
 
@@ -21,6 +23,7 @@ export default {
         return {
             idx: null,
             mousedown: false,
+            hovering: false,
         };
     },
     computed: {
@@ -45,12 +48,20 @@ export default {
             };
         },
     },
+    beforeDestroy() {
+        const t = this.$refs.tooltip;
+        if (t && t.parentNode) {
+            t.parentNode.removeChild(t);
+        }
+    },
     methods: {
         plugin() {
             const init = (u) => {
                 const t = this.$refs.tooltip;
-                u.over.appendChild(t);
+                const root = document.querySelector('.v-application') || document.body;
+                root.appendChild(t);
                 u.over.addEventListener('mouseleave', () => {
+                    this.hovering = false;
                     t.style.display = 'none';
                     this.mousedown = false;
                 });
@@ -70,11 +81,36 @@ export default {
                 this.idx = idx;
                 this.$emit('input', idx);
                 const t = this.$refs.tooltip;
-                const l = left - (left >= u.over.clientWidth / 2 ? t.clientWidth + 5 : -5);
-                t.style.transform = 'translate(' + l + 'px, ' + top + 'px)';
-                if (!this.mousedown) {
-                    t.style.display = 'block';
+                if (this.mousedown) {
+                    this.hovering = false;
+                    t.style.display = 'none';
+                    return;
                 }
+                this.hovering = true;
+                const over = u.over.getBoundingClientRect();
+                const cursor = {
+                    cursorX: over.left + left,
+                    cursorY: over.top + top,
+                    preferLeft: left >= u.over.clientWidth / 2,
+                };
+                this.$nextTick(() => {
+                    if (!this.hovering || this.mousedown) {
+                        t.style.display = 'none';
+                        return;
+                    }
+                    t.style.display = 'block';
+                    const { x, y } = tooltipTranslate({
+                        cursorX: cursor.cursorX,
+                        cursorY: cursor.cursorY,
+                        tooltipWidth: t.clientWidth,
+                        tooltipHeight: t.clientHeight,
+                        viewWidth: window.innerWidth,
+                        viewHeight: window.innerHeight,
+                        preferLeft: cursor.preferLeft,
+                    });
+                    t.style.left = x + 'px';
+                    t.style.top = y + 'px';
+                });
             };
             return { hooks: { init, setCursor } };
         },
@@ -85,15 +121,17 @@ export default {
 <style scoped>
 .tooltip {
     display: none;
-    position: absolute;
-    z-index: 2;
+    position: fixed;
+    z-index: 10000;
+    color: var(--text-color);
     background-color: var(--tooltip-color);
     padding: 8px;
-    border: 1px solid rgba(0, 0, 0, 0.2);
+    border: 1px solid var(--border-color);
     border-radius: 4px;
     pointer-events: none;
     font-size: 12px;
-    opacity: 90%;
+    opacity: 1;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
 }
 .tooltip .time {
     text-align: center;

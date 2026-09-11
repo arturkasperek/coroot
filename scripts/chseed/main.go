@@ -40,7 +40,7 @@ func main() {
 	}
 	ch = ch.withDatabase(dbName)
 
-	log.Printf("seeding %s at %s (%d days, %d logs/day, %d total for express-demo + nextjs-demo)", dbName, chHTTP, cfg.Days, cfg.PerDay, cfg.Count)
+	log.Printf("seeding %s at %s (%d days, %d/day, %d logs + %d traces for express-demo + nextjs-demo)", dbName, chHTTP, cfg.Days, cfg.PerDay, cfg.Count, cfg.Count)
 	if err = Seed(ctx, ch, cfg, time.Now().UTC()); err != nil {
 		log.Fatal(err)
 	}

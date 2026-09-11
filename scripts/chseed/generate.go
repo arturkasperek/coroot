@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"hash/fnv"
 	"strconv"
 	"time"
@@ -13,6 +14,9 @@ const (
 
 	severityInfo  int32 = 9
 	severityError int32 = 17
+
+	seedTraceIDPrefix = "c5eed"
+	seedHistPeer      = "chseed"
 )
 
 type LogRecord struct {
@@ -28,6 +32,21 @@ type LogRecord struct {
 	LogAttributes      map[string]string
 }
 
+type TraceRecord struct {
+	Timestamp          time.Time
+	TraceId            string
+	SpanId             string
+	ParentSpanId       string
+	SpanName           string
+	SpanKind           string
+	ServiceName        string
+	ResourceAttributes map[string]string
+	SpanAttributes     map[string]string
+	Duration           int64
+	StatusCode         string
+	StatusMessage      string
+}
+
 type logTemplate struct {
 	deploy         string
 	container      string
@@ -38,24 +57,7 @@ type logTemplate struct {
 }
 
 func Record(cfg Config, now time.Time, i int) LogRecord {
-	if i < 0 || i >= cfg.Count {
-		panic("chseed: record index out of range")
-	}
-	from := now.Add(-time.Duration(cfg.Days) * 24 * time.Hour)
-	ts := now
-	if cfg.Count > 1 {
-		switch i {
-		case 0:
-			ts = from
-		case cfg.Count - 1:
-			ts = now
-		default:
-			// Divide first: i*span overflows int64 around 15k rows for a 7-day window.
-			span := now.Sub(from)
-			ts = from.Add(span / time.Duration(cfg.Count-1) * time.Duration(i))
-		}
-	}
-
+	ts := seedTimestamp(cfg, now, i)
 	tpl := templateFor(i)
 	service := serviceName(tpl.deploy)
 	pod := podName(tpl.deploy, i)
@@ -78,6 +80,84 @@ func Record(cfg Config, now time.Time, i int) LogRecord {
 		},
 		LogAttributes: attrs,
 	}
+}
+
+func TraceRecordFor(cfg Config, now time.Time, i int) TraceRecord {
+	ts := seedTimestamp(cfg, now, i)
+	tpl := templateFor(i)
+	path := tracePath(tpl)
+	status := "STATUS_CODE_UNSET"
+	dur := int64(5_000_000)
+	if tpl.severityNumber == severityError {
+		status = "STATUS_CODE_ERROR"
+		dur = 12_000_000
+	} else if path == "/api/slow" {
+		dur = 250_000_000
+	}
+	return TraceRecord{
+		Timestamp:    ts,
+		TraceId:      seedTraceID(i),
+		SpanId:       seedSpanID(i),
+		ParentSpanId: "",
+		SpanName:     "GET " + path,
+		SpanKind:     "SPAN_KIND_SERVER",
+		ServiceName:  tpl.deploy,
+		ResourceAttributes: map[string]string{
+			"service.name":        tpl.deploy,
+			"k8s.namespace.name":  namespace,
+			"k8s.pod.name":        podName(tpl.deploy, i),
+			"k8s.deployment.name": tpl.deploy,
+			"k8s.container.name":  tpl.container,
+		},
+		SpanAttributes: map[string]string{
+			"chseed":        "1",
+			"http.method":   "GET",
+			"http.route":    path,
+			"http.target":   path,
+			"net.peer.name": seedHistPeer,
+		},
+		Duration:      dur,
+		StatusCode:    status,
+		StatusMessage: "",
+	}
+}
+
+func seedTimestamp(cfg Config, now time.Time, i int) time.Time {
+	if i < 0 || i >= cfg.Count {
+		panic("chseed: record index out of range")
+	}
+	from := now.Add(-time.Duration(cfg.Days) * 24 * time.Hour)
+	if cfg.Count <= 1 {
+		return now
+	}
+	switch i {
+	case 0:
+		return from
+	case cfg.Count - 1:
+		return now
+	default:
+		// Divide first: i*span overflows int64 around 15k rows for a 7-day window.
+		span := now.Sub(from)
+		return from.Add(span / time.Duration(cfg.Count-1) * time.Duration(i))
+	}
+}
+
+func seedTraceID(i int) string {
+	return fmt.Sprintf("%s%027x", seedTraceIDPrefix, i)
+}
+
+func seedSpanID(i int) string {
+	return fmt.Sprintf("%016x", uint64(i)+1)
+}
+
+func tracePath(tpl logTemplate) string {
+	if p := tpl.attrs["path"]; p != "" {
+		return p
+	}
+	if tpl.severityNumber == severityError {
+		return "/chain"
+	}
+	return "/"
 }
 
 func serviceName(deploy string) string {

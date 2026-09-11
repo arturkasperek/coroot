@@ -18,7 +18,7 @@ type Config struct {
 
 func ParseArgs(args []string) (Config, error) {
 	if len(args) != 2 {
-		return Config{}, fmt.Errorf("usage: make seed <days> <thousands-of-logs-per-day>  (example: make seed 30 1000)")
+		return Config{}, fmt.Errorf("usage: make seed <days> <thousands-per-day>  (example: make seed 30 1000)")
 	}
 	days, err := strconv.Atoi(args[0])
 	if err != nil || days <= 0 {
