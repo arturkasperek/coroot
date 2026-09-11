@@ -222,6 +222,8 @@ CREATE TABLE IF NOT EXISTS otel_logs @on_cluster (
      Body String CODEC(ZSTD(1)),
      ResourceAttributes Map(LowCardinality(String), String) CODEC(ZSTD(1)),
      LogAttributes Map(LowCardinality(String), String) CODEC(ZSTD(1)),
+     Namespace LowCardinality(String) MATERIALIZED (if(startsWith(ServiceName, '/k8s'), if(arrayElement(splitByChar('/', ServiceName), 3) = '', 'n/a', arrayElement(splitByChar('/', ServiceName), 3)), if(ResourceAttributes['k8s.namespace.name'] != '', ResourceAttributes['k8s.namespace.name'], if(LogAttributes['k8s.namespace.name'] != '', LogAttributes['k8s.namespace.name'], 'n/a')))) CODEC(ZSTD(1)),
+     Application LowCardinality(String) MATERIALIZED (if(startsWith(ServiceName, '/k8s'), nullIf(arrayElement(splitByChar('/', ServiceName), length(splitByChar('/', ServiceName))), ''), ServiceName)) CODEC(ZSTD(1)),
      INDEX idx_trace_id TraceId TYPE bloom_filter(0.001) GRANULARITY 1,
      INDEX idx_res_attr_key mapKeys(ResourceAttributes) TYPE bloom_filter(0.01) GRANULARITY 1,
      INDEX idx_res_attr_value mapValues(ResourceAttributes) TYPE bloom_filter(0.01) GRANULARITY 1,
@@ -265,6 +267,8 @@ CREATE TABLE IF NOT EXISTS otel_traces @on_cluster (
      Duration Int64 CODEC(ZSTD(1)),
      StatusCode LowCardinality(String) CODEC(ZSTD(1)),
      StatusMessage String CODEC(ZSTD(1)),
+     Namespace LowCardinality(String) MATERIALIZED (if(ResourceAttributes['k8s.namespace.name'] != '', ResourceAttributes['k8s.namespace.name'], 'n/a')) CODEC(ZSTD(1)),
+     ApiRoute LowCardinality(String) MATERIALIZED (if((if(SpanAttributes['http.route'] != '', substringIndex(SpanAttributes['http.route'], char(63), 1), if(SpanAttributes['http.target'] != '', substringIndex(SpanAttributes['http.target'], char(63), 1), SpanAttributes['url.path']))) = '', '', if((if(SpanAttributes['http.method'] != '', SpanAttributes['http.method'], SpanAttributes['http.request.method'])) = '', if(SpanAttributes['http.route'] != '', substringIndex(SpanAttributes['http.route'], char(63), 1), if(SpanAttributes['http.target'] != '', substringIndex(SpanAttributes['http.target'], char(63), 1), SpanAttributes['url.path'])), concat(if(SpanAttributes['http.method'] != '', SpanAttributes['http.method'], SpanAttributes['http.request.method']), ' ', if(SpanAttributes['http.route'] != '', substringIndex(SpanAttributes['http.route'], char(63), 1), if(SpanAttributes['http.target'] != '', substringIndex(SpanAttributes['http.target'], char(63), 1), SpanAttributes['url.path'])))))) CODEC(ZSTD(1)),
      Events Nested (
          Timestamp DateTime64(9),
          Name LowCardinality(String),

@@ -25,28 +25,21 @@ func TestSpanQueryFilterSkipsNamedField(t *testing.T) {
 	assert.NotContains(t, joined, "SpanName")
 }
 
-func TestTraceNamespaceExprUsesResourceAttribute(t *testing.T) {
-	expr := traceNamespaceExpr()
-	assert.Contains(t, expr, "ResourceAttributes['k8s.namespace.name']")
-	assert.Contains(t, expr, "'n/a'")
-	assert.NotContains(t, expr, "LogAttributes")
-}
-
-func TestSpanQueryFilterNamespaceUsesExprNotColumn(t *testing.T) {
+func TestSpanQueryFilterNamespaceUsesColumn(t *testing.T) {
 	q := SpanQuery{}
 	q.AddFilter("Namespace", "=", "coroot-dev")
 	q.AddFilter("ServiceName", "=", "express-demo")
 
 	filter, args := q.filter("")
 	joined := strings.Join(filter, " AND ")
-	assert.Contains(t, joined, traceNamespaceExpr())
-	assert.NotContains(t, joined, "Namespace =")
+	assert.Contains(t, joined, "Namespace")
+	assert.NotContains(t, joined, "ResourceAttributes")
 	assert.Contains(t, joined, "ServiceName =")
 	assertArgsContain(t, args, "coroot-dev")
 
 	filter, _ = q.filter("Namespace")
 	joined = strings.Join(filter, " AND ")
-	assert.NotContains(t, joined, traceNamespaceExpr())
+	assert.NotContains(t, joined, "Namespace")
 	assert.Contains(t, joined, "ServiceName =")
 
 	q.Filters = []SpanFilter{{Field: "Namespace", Op: "!=", Value: "n/a"}}
@@ -82,7 +75,8 @@ func TestTraceFacetSelectSQL(t *testing.T) {
 
 	q, ok = traceFacetSelectSQL("Namespace", false)
 	require.True(t, ok)
-	assert.Contains(t, q, traceNamespaceExpr())
+	assert.Contains(t, q, "SELECT Namespace AS Namespace")
+	assert.NotContains(t, q, "ResourceAttributes")
 	assert.Contains(t, q, "@@table_otel_traces@@")
 	assert.NotContains(t, q, "@@table_otel_traces_histogram@@")
 
@@ -91,7 +85,8 @@ func TestTraceFacetSelectSQL(t *testing.T) {
 
 	q, ok = traceFacetSelectSQL("ApiRoute", false)
 	require.True(t, ok)
-	assert.Contains(t, q, traceApiRouteExpr())
+	assert.Contains(t, q, "SELECT ApiRoute AS ApiRoute")
+	assert.NotContains(t, q, "SpanAttributes")
 	assert.Contains(t, q, "@@table_otel_traces@@")
 	assert.NotContains(t, q, "@@table_otel_traces_histogram@@")
 
@@ -99,36 +94,21 @@ func TestTraceFacetSelectSQL(t *testing.T) {
 	assert.False(t, ok)
 }
 
-func TestTraceApiRouteExprMatchesColumnFormat(t *testing.T) {
-	expr := traceApiRouteExpr()
-	assert.Contains(t, expr, "SpanAttributes['http.method']")
-	assert.Contains(t, expr, "SpanAttributes['http.request.method']")
-	assert.Contains(t, expr, "SpanAttributes['http.route']")
-	assert.Contains(t, expr, "SpanAttributes['http.target']")
-	assert.Contains(t, expr, "substringIndex(")
-	assert.Contains(t, expr, "char(63)")
-	assert.NotContains(t, expr, "?")
-	assert.NotContains(t, expr, "[1]")
-	routeIdx := strings.Index(expr, "http.route")
-	targetIdx := strings.Index(expr, "http.target")
-	assert.Greater(t, targetIdx, routeIdx)
-}
-
-func TestSpanQueryFilterApiRouteUsesExprNotColumn(t *testing.T) {
+func TestSpanQueryFilterApiRouteUsesColumn(t *testing.T) {
 	q := SpanQuery{}
 	q.AddFilter("ApiRoute", "=", "GET /health")
 	q.AddFilter("ServiceName", "=", "express-demo")
 
 	filter, args := q.filter("")
 	joined := strings.Join(filter, " AND ")
-	assert.Contains(t, joined, traceApiRouteExpr())
-	assert.NotContains(t, joined, "ApiRoute =")
+	assert.Contains(t, joined, "ApiRoute")
+	assert.NotContains(t, joined, "SpanAttributes")
 	assert.Contains(t, joined, "ServiceName =")
 	assertArgsContain(t, args, "GET /health")
 
 	filter, _ = q.filter("ApiRoute")
 	joined = strings.Join(filter, " AND ")
-	assert.NotContains(t, joined, traceApiRouteExpr())
+	assert.NotContains(t, joined, "ApiRoute")
 	assert.Contains(t, joined, "ServiceName =")
 }
 

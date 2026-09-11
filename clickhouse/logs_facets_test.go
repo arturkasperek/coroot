@@ -134,15 +134,16 @@ func TestFacetCountSQLNamespaceAndApplication(t *testing.T) {
 	q, attr, ok := facetCountSQL("Namespace")
 	require.True(t, ok)
 	assert.Equal(t, "Namespace", *attr)
-	assert.Contains(t, q, "startsWith(ServiceName, '/k8s')")
-	assert.Contains(t, q, "k8s.namespace.name")
-	assert.Contains(t, q, "'n/a'")
+	assert.Contains(t, q, "SELECT Namespace, count(1)")
+	assert.NotContains(t, q, "ResourceAttributes")
+	assert.NotContains(t, q, "splitByChar")
 	assert.Contains(t, q, "GROUP BY 1")
 
 	q, attr, ok = facetCountSQL("Application")
 	require.True(t, ok)
 	assert.Equal(t, "Application", *attr)
-	assert.Contains(t, q, "startsWith(ServiceName, '/k8s')")
+	assert.Contains(t, q, "SELECT Application")
+	assert.NotContains(t, q, "splitByChar")
 	assert.Contains(t, q, "LIMIT 1000")
 }
 
@@ -157,18 +158,20 @@ func TestLogQueryFiltersNamespaceAndApplication(t *testing.T) {
 	}
 	where, _ := q.filters(nil)
 	joined := strings.Join(where, " AND ")
-	assert.Contains(t, joined, logNamespaceExpr())
-	assert.Contains(t, joined, logApplicationExpr())
+	assert.Contains(t, joined, "Namespace =")
+	assert.Contains(t, joined, "Application =")
+	assert.NotContains(t, joined, "ResourceAttributes")
+	assert.NotContains(t, joined, "splitByChar")
 	assert.Contains(t, joined, "SeverityNumber")
 
 	where, _ = q.filters(strPtr("Namespace"))
 	joined = strings.Join(where, " AND ")
-	assert.NotContains(t, joined, logNamespaceExpr())
-	assert.Contains(t, joined, logApplicationExpr())
+	assert.NotContains(t, joined, "Namespace =")
+	assert.Contains(t, joined, "Application =")
 
 	q.Filters = []LogFilter{{Name: "Namespace", Op: "!=", Value: "n/a"}}
 	where, _ = q.filters(nil)
-	assert.Contains(t, strings.Join(where, " AND "), "NOT (")
+	assert.Contains(t, strings.Join(where, " AND "), "Namespace !=")
 }
 
 func TestLogQueryFiltersMessageContainsSubstring(t *testing.T) {

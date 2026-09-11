@@ -44,6 +44,7 @@ import uPlot from 'uplot';
 import ChartTooltip from './ChartTooltip';
 import ChartAnnotations from './ChartAnnotations';
 import ChartIncidents from './ChartIncidents';
+import { shouldClearHeatmapSelection } from '../utils/heatmapSelection';
 
 const font = '12px Roboto, sans-serif';
 
@@ -86,9 +87,11 @@ export default {
 
     mounted() {
         this.$nextTick(this.redraw);
+        window.addEventListener('keydown', this.onKeydown);
     },
 
     beforeDestroy() {
+        window.removeEventListener('keydown', this.onKeydown);
         this.ch && this.ch.destroy();
     },
 
@@ -201,6 +204,20 @@ export default {
     },
 
     methods: {
+        clearSelection() {
+            if (this.ch) {
+                this.ch.setSelect({ width: 0, height: 0 }, false);
+            }
+            this.$emit('select', {});
+        },
+        onKeydown(e) {
+            const overlayOpen = Boolean(document.querySelector('.v-dialog--active, .v-menu__content--active'));
+            if (!shouldClearHeatmapSelection(e, { selection: this.selection, overlayOpen })) {
+                return;
+            }
+            e.preventDefault();
+            this.clearSelection();
+        },
         redraw() {
             const c = this.config;
             const hm = this.heatmapPaths();
@@ -305,8 +322,7 @@ export default {
             };
             const init = (u) => {
                 u.over.addEventListener('click', () => {
-                    u.setSelect({ width: 0, height: 0 }, false);
-                    emitSelection({});
+                    this.clearSelection();
                 });
             };
             const ready = (u) => {

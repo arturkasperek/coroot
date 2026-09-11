@@ -10,30 +10,10 @@ import (
 
 const maxTraceFacetValues = 1000
 
-func traceNamespaceExpr() string {
-	return `if(ResourceAttributes['k8s.namespace.name'] != '', ResourceAttributes['k8s.namespace.name'], 'n/a')`
-}
-
-func stripQueryAttr(attr string) string {
-	return fmt.Sprintf("substringIndex(SpanAttributes['%s'], char(63), 1)", attr)
-}
-
-func traceApiRouteExpr() string {
-	method := `if(SpanAttributes['http.method'] != '', SpanAttributes['http.method'], SpanAttributes['http.request.method'])`
-	path := fmt.Sprintf(
-		`if(SpanAttributes['http.route'] != '', %s, if(SpanAttributes['http.target'] != '', %s, SpanAttributes['url.path']))`,
-		stripQueryAttr("http.route"),
-		stripQueryAttr("http.target"),
-	)
-	return fmt.Sprintf(`if((%s) = '', '', if((%s) = '', %s, concat(%s, ' ', %s)))`, path, method, path, method, path)
-}
-
 func traceDerivedFieldExpr(field string) (string, bool) {
 	switch field {
-	case "Namespace":
-		return traceNamespaceExpr(), true
-	case "ApiRoute":
-		return traceApiRouteExpr(), true
+	case "Namespace", "ApiRoute":
+		return field, true
 	default:
 		return "", false
 	}

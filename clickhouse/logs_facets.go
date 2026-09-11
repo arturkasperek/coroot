@@ -6,21 +6,11 @@ import (
 	"sort"
 	"strings"
 
-	ch "github.com/ClickHouse/clickhouse-go/v2"
+	chgo "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/coroot/coroot/model"
 )
 
-const maxLogFacetValues = 1000
-
 const logNamespaceNA = "n/a"
-
-func logNamespaceExpr() string {
-	return `if(startsWith(ServiceName, '/k8s'), if(arrayElement(splitByChar('/', ServiceName), 3) = '', 'n/a', arrayElement(splitByChar('/', ServiceName), 3)), if(ResourceAttributes['k8s.namespace.name'] != '', ResourceAttributes['k8s.namespace.name'], if(LogAttributes['k8s.namespace.name'] != '', LogAttributes['k8s.namespace.name'], 'n/a')))`
-}
-
-func logApplicationExpr() string {
-	return `if(startsWith(ServiceName, '/k8s'), nullIf(arrayElement(splitByChar('/', ServiceName), length(splitByChar('/', ServiceName))), ''), ServiceName)`
-}
 
 type FacetValue struct {
 	Value string `json:"value"`
@@ -46,9 +36,9 @@ func facetCountSQL(name string) (string, *string, bool) {
 	case "Source":
 		return "SELECT if(startsWith(ServiceName, '/'), 'agent', 'otel'), count(1) FROM @@table_otel_logs@@ WHERE %s GROUP BY 1", &attr, true
 	case "Namespace":
-		return "SELECT " + logNamespaceExpr() + ", count(1) FROM @@table_otel_logs@@ WHERE %s GROUP BY 1", &attr, true
+		return "SELECT Namespace, count(1) FROM @@table_otel_logs@@ WHERE %s GROUP BY 1", &attr, true
 	case "Application":
-		return "SELECT " + logApplicationExpr() + " AS v, count(1) FROM @@table_otel_logs@@ WHERE %s GROUP BY v HAVING v != '' ORDER BY count(1) DESC, v LIMIT 1000", &attr, true
+		return "SELECT Application AS v, count(1) FROM @@table_otel_logs@@ WHERE %s GROUP BY v HAVING v != '' ORDER BY count(1) DESC, v LIMIT 1000", &attr, true
 	default:
 		return "", nil, false
 	}
@@ -62,7 +52,7 @@ func (c *Client) GetLogFacetCounts(ctx context.Context, query LogQuery, name str
 	where, args := query.filters(attr)
 	q := fmt.Sprintf(sqlFmt, strings.Join(where, " AND "))
 	if name == "host.name" {
-		args = append(args, ch.Named("attr", name))
+		args = append(args, chgo.Named("attr", name))
 	}
 	rows, err := c.Query(ctx, q, args...)
 	if err != nil {
