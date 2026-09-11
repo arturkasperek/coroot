@@ -65,10 +65,11 @@ type Query struct {
 	DurFrom string          `json:"dur_from"`
 	DurTo   string          `json:"dur_to"`
 
-	TraceId    string   `json:"trace_id"`
-	Filters    []Filter `json:"filters"`
-	IncludeAux bool     `json:"include_aux"`
-	Diff       bool     `json:"diff"`
+	TraceId    string          `json:"trace_id"`
+	Filters    []Filter        `json:"filters"`
+	Sort       clickhouse.Sort `json:"sort"`
+	IncludeAux bool            `json:"include_aux"`
+	Diff       bool            `json:"diff"`
 
 	durFrom time.Duration
 	durTo   time.Duration
@@ -96,7 +97,7 @@ func RenderTraces(ctx context.Context, chs clickhouse.Clients, w *model.World, q
 
 	q := parseQuery(query, w.Ctx)
 
-	sq := clickhouse.SpanQuery{Ctx: w.Ctx}
+	sq := clickhouse.SpanQuery{Ctx: w.Ctx, Sort: q.Sort}
 
 	for _, f := range q.Filters {
 		sq.AddFilter(f.Field, f.Op, f.Value)
@@ -218,6 +219,7 @@ func RenderTraces(ctx context.Context, chs clickhouse.Clients, w *model.World, q
 		if q.TraceId == "" {
 			addFacet(ch, "Namespace")
 			addFacet(ch, "ServiceName")
+			addFacet(ch, "ApiRoute")
 			addFacet(ch, "SpanName")
 		}
 		switch {
@@ -346,6 +348,7 @@ func RenderTraces(ctx context.Context, chs clickhouse.Clients, w *model.World, q
 	if len(overallSpans) == spansLimit {
 		res.Limit = spansLimit
 	}
+	sortTraceSpans(overallSpans, q.Sort)
 
 	for _, s := range overallSpans {
 		ss := Span{
@@ -387,6 +390,23 @@ func RenderTraces(ctx context.Context, chs clickhouse.Clients, w *model.World, q
 	}
 
 	return res
+}
+
+func sortTraceSpans(spans []*model.TraceSpan, s clickhouse.Sort) {
+	order := clickhouse.TraceListOrderBy(s)
+	sort.SliceStable(spans, func(i, j int) bool {
+		a, b := spans[i], spans[j]
+		switch order {
+		case "Timestamp ASC":
+			return a.Timestamp.Before(b.Timestamp)
+		case "Duration DESC":
+			return a.Duration > b.Duration
+		case "Duration ASC":
+			return a.Duration < b.Duration
+		default:
+			return a.Timestamp.After(b.Timestamp)
+		}
+	})
 }
 
 func getMonitoringAndControlPlanePodIps(w *model.World) []string {

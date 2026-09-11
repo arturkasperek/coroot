@@ -128,10 +128,12 @@ k8s_yaml([
 
 k8s_resource(
     'clickhouse',
+    objects=['clickhouse-data:persistentvolumeclaim:coroot-dev'],
     port_forwards=['18123:8123'],
 )
 k8s_resource(
     'postgres',
+    objects=['postgres-data:persistentvolumeclaim:coroot-dev'],
     port_forwards=['15432:5432'],
 )
 k8s_resource(

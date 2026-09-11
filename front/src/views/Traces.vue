@@ -75,7 +75,7 @@
                 <QuickFilters
                     :groups="traceFilterGroups"
                     :filters="traceQuickFilters"
-                    :local-search-keys="['Namespace', 'ServiceName', 'SpanName']"
+                    :local-search-keys="['Namespace', 'ServiceName', 'ApiRoute', 'SpanName']"
                     aria-label="Trace filters"
                     @toggle="toggleQuickFilter"
                     @clear="clearQuickFilters"
@@ -192,12 +192,14 @@
                             :headers="traceHeaders"
                             :items="view.traces || []"
                             :loading="loading"
+                            :sort="traceSort"
                             row-key="trace_id"
                             :row-link="(item) => openTrace(item.trace_id)"
                             :row-color="traceStatusColor"
                             :value-getter="traceColumnValue"
                             empty-text="No traces found"
                             mono
+                            @sort="sortTraces"
                         >
                             <template #item.date="{ item }">{{ $format.date(item.timestamp, '{MMM} {DD} {HH}:{mm}:{ss}') }}</template>
                             <template #item.trace_id="{ item }">
@@ -346,6 +348,7 @@ import QueryPanel from '@/components/QueryPanel.vue';
 import QuickFilters from '@/components/QuickFilters.vue';
 import ObservabilityTable from '@/components/ObservabilityTable.vue';
 import { TRACE_QUERY_FIELDS, fromQueryBuilderFilters, toQueryBuilderFilters } from '@/utils/traceQuery';
+import { TRACE_SORT_VALUES, appendSortChip, effectiveSort, extractSort, toggleSort } from '@/utils/observabilitySort';
 import { buildTraceQuickFilters, toTraceQuickFilters } from '@/utils/traceQuickFilters';
 import { TRACE_NAME_SAME_MARK, traceApiRoute, traceColumnValue, traceDisplayName } from '@/utils/traceColumns';
 
@@ -416,7 +419,7 @@ export default {
         },
         traceHeaders() {
             const headers = [
-                { value: 'date', text: 'Date' },
+                { value: 'date', text: 'Date', sortable: true },
                 { value: 'trace_id', text: 'Trace ID', cellClass: 'blue--text text--lighten-2 font-weight-medium' },
                 { value: 'cluster', text: 'Cluster' },
                 { value: 'service', text: 'Root Service' },
@@ -432,7 +435,7 @@ export default {
                     text: 'Status',
                     cellClass: (trace) => (trace.status.error ? 'red--text text--lighten-1' : 'green--text text--lighten-1'),
                 },
-                { value: 'duration', text: 'Duration' },
+                { value: 'duration', text: 'Duration', sortable: true },
             ];
             return this.$api.context.multicluster ? headers : headers.filter((header) => header.value !== 'cluster');
         },
@@ -516,12 +519,14 @@ export default {
         },
         queryBuilderFilters: {
             get() {
-                return toQueryBuilderFilters(this.query.filters || []);
+                return appendSortChip(toQueryBuilderFilters(this.query.filters || []), this.query.sort);
             },
             set(filters) {
                 const { from, to } = this.$route.query;
                 const q = { ...this.query };
-                q.filters = fromQueryBuilderFilters(filters);
+                const parsed = extractSort(filters);
+                q.filters = fromQueryBuilderFilters(parsed.filters);
+                q.sort = parsed.sort || undefined;
                 if (!q.filters.length) {
                     q.filters = undefined;
                 }
@@ -530,6 +535,9 @@ export default {
                 }
                 this.push(this.setQuery(q, from, to));
             },
+        },
+        traceSort() {
+            return effectiveSort(this.query.sort);
         },
         selection() {
             const q = this.query;
@@ -696,7 +704,7 @@ export default {
                 return;
             }
             if (what === 'op') {
-                this.qb.items = ['=', '!=', '~', '!~'];
+                this.qb.items = name === 'Sort' ? ['='] : ['=', '!=', '~', '!~'];
                 return;
             }
             const stats = (this.view.summary && this.view.summary.stats) || [];
@@ -711,15 +719,31 @@ export default {
                 case 'Application':
                     this.qb.items = [...new Set(stats.map((item) => item.service_name))];
                     break;
+                case 'API Route':
+                    this.qb.items = [
+                        ...new Set(
+                            ((this.view.facets || []).find((group) => group.key === 'ApiRoute') || { values: [] }).values.map((item) => item.value),
+                        ),
+                    ];
+                    break;
                 case 'Root Span Name':
                     this.qb.items = [...new Set(stats.map((item) => item.span_name))];
                     break;
                 case 'Trace ID':
                     this.qb.items = [...new Set((this.view.traces || []).map((item) => item.trace_id))];
                     break;
+                case 'Sort':
+                    this.qb.items = TRACE_SORT_VALUES;
+                    break;
                 default:
                     this.qb.items = [];
             }
+        },
+        sortTraces(by) {
+            const { from, to } = this.$route.query;
+            const q = { ...this.query };
+            q.sort = toggleSort(this.query.sort, by);
+            this.push(this.setQuery(q, from, to));
         },
         setSelection(s) {
             const { from, to } = this.view.heatmap.ctx;

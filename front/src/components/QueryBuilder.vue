@@ -110,7 +110,11 @@ export default {
 
     watch: {
         value(newValue) {
+            this._syncingFilters = true;
             this.filters = newValue || [];
+            this.$nextTick(() => {
+                this._syncingFilters = false;
+            });
         },
         menu() {
             this.menu && this.get();
@@ -131,6 +135,9 @@ export default {
         },
         filters() {
             this.$nextTick(this.$refs.menu?.updateDimensions);
+            if (this._syncingFilters) {
+                return;
+            }
             this.$emit('input', this.filters);
         },
         filter: {

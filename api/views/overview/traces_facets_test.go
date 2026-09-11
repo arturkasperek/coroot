@@ -34,9 +34,10 @@ func TestTraceFacetGroupsFromMergedIncludesNamespaceLastNA(t *testing.T) {
 			"kube-system": 2,
 		},
 		"ServiceName": {"express-demo": 12},
+		"ApiRoute":    {"GET /api/hello": 30},
 		"SpanName":    {"GET /api/hello": 30},
 	})
-	assert.Equal(t, []string{"Namespace", "ServiceName", "SpanName"}, []string{groups[0].Key, groups[1].Key, groups[2].Key})
+	assert.Equal(t, []string{"Namespace", "ServiceName", "ApiRoute", "SpanName"}, []string{groups[0].Key, groups[1].Key, groups[2].Key, groups[3].Key})
 	assert.Equal(t, "coroot-dev", groups[0].Values[0].Value)
 	assert.Equal(t, "n/a", groups[0].Values[len(groups[0].Values)-1].Value)
 	assert.Equal(t, uint64(5), groups[0].Values[len(groups[0].Values)-1].Count)

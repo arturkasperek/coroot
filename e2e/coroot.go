@@ -313,6 +313,7 @@ type overviewLogs struct {
 		Application string            `json:"application"`
 		Message     string            `json:"message"`
 		Severity    string            `json:"severity"`
+		Timestamp   int64             `json:"timestamp"`
 		Attributes  map[string]string `json:"attributes"`
 		TraceId     string            `json:"trace_id"`
 		Cluster     string            `json:"cluster"`
@@ -351,11 +352,13 @@ type apiFacetGroups []struct {
 }
 
 type overviewTraceSpan struct {
-	Service  string `json:"service"`
-	TraceId  string `json:"trace_id"`
-	Id       string `json:"id"`
-	ParentId string `json:"parent_id"`
-	Name     string `json:"name"`
+	Service   string  `json:"service"`
+	TraceId   string  `json:"trace_id"`
+	Id        string  `json:"id"`
+	ParentId  string  `json:"parent_id"`
+	Name      string  `json:"name"`
+	Timestamp int64   `json:"timestamp"`
+	Duration  float64 `json:"duration"`
 }
 
 type overviewTraces struct {

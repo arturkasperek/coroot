@@ -85,12 +85,7 @@ func (c *Client) GetLogs(ctx context.Context, query LogQuery) ([]*model.LogEntry
 	where, args := query.filters(nil)
 	cond := strings.Join(where, " AND ")
 	limit := fmt.Sprint(query.Limit)
-	cutoff := "SELECT min(Timestamp) FROM (SELECT Timestamp FROM @@table_otel_logs@@ WHERE " + cond + " ORDER BY Timestamp DESC LIMIT " + limit + ")"
-	q := "SELECT ServiceName, Timestamp, multiIf(SeverityNumber=0, 0, intDiv(SeverityNumber, 4)+1), Body, TraceId, ResourceAttributes, LogAttributes"
-	q += " FROM @@table_otel_logs@@"
-	q += " WHERE " + cond + " AND Timestamp >= (" + cutoff + ")"
-	q += " ORDER BY Timestamp DESC"
-	q += " LIMIT " + limit
+	q := logsListSQL(LogListOrderBy(query.Sort), cond, limit)
 
 	rows, err := c.Query(ctx, q, args...)
 	if err != nil {
@@ -195,6 +190,7 @@ type LogQuery struct {
 	Filters  []LogFilter
 	Limit    int
 	Since    time.Time
+	Sort     Sort
 }
 
 type LogFilter struct {

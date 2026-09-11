@@ -1,4 +1,16 @@
 apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-data
+  namespace: coroot-dev
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
 kind: Service
 metadata:
   name: postgres
@@ -20,6 +32,8 @@ metadata:
     app: postgres
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: postgres
@@ -39,6 +53,8 @@ spec:
               value: coroot
             - name: POSTGRES_DB
               value: coroot
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
           ports:
             - containerPort: 5432
               name: pg
@@ -59,4 +75,5 @@ spec:
               mountPath: /var/lib/postgresql/data
       volumes:
         - name: data
-          emptyDir: {}
+          persistentVolumeClaim:
+            claimName: postgres-data

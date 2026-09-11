@@ -167,6 +167,7 @@ type logFixtureRow struct {
 	ServiceName        string
 	Host               string
 	Body               string
+	Timestamp          time.Time
 	ResourceAttributes map[string]string // merged on top of service.name + host.name
 }
 
@@ -176,6 +177,10 @@ func insertLogFixture(t *testing.T, token string, rows []logFixtureRow) {
 	now := time.Now().UTC().Add(-2 * time.Minute)
 	var buf bytes.Buffer
 	for _, s := range rows {
+		ts := s.Timestamp
+		if ts.IsZero() {
+			ts = now
+		}
 		for i := 0; i < s.Count; i++ {
 			attrs := map[string]string{
 				"service.name": s.ServiceName,
@@ -185,7 +190,7 @@ func insertLogFixture(t *testing.T, token string, rows []logFixtureRow) {
 				attrs[k] = v
 			}
 			line, err := json.Marshal(map[string]any{
-				"Timestamp":          now.Format("2006-01-02 15:04:05.000000000"),
+				"Timestamp":          ts.Format("2006-01-02 15:04:05.000000000"),
 				"TraceId":            "",
 				"SpanId":             "",
 				"TraceFlags":         0,
@@ -232,6 +237,9 @@ type traceFixtureRow struct {
 	SpanName           string
 	ParentSpanId       string
 	ResourceAttributes map[string]string
+	SpanAttributes     map[string]string
+	Timestamp          time.Time
+	DurationNs         int64
 }
 
 func insertTraceFixture(t *testing.T, rows []traceFixtureRow) {
@@ -243,14 +251,26 @@ func insertTraceFixture(t *testing.T, rows []traceFixtureRow) {
 	n := 0
 	for _, s := range rows {
 		parent := s.ParentSpanId
+		ts := s.Timestamp
+		if ts.IsZero() {
+			ts = now
+		}
+		dur := s.DurationNs
+		if dur == 0 {
+			dur = 5_000_000
+		}
 		for i := 0; i < s.Count; i++ {
 			n++
 			attrs := map[string]string{"service.name": s.ServiceName}
 			for k, v := range s.ResourceAttributes {
 				attrs[k] = v
 			}
+			spanAttrs := map[string]string{}
+			for k, v := range s.SpanAttributes {
+				spanAttrs[k] = v
+			}
 			line, err := json.Marshal(map[string]any{
-				"Timestamp":          now.Format("2006-01-02 15:04:05.000000000"),
+				"Timestamp":          ts.Format("2006-01-02 15:04:05.000000000"),
 				"TraceId":            fmt.Sprintf("%016x%016x", base, n),
 				"SpanId":             fmt.Sprintf("%016x", base+uint64(n)),
 				"ParentSpanId":       parent,
@@ -259,8 +279,8 @@ func insertTraceFixture(t *testing.T, rows []traceFixtureRow) {
 				"SpanKind":           "SPAN_KIND_SERVER",
 				"ServiceName":        s.ServiceName,
 				"ResourceAttributes": attrs,
-				"SpanAttributes":     map[string]string{},
-				"Duration":           int64(5_000_000),
+				"SpanAttributes":     spanAttrs,
+				"Duration":           dur,
 				"StatusCode":         "STATUS_CODE_UNSET",
 				"StatusMessage":      "",
 			})

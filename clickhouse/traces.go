@@ -59,7 +59,7 @@ func (c *Client) GetRootSpansHistogram(ctx context.Context, q SpanQuery) ([]mode
 
 func (c *Client) GetRootSpans(ctx context.Context, q SpanQuery) ([]*model.TraceSpan, error) {
 	filter, filterArgs := q.RootSpansFilter(false)
-	return c.getSpans(ctx, q, "", filter, filterArgs)
+	return c.getSpans(ctx, q, TraceListOrderBy(q.Sort), filter, filterArgs)
 }
 
 func (c *Client) GetTraceSpanStats(ctx context.Context, q SpanQuery) (map[model.TraceSpanKey]*model.TraceSpanStats, error) {
@@ -414,16 +414,19 @@ func (c *Client) querySpans(ctx context.Context, q SpanQuery, orderBy string, fi
 	query := "SELECT Timestamp, TraceId, SpanId, ParentSpanId, SpanName, ServiceName, Duration, StatusCode, StatusMessage, ResourceAttributes, SpanAttributes, Events.Timestamp, Events.Name, Events.Attributes"
 	query += " FROM @@table_otel_traces@@"
 	query += " WHERE " + cond
-	if orderBy == "" && q.Limit > 0 {
-		cutoff := "SELECT min(Timestamp) FROM (SELECT Timestamp FROM @@table_otel_traces@@ WHERE " + cond + " ORDER BY Timestamp DESC LIMIT " + fmt.Sprint(q.Limit) + ")"
-		query += " AND Timestamp >= (" + cutoff + ")"
-		orderBy = "Timestamp DESC"
+	limit := ""
+	if q.Limit > 0 {
+		limit = fmt.Sprint(q.Limit)
+	}
+	extra, orderBy := timestampLimitCutoff(orderBy, "@@table_otel_traces@@", cond, limit)
+	if extra != "" {
+		query += " AND " + extra
 	}
 	if orderBy != "" {
 		query += " ORDER BY " + orderBy
 	}
-	if q.Limit > 0 {
-		query += " LIMIT " + fmt.Sprint(q.Limit)
+	if limit != "" {
+		query += " LIMIT " + limit
 	}
 
 	rows, err := c.Query(ctx, query, filterArgs...)
@@ -687,6 +690,7 @@ type SpanQuery struct {
 
 	Filters          []SpanFilter
 	ExcludePeerAddrs []string
+	Sort             Sort
 
 	Diff bool
 }
@@ -814,22 +818,12 @@ func (q *SpanQuery) filter(skipField string) ([]string, []any) {
 			continue
 		}
 		name := fmt.Sprintf("filter_%d", i)
-		if f.Field == "Namespace" {
-			base := traceNamespaceExpr()
-			var sql string
-			switch f.Op {
-			case "=":
-				sql = fmt.Sprintf("(%s) = @%s", base, name)
-			case "!=":
-				sql = fmt.Sprintf("NOT ((%s) = @%s)", base, name)
-			case "~":
-				sql = fmt.Sprintf("match(%s, @%s)", base, name)
-			case "!~":
-				sql = fmt.Sprintf("NOT match(%s, @%s)", base, name)
-			default:
+		if base, ok := traceDerivedFieldExpr(f.Field); ok {
+			pred, ok := derivedFieldPredicate(base, f.Op, name)
+			if !ok {
 				continue
 			}
-			filter = append(filter, sql)
+			filter = append(filter, pred)
 			args = append(args, clickhouse.Named(name, f.Value))
 			continue
 		}

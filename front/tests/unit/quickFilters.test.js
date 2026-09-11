@@ -44,6 +44,13 @@ test('buildTraceQuickFilters uses backend counts for root service and span names
             ],
         },
         {
+            key: 'ApiRoute',
+            values: [
+                { value: 'GET /health', count: 22 },
+                { value: 'GET /metrics', count: 9 },
+            ],
+        },
+        {
             key: 'SpanName',
             values: [
                 { value: 'GET /api/hello', count: 30 },
@@ -54,15 +61,17 @@ test('buildTraceQuickFilters uses backend counts for root service and span names
 
     assert.deepEqual(
         groups.map((g) => g.key),
-        ['Namespace', 'ServiceName', 'SpanName'],
+        ['Namespace', 'ServiceName', 'ApiRoute', 'SpanName'],
     );
     assert.equal(groups[0].label, 'Namespace');
     assert.equal(groups[1].label, 'Application');
-    assert.equal(groups[2].label, 'Root span name');
+    assert.equal(groups[2].label, 'API Route');
+    assert.equal(groups[3].label, 'Root span name');
     assert.equal(groups[0].values.find((v) => v.value === 'coroot-dev').count, 40);
     assert.equal(groups[0].values.find((v) => v.value === 'n/a').label, 'Not applicable');
     assert.equal(groups[1].values.find((v) => v.value === 'flask-demo').count, 40);
-    assert.equal(groups[2].values.find((v) => v.value === 'GET /api/hello').count, 30);
+    assert.equal(groups[2].values.find((v) => v.value === 'GET /health').count, 22);
+    assert.equal(groups[3].values.find((v) => v.value === 'GET /api/hello').count, 30);
 });
 
 test('buildTraceQuickFilters hides empty groups and ignores unknown keys', async () => {

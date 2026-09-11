@@ -44,6 +44,7 @@ type LogEntry struct {
 type LogsQuery struct {
 	View    string                 `json:"view"`
 	Filters []clickhouse.LogFilter `json:"filters"`
+	Sort    clickhouse.Sort        `json:"sort"`
 	Limit   int                    `json:"limit"`
 	Suggest *string                `json:"suggest,omitempty"`
 	Since   string                 `json:"since"`
@@ -71,7 +72,7 @@ func renderLogs(ctx context.Context, chs clickhouse.Clients, w *model.World, que
 	if q.Limit <= 0 {
 		q.Limit = defaultLimit
 	}
-	lq := clickhouse.LogQuery{Ctx: w.Ctx, Limit: q.Limit, Filters: q.Filters}
+	lq := clickhouse.LogQuery{Ctx: w.Ctx, Limit: q.Limit, Filters: q.Filters, Sort: q.Sort}
 	var clusterFilter *clickhouse.LogFilter
 
 	var rest []clickhouse.LogFilter
@@ -192,11 +193,11 @@ func renderLogs(ctx context.Context, chs clickhouse.Clients, w *model.World, que
 		}
 	}
 
-	v.renderEntries(overallEntries, w, q.Limit)
+	v.renderEntries(overallEntries, w, q.Limit, q.Sort)
 	return v
 }
 
-func (v *Logs) renderEntries(entries []*model.LogEntry, w *model.World, limit int) {
+func (v *Logs) renderEntries(entries []*model.LogEntry, w *model.World, limit int, s clickhouse.Sort) {
 	if len(entries) == 0 {
 		return
 	}
@@ -246,6 +247,9 @@ func (v *Logs) renderEntries(entries []*model.LogEntry, w *model.World, limit in
 		maxTs = max(maxTs, e.Timestamp.UnixNano())
 	}
 	sort.Slice(v.Entries, func(i, j int) bool {
+		if clickhouse.LogListOrderBy(s) == "Timestamp ASC" {
+			return v.Entries[i].Timestamp < v.Entries[j].Timestamp
+		}
 		return v.Entries[i].Timestamp > v.Entries[j].Timestamp
 	})
 	if len(v.Entries) > limit {

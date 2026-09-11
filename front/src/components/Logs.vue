@@ -9,7 +9,7 @@
             </v-alert>
 
             <QueryPanel
-                v-model="query.filters"
+                v-model="queryBuilderFilters"
                 :options-loading="qb.loading"
                 :items="qb.items"
                 :error="qb.error"
@@ -58,9 +58,10 @@
                 />
                 <div class="logs-table">
                     <ObservabilityTable
-                        :headers="columns"
+                        :headers="logHeaders"
                         :items="entries"
                         :loading="loading"
+                        :sort="logSort"
                         :row-key="(item, index) => `${item.timestamp}-${index}`"
                         :row-color="(item) => item.color"
                         :value-getter="getColumnValue"
@@ -68,6 +69,7 @@
                         mono
                         clickable
                         @row-click="entry = $event"
+                        @sort="sortLogs"
                     >
                         <template #item.application="{ item, value }">
                             <v-menu offset-y @click.stop>
@@ -120,6 +122,15 @@ import InlineSelect from '@/components/InlineSelect.vue';
 import LogSearchButtons from '@/components/LogSearchButtons.vue';
 import LogQuickFilters from '@/components/LogQuickFilters.vue';
 import ObservabilityTable from '@/components/ObservabilityTable.vue';
+import {
+    LOG_SORT_VALUES,
+    appendSortChip,
+    applyBuilderFilters,
+    effectiveSort,
+    makeQueryFromRoute,
+    shouldReloadQuery,
+    toggleSort,
+} from '@/utils/observabilitySort';
 
 const SEVERITY_FACETS = [
     { value: 'unknown', color: 'grey-lighten1' },
@@ -143,7 +154,7 @@ export default {
         columns: {
             type: Array,
             default: () => [
-                { key: 'date', label: 'Date' },
+                { key: 'date', label: 'Date', sortable: true },
                 { key: 'cluster', label: 'Cluster', maxWidth: 20 },
                 { key: 'application', label: 'Application' },
                 { key: 'message', label: 'Message' },
@@ -157,13 +168,15 @@ export default {
         } catch {
             //
         }
+        const query = this.makeQuery(q);
         return {
             loading: false,
             error: '',
             view: {},
             refreshInterval: 0,
             logsBodyHeight: 0,
-            query: this.makeQuery(q),
+            query,
+            querySerialized: JSON.stringify(query),
             limits: [10, 20, 50, 100, 1000],
             entry: null,
             qb: {
@@ -217,6 +230,11 @@ export default {
         },
         query: {
             handler(curr, prev) {
+                const { reload, serialized } = shouldReloadQuery(this.querySerialized, curr);
+                if (!reload) {
+                    return;
+                }
+                this.querySerialized = serialized;
                 this.setQuery(curr.view !== prev.view);
                 this.get();
             },
@@ -237,6 +255,23 @@ export default {
                 filters: [...this.defaultFilters, ...this.query.filters],
             };
         },
+        queryBuilderFilters: {
+            get() {
+                return appendSortChip(this.query.filters || [], this.query.sort);
+            },
+            set(filters) {
+                this.query = applyBuilderFilters(this.query, filters);
+            },
+        },
+        logHeaders() {
+            return (this.columns || []).map((col) => ({
+                ...col,
+                sortable: col.sortable || col.key === 'date',
+            }));
+        },
+        logSort() {
+            return effectiveSort(this.query.sort);
+        },
         severityFacets() {
             const series = (this.view.chart && this.view.chart.series) || [];
             return SEVERITY_FACETS.map((facet) => {
@@ -253,7 +288,8 @@ export default {
             if (!this.view.entries) {
                 return [];
             }
-            const sorted = [...this.view.entries].sort((a, b) => b.timestamp - a.timestamp);
+            const dir = effectiveSort(this.query.sort).dir;
+            const sorted = [...this.view.entries].sort((a, b) => (dir === 'asc' ? a.timestamp - b.timestamp : b.timestamp - a.timestamp));
             if (sorted.length > this.query.limit) {
                 sorted.splice(this.query.limit);
             }
@@ -307,11 +343,7 @@ export default {
             }
         },
         makeQuery(q) {
-            return {
-                view: q.view || 'messages',
-                filters: q.filters || [],
-                limit: q.limit || 100,
-            };
+            return makeQueryFromRoute(q);
         },
         setQuery(push) {
             const to = { query: { ...this.$route.query, query: JSON.stringify(this.query) } };
@@ -348,9 +380,19 @@ export default {
             this.query.filters = this.query.filters.filter((f) => !(f.name === name && f.value === value));
             this.query.filters.push({ name, op, value });
         },
+        sortLogs(by) {
+            if (by !== 'date') {
+                return;
+            }
+            this.query = { ...this.query, sort: toggleSort(this.query.sort, by) };
+        },
         qbGet(what, name) {
             this.qb.items = [];
             if (what === 'op') {
+                if (name === 'Sort') {
+                    this.qb.items = ['='];
+                    return;
+                }
                 switch (name) {
                     case 'Severity':
                     case 'Source':
@@ -370,7 +412,11 @@ export default {
                 return;
             }
             if (what === 'name') {
-                this.qb.items = this.view.suggest || [];
+                this.qb.items = ['Sort', ...(this.view.suggest || []).filter((item) => item !== 'Sort')];
+                return;
+            }
+            if (name === 'Sort') {
+                this.qb.items = LOG_SORT_VALUES;
                 return;
             }
             this.qb.loading = true;

@@ -36,6 +36,18 @@ data:
     </clickhouse>
 ---
 apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: clickhouse-data
+  namespace: coroot-dev
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: v1
 kind: Service
 metadata:
   name: clickhouse
@@ -61,6 +73,8 @@ metadata:
   namespace: coroot-dev
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: clickhouse
@@ -90,7 +104,12 @@ spec:
             - name: cors
               mountPath: /etc/clickhouse-server/config.d/cors.xml
               subPath: cors.xml
+            - name: data
+              mountPath: /var/lib/clickhouse
       volumes:
         - name: cors
           configMap:
             name: clickhouse-cors
+        - name: data
+          persistentVolumeClaim:
+            claimName: clickhouse-data

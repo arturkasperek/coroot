@@ -1,13 +1,14 @@
 const TRACE_FIELD_LABELS = {
     Namespace: 'Namespace',
     ServiceName: 'Application',
+    ApiRoute: 'API Route',
     SpanName: 'Root Span Name',
     TraceId: 'Trace ID',
 };
 
 const TRACE_FIELDS_BY_LABEL = Object.fromEntries(Object.entries(TRACE_FIELD_LABELS).map(([field, label]) => [label, field]));
 
-export const TRACE_QUERY_FIELDS = Object.values(TRACE_FIELD_LABELS);
+export const TRACE_QUERY_FIELDS = [...Object.values(TRACE_FIELD_LABELS), 'Sort'];
 
 export function toQueryBuilderFilters(filters = []) {
     return filters

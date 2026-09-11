@@ -1,6 +1,7 @@
 const TRACE_FACETS = [
     { key: 'Namespace', label: 'Namespace' },
     { key: 'ServiceName', label: 'Application' },
+    { key: 'ApiRoute', label: 'API Route' },
     { key: 'SpanName', label: 'Root span name' },
 ];
 

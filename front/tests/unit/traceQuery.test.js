@@ -10,10 +10,16 @@ async function loadTraceQuery() {
     return import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}#${pathToFileURL(sourcePath)}`);
 }
 
+async function loadSortFromTraceQuery() {
+    const sourcePath = path.resolve(__dirname, '../../src/utils/observabilitySort.js');
+    const source = await readFile(sourcePath, 'utf8');
+    return import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}#${pathToFileURL(sourcePath)}`);
+}
+
 test('shows trace fields with user-facing names in the query builder', async () => {
     const { TRACE_QUERY_FIELDS } = await loadTraceQuery();
 
-    assert.deepEqual(TRACE_QUERY_FIELDS, ['Namespace', 'Application', 'Root Span Name', 'Trace ID']);
+    assert.deepEqual(TRACE_QUERY_FIELDS, ['Namespace', 'Application', 'API Route', 'Root Span Name', 'Trace ID', 'Sort']);
 });
 
 test('maps existing trace filters to query-builder filters', async () => {
@@ -23,12 +29,14 @@ test('maps existing trace filters to query-builder filters', async () => {
         toQueryBuilderFilters([
             { field: 'Namespace', op: '=', value: 'coroot-dev' },
             { field: 'ServiceName', op: '=', value: 'express-demo' },
+            { field: 'ApiRoute', op: '=', value: 'GET /health' },
             { field: 'SpanName', op: '~', value: 'GET.*' },
             { field: 'TraceId', op: '=', value: 'abc123' },
         ]),
         [
             { name: 'Namespace', op: '=', value: 'coroot-dev' },
             { name: 'Application', op: '=', value: 'express-demo' },
+            { name: 'API Route', op: '=', value: 'GET /health' },
             { name: 'Root Span Name', op: '~', value: 'GET.*' },
             { name: 'Trace ID', op: '=', value: 'abc123' },
         ],
@@ -42,15 +50,42 @@ test('maps query-builder filters back to the trace API schema', async () => {
         fromQueryBuilderFilters([
             { name: 'Namespace', op: '=', value: 'coroot-dev' },
             { name: 'Application', op: '!=', value: 'worker' },
+            { name: 'API Route', op: '=', value: 'GET /health' },
             { name: 'Root Span Name', op: '=', value: 'GET /api/hello' },
             { name: 'Trace ID', op: '=', value: 'abc123' },
         ]),
         [
             { field: 'Namespace', op: '=', value: 'coroot-dev' },
             { field: 'ServiceName', op: '!=', value: 'worker' },
+            { field: 'ApiRoute', op: '=', value: 'GET /health' },
             { field: 'SpanName', op: '=', value: 'GET /api/hello' },
             { field: 'TraceId', op: '=', value: 'abc123' },
         ],
+    );
+});
+
+test('maps Sort chip to query.sort and does not send it as a ClickHouse filter', async () => {
+    const { fromQueryBuilderFilters } = await loadTraceQuery();
+    const { appendSortChip } = await loadSortFromTraceQuery();
+
+    assert.deepEqual(
+        appendSortChip(
+            [
+                { name: 'Application', op: '=', value: 'express-demo' },
+            ],
+            { by: 'duration', dir: 'desc' },
+        ),
+        [
+            { name: 'Application', op: '=', value: 'express-demo' },
+            { name: 'Sort', op: '=', value: 'Duration desc' },
+        ],
+    );
+    assert.deepEqual(
+        fromQueryBuilderFilters([
+            { name: 'Application', op: '=', value: 'express-demo' },
+            { name: 'Sort', op: '=', value: 'Duration desc' },
+        ]),
+        [{ field: 'ServiceName', op: '=', value: 'express-demo' }],
     );
 });
 
@@ -130,8 +165,41 @@ test('traces sidebar exposes namespace, root service, and span name groups', asy
 
     assert.match(traces, /buildTraceQuickFilters/);
     assert.match(traces, /view\.facets/);
-    assert.match(traces, /local-search-keys="\['Namespace', 'ServiceName', 'SpanName'\]"/);
+    assert.match(traces, /local-search-keys="\['Namespace', 'ServiceName', 'ApiRoute', 'SpanName'\]"/);
     assert.match(traces, /case 'Application':/);
+    assert.match(traces, /case 'API Route':/);
     assert.doesNotMatch(traces, /case 'Root Service Name':/);
     assert.doesNotMatch(traces, /Root ID/);
+});
+
+test('traces and logs sort Date via Query and column headers; traces also sort Duration', async () => {
+    const [traces, logs, table] = await Promise.all([
+        readFile(path.resolve(__dirname, '../../src/views/Traces.vue'), 'utf8'),
+        readFile(path.resolve(__dirname, '../../src/components/Logs.vue'), 'utf8'),
+        readFile(path.resolve(__dirname, '../../src/components/ObservabilityTable.vue'), 'utf8'),
+    ]);
+
+    assert.match(table, /@click="onHeaderClick/);
+    assert.match(table, /header\.sortable/);
+    assert.match(traces, /@sort="sortTraces"/);
+    assert.match(traces, /sortable: true/);
+    assert.match(traces, /case 'Sort':/);
+    assert.match(logs, /@sort="sortLogs"/);
+    assert.match(logs, /sortable: true/);
+    assert.match(logs, /name === 'Sort'/);
+    assert.match(logs, /query\.sort/);
+    assert.doesNotMatch(logs, /by: 'duration'/);
+});
+
+test('QueryBuilder does not emit input while copying parent value into filters', async () => {
+    const qb = await readFile(path.resolve(__dirname, '../../src/components/QueryBuilder.vue'), 'utf8');
+    assert.match(qb, /this\._syncingFilters = true/);
+    assert.match(qb, /if \(this\._syncingFilters\) \{\s*return;/);
+    assert.match(qb, /this\.\$emit\('input', this\.filters\)/);
+});
+
+test('Logs uses applyBuilderFilters and shouldReloadQuery to break the sort refetch loop', async () => {
+    const logs = await readFile(path.resolve(__dirname, '../../src/components/Logs.vue'), 'utf8');
+    assert.match(logs, /applyBuilderFilters\(this\.query, filters\)/);
+    assert.match(logs, /shouldReloadQuery\(this\.querySerialized, curr\)/);
 });

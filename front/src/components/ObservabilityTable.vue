@@ -3,8 +3,19 @@
         <v-simple-table v-if="loading || items.length" dense class="observability-table">
             <thead>
                 <tr>
-                    <th v-for="header in headers" :key="headerKey(header)" class="px-2" :class="header.headerClass">
+                    <th
+                        v-for="header in headers"
+                        :key="headerKey(header)"
+                        class="px-2"
+                        :class="[header.headerClass, { sortable: header.sortable, sorted: isSorted(header) }]"
+                        :role="header.sortable ? 'button' : undefined"
+                        :tabindex="header.sortable ? 0 : undefined"
+                        :aria-sort="ariaSort(header)"
+                        @click="onHeaderClick(header)"
+                        @keydown.enter="onHeaderClick(header)"
+                    >
                         {{ headerLabel(header) }}
+                        <v-icon v-if="isSorted(header)" x-small>{{ sort && sort.dir === 'asc' ? 'mdi-arrow-up' : 'mdi-arrow-down' }}</v-icon>
                     </th>
                 </tr>
             </thead>
@@ -98,6 +109,10 @@ export default {
         },
         rowColor: Function,
         valueGetter: Function,
+        sort: {
+            type: Object,
+            default: null,
+        },
     },
 
     methods: {
@@ -106,6 +121,21 @@ export default {
         },
         headerLabel(header) {
             return header.text || header.label;
+        },
+        isSorted(header) {
+            return !!(this.sort && this.sort.by && this.sort.by === this.headerKey(header));
+        },
+        ariaSort(header) {
+            if (!this.isSorted(header)) {
+                return 'none';
+            }
+            return this.sort.dir === 'asc' ? 'ascending' : 'descending';
+        },
+        onHeaderClick(header) {
+            if (!header.sortable) {
+                return;
+            }
+            this.$emit('sort', this.headerKey(header));
         },
         itemValue(item, header) {
             return this.valueGetter ? this.valueGetter(item, header) : item[this.headerKey(header)];
@@ -156,5 +186,13 @@ export default {
 .clickable:focus-visible {
     outline: 2px solid var(--primary-color, #1976d2);
     outline-offset: -2px;
+}
+th.sortable {
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+}
+th.sortable:hover {
+    color: var(--text-color);
 }
 </style>

@@ -14,17 +14,58 @@ func traceNamespaceExpr() string {
 	return `if(ResourceAttributes['k8s.namespace.name'] != '', ResourceAttributes['k8s.namespace.name'], 'n/a')`
 }
 
-func traceFacetSelectSQL(field string, fromMV bool) (string, bool) {
+func stripQueryAttr(attr string) string {
+	return fmt.Sprintf("substringIndex(SpanAttributes['%s'], char(63), 1)", attr)
+}
+
+func traceApiRouteExpr() string {
+	method := `if(SpanAttributes['http.method'] != '', SpanAttributes['http.method'], SpanAttributes['http.request.method'])`
+	path := fmt.Sprintf(
+		`if(SpanAttributes['http.route'] != '', %s, if(SpanAttributes['http.target'] != '', %s, SpanAttributes['url.path']))`,
+		stripQueryAttr("http.route"),
+		stripQueryAttr("http.target"),
+	)
+	return fmt.Sprintf(`if((%s) = '', '', if((%s) = '', %s, concat(%s, ' ', %s)))`, path, method, path, method, path)
+}
+
+func traceDerivedFieldExpr(field string) (string, bool) {
 	switch field {
-	case "ServiceName", "SpanName":
 	case "Namespace":
+		return traceNamespaceExpr(), true
+	case "ApiRoute":
+		return traceApiRouteExpr(), true
+	default:
+		return "", false
+	}
+}
+
+func derivedFieldPredicate(base, op, name string) (string, bool) {
+	switch op {
+	case "=":
+		return fmt.Sprintf("(%s) = @%s", base, name), true
+	case "!=":
+		return fmt.Sprintf("NOT ((%s) = @%s)", base, name), true
+	case "~":
+		return fmt.Sprintf("match(%s, @%s)", base, name), true
+	case "!~":
+		return fmt.Sprintf("NOT match(%s, @%s)", base, name), true
+	default:
+		return "", false
+	}
+}
+
+func traceFacetSelectSQL(field string, fromMV bool) (string, bool) {
+	if expr, ok := traceDerivedFieldExpr(field); ok {
 		if fromMV {
 			return "", false
 		}
 		return fmt.Sprintf(
-			"SELECT %s, count(1) FROM @@table_otel_traces@@ WHERE %%s GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT %d",
-			traceNamespaceExpr(), maxTraceFacetValues,
+			"SELECT %s AS %s, count(1) FROM @@table_otel_traces@@ WHERE %%s GROUP BY 1 HAVING %s != '' ORDER BY 2 DESC, 1 LIMIT %d",
+			expr, field, field, maxTraceFacetValues,
 		), true
+	}
+	switch field {
+	case "ServiceName", "SpanName":
 	default:
 		return "", false
 	}
@@ -65,7 +106,7 @@ func buildTraceFacetQuery(q SpanQuery, field string, fromMV bool) (string, []any
 
 func (c *Client) GetTraceFacetCounts(ctx context.Context, q SpanQuery, field string) ([]FacetValue, error) {
 	fromMV := q.DurFrom == 0 && q.DurTo == 0 && !q.Errors && c.useTracesHistogram(ctx, q, q.TsFrom)
-	if field == "Namespace" {
+	if _, derived := traceDerivedFieldExpr(field); derived {
 		fromMV = false
 	}
 	query, args, ok := buildTraceFacetQuery(q, field, fromMV)
