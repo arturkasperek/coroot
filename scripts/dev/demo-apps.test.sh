@@ -95,3 +95,6 @@ grep -q 'fieldPath: metadata.namespace' "$APPS" || fail "apps.yaml missing Downw
 
 grep -q 'Flask' "$DEV" || fail "dev.sh banner missing Flask demo"
 grep -q '13003' "$DEV" || fail "dev.sh banner missing Flask port 13003"
+
+grep -q "toJSONString(ResourceAttributes) AS ResourceAttributes" "$DEV" || fail "dev.sh banner traces sample missing toJSONString(ResourceAttributes)"
+grep -q "toJSONString(SpanAttributes) AS SpanAttributes" "$DEV" || fail "dev.sh banner traces sample missing toJSONString(SpanAttributes)"
