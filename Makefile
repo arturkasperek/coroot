@@ -42,6 +42,7 @@ go-test:
 test-e2e: ## E2E tests against the running make-dev cluster. Optional: make test-e2e TestOverviewLogSourceFilters
 	@bash scripts/dev/k8s-dev-tools.sh
 	@eval "$$(bash scripts/dev/load-env.sh --export)"; \
+	  export COROOT_DEV_CLICKHOUSE_ADDRESS="$${COROOT_DEV_CLICKHOUSE_ADDRESS:-127.0.0.1:19000}"; \
 	  go test -tags e2e -count=1 -timeout 5m ./e2e/... $(if $(E2E_RUN),-run "$(E2E_RUN)")
 
 ifeq (test-e2e,$(firstword $(MAKECMDGOALS)))

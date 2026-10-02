@@ -40,6 +40,7 @@ echo "    Postgres:      localhost:15432  user/db/password coroot  (config DB, n
 echo "    k9s / kubectl top: helm metrics-server in kube-system"
 echo "    Tabix:         http://localhost:18081  (ClickHouse SQL UI)"
 echo "                   host http://127.0.0.1:18123  user default  password empty"
+echo "                   native protocol 127.0.0.1:19000 (e2e/storage tests)"
 echo "                   samples (db default, not system):"
 echo "                   logs:    SELECT Timestamp, ServiceName, SeverityText, Body"
 echo "                            FROM default.otel_logs ORDER BY Timestamp DESC LIMIT 100"
