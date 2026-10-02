@@ -356,7 +356,7 @@ func (h *MCPHandler) registerTools() {
 				mcp.Description("Filter to one or more severities (OR). Allowed: 'unknown','trace','debug','info','warning','error','fatal'. Default: all."),
 				mcp.WithStringItems(),
 			),
-			mcp.WithString("search", mcp.Description("Substring search over the log body (case-insensitive). Split on whitespace/punctuation; terms are AND'd. `fail` matches `failure`.")),
+			mcp.WithString("search", mcp.Description("Search over the log body (case-insensitive). Words (split on whitespace/punctuation) must all occur as whole words and use an index, so `fail` does not match `failure`. A term with a leading or trailing * is a substring search and scans every message in the range: `fail*` matches `failure`.")),
 			mcp.WithString("log_pattern", mcp.Description("Pattern hash from get_application_status's log_patterns. When app_id is set, the hash is expanded to its similar-pattern equivalence class so all variants of the pattern match. Source is forced to 'agent' since pattern hashes are only emitted by the node-agent.")),
 			mcp.WithString("source", mcp.Description("'auto' (default) | 'agent' (container stdout/stderr collected by coroot-node-agent) | 'otel' (OpenTelemetry-shipped logs). When `app_id` is omitted and source is 'auto', defaults to 'agent'.")),
 			mcp.WithReadOnlyHintAnnotation(true),

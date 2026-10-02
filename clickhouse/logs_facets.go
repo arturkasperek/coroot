@@ -44,16 +44,53 @@ func facetCountSQL(name string) (string, *string, bool) {
 	}
 }
 
+// rollupFacetCountSQL is facetCountSQL over otel_logs_rollup. The host.name
+// facet is the one attribute the rollup keeps.
+func rollupFacetCountSQL(name string) (string, bool) {
+	const from = " FROM @@table_otel_logs_rollup@@ WHERE %s"
+	switch name {
+	case "Severity":
+		return "SELECT multiIf(SeverityNumber=0, 0, intDiv(SeverityNumber, 4)+1), sum(Count)" + from + " GROUP BY 1", true
+	case "service.name":
+		return "SELECT ServiceName, sum(Count)" + from + " GROUP BY ServiceName HAVING ServiceName != '' ORDER BY sum(Count) DESC, ServiceName LIMIT 1000", true
+	case "host.name":
+		return "SELECT if(HostLog != '', HostLog, HostRes) AS v, sum(Count)" + from + " GROUP BY v HAVING v != '' ORDER BY sum(Count) DESC, v LIMIT 1000", true
+	case "Cluster":
+		return "SELECT sum(Count)" + from, true
+	case "Source":
+		return "SELECT if(startsWith(ServiceName, '/'), 'agent', 'otel'), sum(Count)" + from + " GROUP BY 1", true
+	case "Namespace":
+		return "SELECT Namespace, sum(Count)" + from + " GROUP BY 1", true
+	case "Application":
+		return "SELECT Application AS v, sum(Count)" + from + " GROUP BY v HAVING v != '' ORDER BY sum(Count) DESC, v LIMIT 1000", true
+	}
+	return "", false
+}
+
+// GetLogFacetCounts is answered by the per-minute rollup when the query allows it.
 func (c *Client) GetLogFacetCounts(ctx context.Context, query LogQuery, name string) ([]FacetValue, error) {
-	sqlFmt, attr, ok := facetCountSQL(name)
+	_, attr, ok := facetCountSQL(name)
 	if !ok {
 		return nil, fmt.Errorf("unsupported log facet %q", name)
 	}
+	if where, args, ok := query.rollupFilters(attr); ok {
+		rsql, _ := rollupFacetCountSQL(name)
+		return c.queryLogFacetCounts(ctx, name, fmt.Sprintf(rsql, strings.Join(where, " AND ")), args)
+	}
+	q, args := rawLogFacetCountSQL(query, name)
+	return c.queryLogFacetCounts(ctx, name, q, args)
+}
+
+func rawLogFacetCountSQL(query LogQuery, name string) (string, []any) {
+	sqlFmt, attr, _ := facetCountSQL(name)
 	where, args := query.filters(attr)
-	q := fmt.Sprintf(sqlFmt, strings.Join(where, " AND "))
 	if name == "host.name" {
 		args = append(args, chgo.Named("attr", name))
 	}
+	return fmt.Sprintf(sqlFmt, strings.Join(where, " AND ")), args
+}
+
+func (c *Client) queryLogFacetCounts(ctx context.Context, name, q string, args []any) ([]FacetValue, error) {
 	rows, err := c.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err

@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/textproto"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -176,6 +177,10 @@ func (ci ClickHouseInfo) UseDistributed() bool {
 	return !ci.Cloud && ci.Name != ""
 }
 
+// @replacing_merge_tree_by(Column): a ReplacingMergeTree that keeps, among rows
+// with the same sorting key, the one with the largest Column.
+var replacingByVersion = regexp.MustCompile(`@replacing_merge_tree_by\((\w+)\)`)
+
 func (c *LowLevelClient) Migrate(ctx context.Context, cfg config.CollectorConfig) error {
 	for _, t := range tables {
 		t = strings.ReplaceAll(t, "@ttl_traces", fmt.Sprintf("%d", cfg.TracesTTL))
@@ -184,10 +189,12 @@ func (c *LowLevelClient) Migrate(ctx context.Context, cfg config.CollectorConfig
 		t = strings.ReplaceAll(t, "@ttl_metrics", fmt.Sprintf("%d", cfg.MetricsTTL))
 		if c.cluster != "" {
 			t = strings.ReplaceAll(t, "@merge_tree", "ReplicatedMergeTree('/clickhouse/tables/{shard}/{database}/{table}', '{replica}')")
+			t = replacingByVersion.ReplaceAllString(t, "ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/{database}/{table}', '{replica}', $1)")
 			t = strings.ReplaceAll(t, "@replacing_merge_tree", "ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/{database}/{table}', '{replica}')")
 			t = strings.ReplaceAll(t, "@summing_merge_tree", "ReplicatedSummingMergeTree('/clickhouse/tables/{shard}/{database}/{table}', '{replica}')")
 		} else {
 			t = strings.ReplaceAll(t, "@merge_tree", "MergeTree()")
+			t = replacingByVersion.ReplaceAllString(t, "ReplacingMergeTree($1)")
 			t = strings.ReplaceAll(t, "@replacing_merge_tree", "ReplacingMergeTree()")
 			t = strings.ReplaceAll(t, "@summing_merge_tree", "SummingMergeTree()")
 		}
@@ -229,7 +236,7 @@ CREATE TABLE IF NOT EXISTS otel_logs @on_cluster (
      INDEX idx_res_attr_value mapValues(ResourceAttributes) TYPE bloom_filter(0.01) GRANULARITY 1,
      INDEX idx_log_attr_key mapKeys(LogAttributes) TYPE bloom_filter(0.01) GRANULARITY 1,
      INDEX idx_log_attr_value mapValues(LogAttributes) TYPE bloom_filter(0.01) GRANULARITY 1,
-     INDEX idx_body Body TYPE tokenbf_v1(32768, 3, 0) GRANULARITY 1
+     INDEX idx_body lowerUTF8(Body) TYPE text(tokenizer = 'splitByNonAlpha') GRANULARITY 1
 ) ENGINE @merge_tree
 TTL toDateTime(Timestamp) + toIntervalSecond(@ttl_logs)
 PARTITION BY toDate(Timestamp)
@@ -253,6 +260,30 @@ CREATE MATERIALIZED VIEW IF NOT EXISTS otel_logs_service_name_severity_text_mv @
 SELECT ServiceName, SeverityText, max(Timestamp) AS LastSeen FROM otel_logs group by ServiceName, SeverityText`,
 
 		`
+CREATE TABLE IF NOT EXISTS otel_logs_rollup @on_cluster (
+    Minute DateTime CODEC(Delta, ZSTD(1)),
+    ServiceName LowCardinality(String) CODEC(ZSTD(1)),
+    Namespace LowCardinality(String) CODEC(ZSTD(1)),
+    Application LowCardinality(String) CODEC(ZSTD(1)),
+    SeverityNumber Int32 CODEC(ZSTD(1)),
+    HostLog LowCardinality(String) CODEC(ZSTD(1)),
+    HostRes LowCardinality(String) CODEC(ZSTD(1)),
+    Count UInt64 CODEC(ZSTD(1))
+) ENGINE @summing_merge_tree
+PARTITION BY toDate(Minute)
+ORDER BY (ServiceName, Minute, SeverityNumber, Namespace, Application, HostLog, HostRes)
+TTL Minute + toIntervalSecond(@ttl_logs)
+SETTINGS ttl_only_drop_parts = 1`,
+
+		`
+CREATE MATERIALIZED VIEW IF NOT EXISTS otel_logs_rollup_mv @on_cluster TO otel_logs_rollup AS
+SELECT toDateTime(toStartOfMinute(Timestamp)) AS Minute, ServiceName, Namespace, Application, SeverityNumber,
+       LogAttributes['host.name'] AS HostLog, ResourceAttributes['host.name'] AS HostRes,
+       count() AS Count
+FROM otel_logs
+GROUP BY Minute, ServiceName, Namespace, Application, SeverityNumber, HostLog, HostRes`,
+
+		`
 CREATE TABLE IF NOT EXISTS otel_traces @on_cluster (
      Timestamp DateTime64(9) CODEC(Delta, ZSTD(1)),
      TraceId String CODEC(ZSTD(1)),
@@ -267,6 +298,8 @@ CREATE TABLE IF NOT EXISTS otel_traces @on_cluster (
      Duration Int64 CODEC(ZSTD(1)),
      StatusCode LowCardinality(String) CODEC(ZSTD(1)),
      StatusMessage String CODEC(ZSTD(1)),
+     RequestBody String CODEC(ZSTD(1)),
+     ResponseBody String CODEC(ZSTD(1)),
      Namespace LowCardinality(String) MATERIALIZED (if(ResourceAttributes['k8s.namespace.name'] != '', ResourceAttributes['k8s.namespace.name'], 'n/a')) CODEC(ZSTD(1)),
      ApiRoute LowCardinality(String) MATERIALIZED (if((if(SpanAttributes['http.route'] != '', substringIndex(SpanAttributes['http.route'], char(63), 1), if(SpanAttributes['http.target'] != '', substringIndex(SpanAttributes['http.target'], char(63), 1), SpanAttributes['url.path']))) = '', '', if((if(SpanAttributes['http.method'] != '', SpanAttributes['http.method'], SpanAttributes['http.request.method'])) = '', if(SpanAttributes['http.route'] != '', substringIndex(SpanAttributes['http.route'], char(63), 1), if(SpanAttributes['http.target'] != '', substringIndex(SpanAttributes['http.target'], char(63), 1), SpanAttributes['url.path'])), concat(if(SpanAttributes['http.method'] != '', SpanAttributes['http.method'], SpanAttributes['http.request.method']), ' ', if(SpanAttributes['http.route'] != '', substringIndex(SpanAttributes['http.route'], char(63), 1), if(SpanAttributes['http.target'] != '', substringIndex(SpanAttributes['http.target'], char(63), 1), SpanAttributes['url.path'])))))) CODEC(ZSTD(1)),
      Events Nested (
@@ -285,7 +318,9 @@ CREATE TABLE IF NOT EXISTS otel_traces @on_cluster (
      INDEX idx_res_attr_value mapValues(ResourceAttributes) TYPE bloom_filter(0.01) GRANULARITY 1,
      INDEX idx_span_attr_key mapKeys(SpanAttributes) TYPE bloom_filter(0.01) GRANULARITY 1,
      INDEX idx_span_attr_value mapValues(SpanAttributes) TYPE bloom_filter(0.01) GRANULARITY 1,
-     INDEX idx_duration Duration TYPE minmax GRANULARITY 1
+     INDEX idx_duration Duration TYPE minmax GRANULARITY 1,
+     INDEX idx_request_body RequestBody TYPE text(tokenizer = 'splitByNonAlpha') GRANULARITY 1,
+     INDEX idx_response_body ResponseBody TYPE text(tokenizer = 'splitByNonAlpha') GRANULARITY 1
 ) ENGINE @merge_tree
 TTL toDateTime(Timestamp) + toIntervalSecond(@ttl_traces)
 PARTITION BY toDate(Timestamp)
@@ -408,20 +443,26 @@ CREATE MATERIALIZED VIEW IF NOT EXISTS profiling_profiles_mv @on_cluster TO prof
 SELECT ServiceName, Type, max(End) AS LastSeen FROM profiling_samples group by ServiceName, Type`,
 
 		`
-CREATE TABLE IF NOT EXISTS metrics @on_cluster (
-	Timestamp DateTime64(3, 'UTC') CODEC(Delta, ZSTD(1)),
-	MetricHash UInt64 CODEC(ZSTD(1)),
+CREATE TABLE IF NOT EXISTS metrics_samples @on_cluster (
     MetricName LowCardinality(String) CODEC(ZSTD(1)),
-	Labels Map(LowCardinality(String), String) CODEC(ZSTD(1)),
-	Value Float64 CODEC(ZSTD(1)),
-	INDEX idx_metric_name MetricName TYPE bloom_filter(0.001) GRANULARITY 1,
-	INDEX idx_labels_key mapKeys(Labels) TYPE bloom_filter(0.01) GRANULARITY 1,
-	INDEX idx_labels_value mapValues(Labels) TYPE bloom_filter(0.01) GRANULARITY 1
+    MetricHash UInt64 CODEC(ZSTD(1)),
+    Timestamp DateTime('UTC') CODEC(DoubleDelta, ZSTD(1)),
+    Value Float64 CODEC(Gorilla, ZSTD(1))
 ) ENGINE @merge_tree
 PARTITION BY toDate(Timestamp)
-ORDER BY (MetricName, MetricHash, toUnixTimestamp(Timestamp))
-TTL toDateTime(Timestamp) + toIntervalSecond(@ttl_metrics)
-SETTINGS index_granularity = 8192`,
+ORDER BY (MetricName, MetricHash, Timestamp)
+TTL Timestamp + toIntervalSecond(@ttl_metrics)
+SETTINGS index_granularity = 8192, ttl_only_drop_parts = 1`,
+
+		`
+CREATE TABLE IF NOT EXISTS metrics_series @on_cluster (
+    MetricName LowCardinality(String) CODEC(ZSTD(1)),
+    MetricHash UInt64 CODEC(ZSTD(1)),
+    Labels Map(LowCardinality(String), String) CODEC(ZSTD(1)),
+    LastSeen DateTime('UTC') CODEC(Delta, ZSTD(1))
+) ENGINE @replacing_merge_tree_by(LastSeen)
+ORDER BY (MetricName, MetricHash)
+TTL LastSeen + toIntervalSecond(@ttl_metrics)`,
 
 		`
 CREATE TABLE IF NOT EXISTS metrics_metadata @on_cluster (
@@ -440,6 +481,9 @@ SETTINGS index_granularity = 8192`,
 
 		`CREATE TABLE IF NOT EXISTS otel_logs_service_name_severity_text_distributed ON CLUSTER @cluster AS otel_logs_service_name_severity_text
 			ENGINE = Distributed(@cluster, currentDatabase(), otel_logs_service_name_severity_text)`,
+
+		`CREATE TABLE IF NOT EXISTS otel_logs_rollup_distributed ON CLUSTER @cluster AS otel_logs_rollup
+			ENGINE = Distributed(@cluster, currentDatabase(), otel_logs_rollup, rand())`,
 
 		`CREATE TABLE IF NOT EXISTS otel_traces_distributed ON CLUSTER @cluster AS otel_traces
 			ENGINE = Distributed(@cluster, currentDatabase(), otel_traces, cityHash64(TraceId))`,
@@ -462,8 +506,12 @@ SETTINGS index_granularity = 8192`,
 		`CREATE TABLE IF NOT EXISTS profiling_profiles_distributed ON CLUSTER @cluster AS profiling_profiles
 		ENGINE = Distributed(@cluster, currentDatabase(), profiling_profiles)`,
 
-		`CREATE TABLE IF NOT EXISTS metrics_distributed ON CLUSTER @cluster AS metrics
-		ENGINE = Distributed(@cluster, currentDatabase(), metrics, MetricHash)`,
+		`CREATE TABLE IF NOT EXISTS metrics_samples_distributed ON CLUSTER @cluster AS metrics_samples
+		ENGINE = Distributed(@cluster, currentDatabase(), metrics_samples, MetricHash)`,
+
+		// sharded like the samples, so a series and its samples are on one shard
+		`CREATE TABLE IF NOT EXISTS metrics_series_distributed ON CLUSTER @cluster AS metrics_series
+		ENGINE = Distributed(@cluster, currentDatabase(), metrics_series, MetricHash)`,
 
 		`CREATE TABLE IF NOT EXISTS metrics_metadata_distributed ON CLUSTER @cluster AS metrics_metadata
 		ENGINE = Distributed(@cluster, currentDatabase(), metrics_metadata, sipHash64(MetricFamilyName))`,
@@ -472,10 +520,10 @@ SETTINGS index_granularity = 8192`,
 
 func ReplaceTables(query string, distributed bool) string {
 	tbls := []string{
-		"otel_logs", "otel_logs_service_name_severity_text",
+		"otel_logs", "otel_logs_service_name_severity_text", "otel_logs_rollup",
 		"otel_traces", "otel_traces_trace_id_ts", "otel_traces_service_name", "otel_traces_histogram",
 		"profiling_stacks", "profiling_samples", "profiling_profiles",
-		"metrics", "metrics_metadata",
+		"metrics_samples", "metrics_series", "metrics_metadata",
 	}
 	for _, t := range tbls {
 		placeholder := "@@table_" + t + "@@"

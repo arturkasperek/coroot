@@ -59,7 +59,7 @@ services:
 
   clickhouse:
     restart: always
-    image: clickhouse/clickhouse-server:24.3
+    image: clickhouse/clickhouse-server:26.3.37.3
     volumes:
       - clickhouse_data:/var/lib/clickhouse
       - clickhouse_logs:/var/log/clickhouse-server

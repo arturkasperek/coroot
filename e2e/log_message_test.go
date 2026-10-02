@@ -16,7 +16,7 @@ const (
 	msgAllCount     = msgFailCount + msgTimeoutCount + msgOKCount
 )
 
-func TestOverviewLogMessageSubstring(t *testing.T) {
+func TestOverviewLogMessageSearch(t *testing.T) {
 	requireDevCluster(t)
 	httpGetOK(t, corootBase()+"/health")
 
@@ -46,15 +46,21 @@ func TestOverviewLogMessageSubstring(t *testing.T) {
 		t.Fatalf("overview logs error: %s", logs.Error)
 	}
 
-	t.Run("Message contains fail matches failure substring", func(t *testing.T) {
-		q := queryWithFilters(base, map[string]string{"name": "Message", "op": "contains", "value": "fail"})
+	t.Run("Message contains fail* matches failure substring", func(t *testing.T) {
+		q := queryWithFilters(base, map[string]string{"name": "Message", "op": "contains", "value": "fail*"})
 		logs := fetchOverviewLogs(t, projectID, q)
 		assertClusterTotal(t, logs, uint64(msgFailCount))
 		assertAllEntriesContain(t, logs, "failure")
 	})
 
-	t.Run("Message contains FAIL is case-insensitive", func(t *testing.T) {
-		q := queryWithFilters(base, map[string]string{"name": "Message", "op": "contains", "value": "FAIL"})
+	t.Run("Message contains a word does not match inside a longer word", func(t *testing.T) {
+		q := queryWithFilters(base, map[string]string{"name": "Message", "op": "contains", "value": "fail"})
+		logs := fetchOverviewLogs(t, projectID, q)
+		assertClusterTotal(t, logs, 0)
+	})
+
+	t.Run("Message contains FAIL* is case-insensitive", func(t *testing.T) {
+		q := queryWithFilters(base, map[string]string{"name": "Message", "op": "contains", "value": "FAIL*"})
 		logs := fetchOverviewLogs(t, projectID, q)
 		assertClusterTotal(t, logs, uint64(msgFailCount))
 		assertAllEntriesContain(t, logs, "failure")
@@ -67,8 +73,8 @@ func TestOverviewLogMessageSubstring(t *testing.T) {
 		assertAllEntriesContain(t, logs, "timeout")
 	})
 
-	t.Run("Message contains fail timeout ANDs tokens", func(t *testing.T) {
-		q := queryWithFilters(base, map[string]string{"name": "Message", "op": "contains", "value": "fail timeout"})
+	t.Run("Message contains fail* timeout ANDs terms", func(t *testing.T) {
+		q := queryWithFilters(base, map[string]string{"name": "Message", "op": "contains", "value": "fail* timeout"})
 		logs := fetchOverviewLogs(t, projectID, q)
 		assertClusterTotal(t, logs, 0)
 		if len(logs.Entries) != 0 {
@@ -76,8 +82,8 @@ func TestOverviewLogMessageSubstring(t *testing.T) {
 		}
 	})
 
-	t.Run("Message not contains fail excludes failure rows", func(t *testing.T) {
-		q := queryWithFilters(base, map[string]string{"name": "Message", "op": "not contains", "value": "fail"})
+	t.Run("Message not contains fail* excludes failure rows", func(t *testing.T) {
+		q := queryWithFilters(base, map[string]string{"name": "Message", "op": "not contains", "value": "fail*"})
 		logs := fetchOverviewLogs(t, projectID, q)
 		assertClusterTotal(t, logs, uint64(msgTimeoutCount+msgOKCount))
 		for _, e := range logs.Entries {

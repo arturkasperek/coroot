@@ -23,22 +23,57 @@ type clickhouseQuerier struct {
 	mint, maxt int64
 }
 
-func (q *clickhouseQuerier) Select(ctx context.Context, _ bool, hints *storage.SelectHints, matchers ...*labels.Matcher) storage.SeriesSet {
-	query := fmt.Sprintf(`
+// selectSQL reads the samples of the series that match, one row per series.
+//
+// Labels live in metrics_series, once per series, and samples in
+// metrics_samples without them. Matchers on labels are resolved on the small
+// series table first (MetricHash IN (...)), so the samples query never looks at
+// a label; the metric name is in both tables and filters both.
+func (q *clickhouseQuerier) selectSQL(matchers []*labels.Matcher) string {
+	nameConds, seriesConds := q.conditions(matchers)
+	seriesWhere := strings.Join(append(append([]string{}, nameConds...), seriesConds...), " AND ")
+	if seriesWhere == "" {
+		seriesWhere = "1"
+	}
+	samplesWhere := fmt.Sprintf("Timestamp >= toDateTime(%d) AND Timestamp <= toDateTime(%d)", q.mint/1000, q.maxt/1000)
+	for _, c := range nameConds {
+		samplesWhere += " AND " + c
+	}
+	if len(seriesConds) > 0 {
+		samplesWhere += " AND MetricHash IN (SELECT MetricHash FROM @@table_metrics_series@@ WHERE " + seriesWhere + ")"
+	}
+	// any() because ReplacingMergeTree may not have merged the repeats of a
+	// series yet; the aliases differ from the column names so that they cannot
+	// be read as aggregates inside WHERE.
+	return fmt.Sprintf(`
 		SELECT
-		    MetricName,
-		    Labels,
-		    groupArray(toUnixTimestamp(Timestamp)) AS Timestamps,
-			groupArray(Value) AS Values
-		FROM @@table_metrics@@
-		WHERE
-		 Timestamp >= toDateTime(%d) AND Timestamp <= toDateTime(%d) %s
-		GROUP BY MetricName, Labels
-		ORDER BY MetricName, Labels
-	`, q.mint/1000, q.maxt/1000, q.buildWhere(matchers))
+		    s.mn AS MetricName,
+		    s.lbl AS Labels,
+		    d.Timestamps AS Timestamps,
+		    d.Values AS Values
+		FROM (
+		    SELECT MetricHash,
+		        groupArray(toUnixTimestamp(Timestamp)) AS Timestamps,
+		        groupArray(Value) AS Values
+		    FROM @@table_metrics_samples@@
+		    WHERE %s
+		    GROUP BY MetricHash
+		) AS d
+		INNER JOIN (
+		    SELECT MetricHash, any(MetricName) AS mn, any(Labels) AS lbl
+		    FROM @@table_metrics_series@@
+		    WHERE %s
+		    GROUP BY MetricHash
+		) AS s USING MetricHash
+		ORDER BY s.mn, s.lbl
+	`, samplesWhere, seriesWhere)
+}
 
-	metricName := (&proto.ColStr{}).LowCardinality()
-	metricLabels := proto.NewMap[string, string]((&proto.ColStr{}).LowCardinality(), &proto.ColStr{})
+func (q *clickhouseQuerier) Select(ctx context.Context, _ bool, hints *storage.SelectHints, matchers ...*labels.Matcher) storage.SeriesSet {
+	query := q.selectSQL(matchers)
+
+	metricName := &proto.ColStr{}                                                  // any() of a LowCardinality column is a plain String
+	metricLabels := proto.NewMap[string, string](&proto.ColStr{}, &proto.ColStr{}) // plain Strings, see above
 	timestamps := proto.NewArray[uint32](&proto.ColUInt32{})
 	values := proto.NewArray[float64](&proto.ColFloat64{})
 
@@ -91,16 +126,25 @@ func sortedAndDeduplicatedSamples(samples []chunks.Sample) []chunks.Sample {
 	return deduped
 }
 
+// labelValuesSQL reads label values from the series table: a series is listed
+// while any sample of it arrived since the start of the window.
+func (q *clickhouseQuerier) labelValuesSQL(name string, matchers []*labels.Matcher) string {
+	nameConds, seriesConds := q.conditions(matchers)
+	conds := append([]string{fmt.Sprintf("LastSeen >= toDateTime(%d)", q.mint/1000)}, nameConds...)
+	conds = append(conds, seriesConds...)
+	column := "Labels['" + escapeString(name) + "']"
+	if name == promModel.MetricNameLabel {
+		column = "MetricName"
+	}
+	return fmt.Sprintf("SELECT DISTINCT %s as LabelValue FROM @@table_metrics_series@@ WHERE %s", column, strings.Join(conds, " AND "))
+}
+
 func (q *clickhouseQuerier) LabelValues(ctx context.Context, name string, _ *storage.LabelHints, matchers ...*labels.Matcher) ([]string, annotations.Annotations, error) {
 	var res []string
 	if name == promModel.MetricNameLabel {
 		value := (&proto.ColStr{}).LowCardinality()
 		err := q.ch.Do(ctx, chgo.Query{
-			Body: fmt.Sprintf(`
-				SELECT DISTINCT MetricName as LabelValue 
-				FROM @@table_metrics@@ 
-				WHERE Timestamp >= toDateTime(%d) AND Timestamp <= toDateTime(%d) %s`,
-				q.mint/1000, q.maxt/1000, q.buildWhere(matchers)),
+			Body:   q.labelValuesSQL(name, matchers),
 			Result: proto.Results{{Name: "LabelValue", Data: value}},
 			OnResult: func(ctx context.Context, block proto.Block) error {
 				for i := 0; i < block.Rows; i++ {
@@ -114,11 +158,7 @@ func (q *clickhouseQuerier) LabelValues(ctx context.Context, name string, _ *sto
 
 	value := &proto.ColStr{}
 	err := q.ch.Do(ctx, chgo.Query{
-		Body: fmt.Sprintf(`
-			SELECT DISTINCT %s as LabelValue 
-			FROM @@table_metrics@@ 
-			WHERE Timestamp >= toDateTime(%d) AND Timestamp <= toDateTime(%d) %s`,
-			"Labels['"+escapeString(name)+"']", q.mint/1000, q.maxt/1000, q.buildWhere(matchers)),
+		Body:   q.labelValuesSQL(name, matchers),
 		Result: proto.Results{{Name: "LabelValue", Data: value}},
 		OnResult: func(ctx context.Context, block proto.Block) error {
 			for i := 0; i < block.Rows; i++ {
@@ -138,17 +178,21 @@ func (q *clickhouseQuerier) Close() error {
 	return nil
 }
 
-func (q *clickhouseQuerier) buildWhere(ms []*labels.Matcher) string {
-	conds := make([]string, 0, len(ms))
+// conditions splits the matchers: those on the metric name apply to both
+// tables, those on labels only to the series table.
+func (q *clickhouseQuerier) conditions(ms []*labels.Matcher) (nameConds, seriesConds []string) {
 	for _, m := range ms {
-		if c := q.condition(m); c != "" {
-			conds = append(conds, c)
+		c := q.condition(m)
+		if c == "" {
+			continue
+		}
+		if m.Name == labels.MetricName {
+			nameConds = append(nameConds, c)
+		} else {
+			seriesConds = append(seriesConds, c)
 		}
 	}
-	if len(conds) > 0 {
-		return "AND " + strings.Join(conds, " AND ")
-	}
-	return ""
+	return
 }
 
 func (q *clickhouseQuerier) condition(matcher *labels.Matcher) string {

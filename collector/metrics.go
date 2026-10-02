@@ -191,11 +191,14 @@ type MetricsBatch struct {
 	lock sync.Mutex
 	done chan struct{}
 
-	Timestamp  *chproto.ColDateTime64
+	// samples
+	Timestamp  *chproto.ColDateTime
 	MetricHash *chproto.ColUInt64
 	Value      *chproto.ColFloat64
 	MetricName *chproto.ColLowCardinality[string]
-	Labels     *chproto.ColMap[string, string]
+
+	// series: the labels of a series, once per batch instead of once per sample
+	series map[uint64]*metricSeries
 
 	MetricFamilyName *chproto.ColLowCardinality[string]
 	Type             *chproto.ColLowCardinality[string]
@@ -209,11 +212,11 @@ func NewMetricsBatch(limit int, timeout time.Duration, exec func(query ch.Query)
 		exec:  exec,
 		done:  make(chan struct{}),
 
-		Timestamp:  new(chproto.ColDateTime64).WithPrecision(chproto.PrecisionMilli),
+		Timestamp:  new(chproto.ColDateTime),
 		MetricHash: new(chproto.ColUInt64),
 		Value:      new(chproto.ColFloat64),
 		MetricName: new(chproto.ColStr).LowCardinality(),
-		Labels:     chproto.NewMap[string, string](new(chproto.ColStr).LowCardinality(), new(chproto.ColStr)),
+		series:     map[uint64]*metricSeries{},
 
 		MetricFamilyName: new(chproto.ColStr).LowCardinality(),
 		Type:             new(chproto.ColStr).LowCardinality(),
@@ -246,6 +249,12 @@ func (b *MetricsBatch) Close() {
 	b.save()
 }
 
+type metricSeries struct {
+	name     string
+	labels   []chproto.KV[string, string]
+	lastSeen time.Time
+}
+
 func (b *MetricsBatch) Add(req *prompb.WriteRequest) {
 	b.lock.Lock()
 	defer b.lock.Unlock()
@@ -274,12 +283,16 @@ func (b *MetricsBatch) Add(req *prompb.WriteRequest) {
 		})
 		hash := promModel.LabelsToSignature(labels)
 		for _, sample := range ts.Samples {
+			t := time.Unix(sample.Timestamp/1000, 0)
 			b.MetricName.Append(metricName)
-			b.Labels.AppendKV(sortable)
-			b.Timestamp.Append(time.Unix(sample.Timestamp/1000, 0))
+			b.Timestamp.Append(t)
 			b.MetricHash.Append(hash)
 			b.Value.Append(sample.Value)
-
+			if sr := b.series[hash]; sr == nil {
+				b.series[hash] = &metricSeries{name: metricName, labels: sortable, lastSeen: t}
+			} else if t.After(sr.lastSeen) {
+				sr.lastSeen = t
+			}
 		}
 		delete(labels, promModel.MetricNameLabel)
 	}
@@ -295,25 +308,45 @@ func (b *MetricsBatch) save() {
 		return
 	}
 
-	labelsInput := chproto.Input{
+	// The series go first, so a query that finds samples always finds their labels.
+	seriesName := new(chproto.ColStr).LowCardinality()
+	seriesHash := new(chproto.ColUInt64)
+	seriesLabels := chproto.NewMap[string, string](new(chproto.ColStr).LowCardinality(), new(chproto.ColStr))
+	seriesLastSeen := new(chproto.ColDateTime)
+	for hash, sr := range b.series {
+		seriesName.Append(sr.name)
+		seriesHash.Append(hash)
+		seriesLabels.AppendKV(sr.labels)
+		seriesLastSeen.Append(sr.lastSeen)
+	}
+	seriesInput := chproto.Input{
+		chproto.InputColumn{Name: "MetricName", Data: seriesName},
+		chproto.InputColumn{Name: "MetricHash", Data: seriesHash},
+		chproto.InputColumn{Name: "Labels", Data: seriesLabels},
+		chproto.InputColumn{Name: "LastSeen", Data: seriesLastSeen},
+	}
+	if err := b.exec(ch.Query{Body: seriesInput.Into("@@table_metrics_series@@"), Input: seriesInput}); err != nil {
+		klog.Errorln("failed to insert metric series:", err)
+	}
+
+	samplesInput := chproto.Input{
 		chproto.InputColumn{Name: "MetricName", Data: b.MetricName},
-		chproto.InputColumn{Name: "Labels", Data: b.Labels},
 		chproto.InputColumn{Name: "Timestamp", Data: b.Timestamp},
 		chproto.InputColumn{Name: "MetricHash", Data: b.MetricHash},
 		chproto.InputColumn{Name: "Value", Data: b.Value},
 	}
-	if err := b.exec(ch.Query{Body: labelsInput.Into("@@table_metrics@@"), Input: labelsInput}); err != nil {
+	if err := b.exec(ch.Query{Body: samplesInput.Into("@@table_metrics_samples@@"), Input: samplesInput}); err != nil {
 		klog.Errorln("failed to insert metrics:", err)
 	}
 
 	if b.MetricFamilyName.Rows() > 0 {
-		labelsInput = chproto.Input{
+		metadataInput := chproto.Input{
 			chproto.InputColumn{Name: "MetricFamilyName", Data: b.MetricFamilyName},
 			chproto.InputColumn{Name: "Type", Data: b.Type},
 			chproto.InputColumn{Name: "Help", Data: b.Help},
 			chproto.InputColumn{Name: "Unit", Data: b.Unit},
 		}
-		if err := b.exec(ch.Query{Body: labelsInput.Into("@@table_metrics_metadata@@"), Input: labelsInput}); err != nil {
+		if err := b.exec(ch.Query{Body: metadataInput.Into("@@table_metrics_metadata@@"), Input: metadataInput}); err != nil {
 			klog.Errorln("failed to insert metrics metadata:", err)
 		}
 		b.MetricFamilyName.Reset()
@@ -324,7 +357,7 @@ func (b *MetricsBatch) save() {
 
 	// Reset all columns
 	b.MetricName.Reset()
-	b.Labels.Reset()
+	b.series = map[uint64]*metricSeries{}
 	b.Timestamp.Reset()
 	b.MetricHash.Reset()
 	b.Value.Reset()

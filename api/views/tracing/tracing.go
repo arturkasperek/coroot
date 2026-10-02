@@ -52,7 +52,10 @@ type Span struct {
 	Status     model.TraceSpanStatus  `json:"status"`
 	Details    model.TraceSpanDetails `json:"details"`
 	Attributes map[string]string      `json:"attributes"`
-	Events     []Event                `json:"events"`
+	// only in the single-trace view
+	RequestBody  string  `json:"request_body,omitempty"`
+	ResponseBody string  `json:"response_body,omitempty"`
+	Events       []Event `json:"events"`
 }
 
 type Event struct {
@@ -128,7 +131,7 @@ func Render(ctx context.Context, ch *clickhouse.Client, app *model.Application, 
 	clients := map[spanKey]string{}
 	switch {
 	case traceId != "":
-		spans, err = ch.GetSpansByTraceId(ctx, traceId)
+		spans, err = ch.GetSpansByTraceId(ctx, traceId, true)
 
 	case (source == "" || source == model.TraceSourceOtel) && otelService != "":
 		source = model.TraceSourceOtel
@@ -265,6 +268,9 @@ func Render(ctx context.Context, ch *clickhouse.Client, app *model.Application, 
 			Attributes: map[string]string{},
 			Client:     clients[spanKey{traceId: s.TraceId, spanId: s.SpanId}],
 			Details:    s.Details(),
+
+			RequestBody:  s.RequestBody,
+			ResponseBody: s.ResponseBody,
 		}
 		for name, value := range s.ResourceAttributes {
 			ss.Attributes[name] = value

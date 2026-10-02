@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/coroot/coroot/timeseries"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -29,6 +30,18 @@ func assertArgsContain(t *testing.T, args []any, substr string) {
 		}
 	}
 	t.Errorf("args do not contain %q", substr)
+}
+
+// namedArg returns the value of the named query argument.
+func namedArg(t *testing.T, args []any, name string) any {
+	t.Helper()
+	for _, a := range args {
+		if nv, ok := a.(driver.NamedValue); ok && nv.Name == name {
+			return nv.Value
+		}
+	}
+	t.Errorf("no argument named %q in %v", name, args)
+	return nil
 }
 
 func TestLogQueryFiltersSourceAgentAndOtel(t *testing.T) {
@@ -174,38 +187,59 @@ func TestLogQueryFiltersNamespaceAndApplication(t *testing.T) {
 	assert.Contains(t, strings.Join(where, " AND "), "Namespace !=")
 }
 
-func TestLogQueryFiltersMessageContainsSubstring(t *testing.T) {
+func TestLogQueryFiltersMessageSearch(t *testing.T) {
 	q := LogQuery{
 		Ctx: timeseries.NewContext(1_700_000_000, 1_700_003_600, 15),
 		Filters: []LogFilter{
-			{Name: "Message", Op: "contains", Value: "fail"},
+			{Name: "Message", Op: "contains", Value: "Fail"},
 		},
 	}
+
+	// A plain word is a whole-word search served by the text index on
+	// lowerUTF8(Body): the expression has to match the index expression exactly.
 	where, args := q.filters(nil)
 	joined := strings.Join(where, " AND ")
-	assert.Contains(t, joined, "positionCaseInsensitiveUTF8(Body,")
-	assert.Contains(t, joined, "> 0")
-	assert.NotContains(t, joined, "hasToken(")
-	assertArgsContain(t, args, "fail")
+	assert.Contains(t, joined, "hasAllTokens(lowerUTF8(Body), @token_tokens)")
+	assert.NotContains(t, joined, "positionCaseInsensitiveUTF8")
+	assert.Equal(t, []string{"fail"}, namedArg(t, args, "token_tokens"))
 
-	q.Filters = []LogFilter{{Name: "Message", Op: "contains", Value: "fail timeout"}}
+	// Several words (and punctuation, as the UI splits it) are one AND over tokens.
+	q.Filters = []LogFilter{{Name: "Message", Op: "contains", Value: "Fail db-5432"}}
+	where, args = q.filters(nil)
+	joined = strings.Join(where, " AND ")
+	assert.Equal(t, 1, strings.Count(joined, "hasAllTokens("))
+	assert.Equal(t, []string{"fail", "db", "5432"}, namedArg(t, args, "token_tokens"))
+
+	// A term with * at either end is a substring search, as before.
+	q.Filters = []LogFilter{{Name: "Message", Op: "contains", Value: "fail* *eout"}}
+	where, args = q.filters(nil)
+	joined = strings.Join(where, " AND ")
+	assert.NotContains(t, joined, "hasAllTokens(")
+	assert.Equal(t, 2, strings.Count(joined, "positionCaseInsensitiveUTF8(Body,"))
+	assert.Equal(t, "fail", namedArg(t, args, "token_sub_0"))
+	assert.Equal(t, "eout", namedArg(t, args, "token_sub_1"))
+
+	// Words and substrings combine.
+	q.Filters = []LogFilter{{Name: "Message", Op: "contains", Value: "timeout fail*"}}
 	where, _ = q.filters(nil)
 	joined = strings.Join(where, " AND ")
-	assert.Equal(t, 2, strings.Count(joined, "positionCaseInsensitiveUTF8(Body,"))
-	assert.Contains(t, joined, " AND ")
+	assert.Equal(t, 1, strings.Count(joined, "hasAllTokens("))
+	assert.Equal(t, 1, strings.Count(joined, "positionCaseInsensitiveUTF8(Body,"))
+
+	// Only stars or punctuation: nothing to search for.
+	q.Filters = []LogFilter{{Name: "Message", Op: "contains", Value: "** --"}}
+	where, _ = q.filters(nil)
+	assert.NotContains(t, strings.Join(where, " AND "), "Body")
 
 	q.Filters = []LogFilter{{Name: "Message", Op: "not contains", Value: "err"}}
 	where, _ = q.filters(nil)
 	joined = strings.Join(where, " AND ")
-	assert.Contains(t, joined, "NOT (")
-	assert.Contains(t, joined, "positionCaseInsensitiveUTF8(Body,")
-	assert.NotContains(t, joined, "hasToken(")
+	assert.Contains(t, joined, "NOT (hasAllTokens(lowerUTF8(Body), @not_token_0_tokens))")
 
+	// The facet counters drop only their own attribute's filter, never the search.
 	q.Filters = []LogFilter{{Name: "Message", Op: "contains", Value: "fail"}}
 	where, _ = q.filters(strPtr("Cluster"))
-	joined = strings.Join(where, " AND ")
-	assert.Contains(t, joined, "positionCaseInsensitiveUTF8(Body,")
+	assert.Contains(t, strings.Join(where, " AND "), "hasAllTokens(")
 	where, _ = q.filters(strPtr("Severity"))
-	joined = strings.Join(where, " AND ")
-	assert.Contains(t, joined, "positionCaseInsensitiveUTF8(Body,")
+	assert.Contains(t, strings.Join(where, " AND "), "hasAllTokens(")
 }

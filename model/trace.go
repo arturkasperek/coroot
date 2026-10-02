@@ -30,6 +30,10 @@ type TraceSpan struct {
 	SpanAttributes     map[string]string
 	Events             []TraceSpanEvent
 	ClusterName        string
+
+	// The HTTP bodies; loaded only for the single-trace view (SpanQuery.WithBodies).
+	RequestBody  string
+	ResponseBody string
 }
 
 type TraceSpanEvent struct {

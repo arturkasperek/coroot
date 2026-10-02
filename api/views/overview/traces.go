@@ -48,8 +48,11 @@ type Span struct {
 	Status     model.TraceSpanStatus  `json:"status"`
 	Details    model.TraceSpanDetails `json:"details"`
 	Attributes map[string]string      `json:"attributes"`
-	Events     []Event                `json:"events"`
-	Cluster    string                 `json:"cluster"`
+	// only in the single-trace view
+	RequestBody  string  `json:"request_body,omitempty"`
+	ResponseBody string  `json:"response_body,omitempty"`
+	Events       []Event `json:"events"`
+	Cluster      string  `json:"cluster"`
 }
 
 type Event struct {
@@ -224,7 +227,7 @@ func RenderTraces(ctx context.Context, chs clickhouse.Clients, w *model.World, q
 		}
 		switch {
 		case q.TraceId != "":
-			spans, err := ch.GetSpansByTraceId(ctx, q.TraceId)
+			spans, err := ch.GetSpansByTraceId(ctx, q.TraceId, true)
 			if err != nil {
 				klog.Errorln(err)
 				res.Error = fmt.Sprintf("Clickhouse error: %s", err)
@@ -362,6 +365,9 @@ func RenderTraces(ctx context.Context, chs clickhouse.Clients, w *model.World, q
 			Status:     s.Status(),
 			Attributes: map[string]string{},
 			Details:    s.Details(),
+
+			RequestBody:  s.RequestBody,
+			ResponseBody: s.ResponseBody,
 		}
 		ss.Cluster = s.ClusterName
 		ss.Attributes["Cluster"] = s.ClusterName

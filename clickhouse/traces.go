@@ -133,7 +133,9 @@ func (c *Client) GetParentSpans(ctx context.Context, spans []*model.TraceSpan) (
 	)
 }
 
-func (c *Client) GetSpansByTraceId(ctx context.Context, traceId string) ([]*model.TraceSpan, error) {
+// GetSpansByTraceId loads one trace. withBodies adds the HTTP bodies, which only
+// the single-trace view shows.
+func (c *Client) GetSpansByTraceId(ctx context.Context, traceId string, withBodies bool) ([]*model.TraceSpan, error) {
 	var minTs, maxTs time.Time
 	err := c.QueryRow(ctx,
 		"SELECT min(Start), max(End)+1 FROM @@table_otel_traces_trace_id_ts@@ WHERE TraceId = @traceId",
@@ -143,8 +145,9 @@ func (c *Client) GetSpansByTraceId(ctx context.Context, traceId string) ([]*mode
 		return nil, err
 	}
 	q := SpanQuery{
-		TsFrom: timeseries.TimeFromStandard(minTs),
-		TsTo:   timeseries.TimeFromStandard(maxTs),
+		TsFrom:     timeseries.TimeFromStandard(minTs),
+		TsTo:       timeseries.TimeFromStandard(maxTs),
+		WithBodies: withBodies,
 	}
 	return c.getSpans(ctx, q, "Timestamp",
 		[]string{"TraceId = @traceId"},
@@ -212,7 +215,7 @@ func (c *Client) getTrace(ctx context.Context, sq SpanQuery) (*model.Trace, erro
 	if len(spans) == 0 || spans[0].TraceId == "" {
 		return nil, nil
 	}
-	if spans, err = c.GetSpansByTraceId(ctx, spans[0].TraceId); err != nil {
+	if spans, err = c.GetSpansByTraceId(ctx, spans[0].TraceId, false); err != nil {
 		return nil, err
 	}
 	return &model.Trace{Spans: spans}, nil
@@ -394,6 +397,16 @@ func (c *Client) getSpans(ctx context.Context, q SpanQuery, orderBy string, filt
 	return append(res, spans...), nil
 }
 
+// spanColumns is the SELECT list of every span query. The bodies are separate
+// columns so that the lists, which are most of the queries, do not read them.
+func spanColumns(withBodies bool) string {
+	cols := "Timestamp, TraceId, SpanId, ParentSpanId, SpanName, ServiceName, Duration, StatusCode, StatusMessage, ResourceAttributes, SpanAttributes, Events.Timestamp, Events.Name, Events.Attributes"
+	if withBodies {
+		cols += ", RequestBody, ResponseBody"
+	}
+	return cols
+}
+
 func (c *Client) querySpans(ctx context.Context, q SpanQuery, orderBy string, filters []string, filterArgs []any) ([]*model.TraceSpan, error) {
 	tsFilter := "Timestamp >= @tsFrom AND Timestamp < @tsTo"
 	tsFilterArgs := []any{
@@ -411,7 +424,7 @@ func (c *Client) querySpans(ctx context.Context, q SpanQuery, orderBy string, fi
 	}
 
 	cond := strings.Join(filters, " AND ")
-	query := "SELECT Timestamp, TraceId, SpanId, ParentSpanId, SpanName, ServiceName, Duration, StatusCode, StatusMessage, ResourceAttributes, SpanAttributes, Events.Timestamp, Events.Name, Events.Attributes"
+	query := "SELECT " + spanColumns(q.WithBodies)
 	query += " FROM @@table_otel_traces@@"
 	query += " WHERE " + cond
 	limit := ""
@@ -441,12 +454,16 @@ func (c *Client) querySpans(ctx context.Context, q SpanQuery, orderBy string, fi
 		var eventsTimestamp []time.Time
 		var eventsName []string
 		var eventsAttributes []map[string]string
-		if err = rows.Scan(
+		dest := []any{
 			&s.Timestamp, &s.TraceId, &s.SpanId, &s.ParentSpanId, &s.Name, &s.ServiceName,
 			&s.Duration, &s.StatusCode, &s.StatusMessage,
 			&s.ResourceAttributes, &s.SpanAttributes,
 			&eventsTimestamp, &eventsName, &eventsAttributes,
-		); err != nil {
+		}
+		if q.WithBodies {
+			dest = append(dest, &s.RequestBody, &s.ResponseBody)
+		}
+		if err = rows.Scan(dest...); err != nil {
 			return nil, err
 		}
 		l := len(eventsTimestamp)
@@ -537,8 +554,7 @@ func (c *Client) getTraceSpans(ctx context.Context, from, to timeseries.Time, tr
 	if minTs.IsZero() || minTs.Unix() <= 0 {
 		minTs, maxTs = from.ToStandard(), to.ToStandard().Add(time.Second)
 	}
-	query := `
-SELECT Timestamp, TraceId, SpanId, ParentSpanId, SpanName, ServiceName, Duration, StatusCode, StatusMessage, ResourceAttributes, SpanAttributes, Events.Timestamp, Events.Name, Events.Attributes
+	query := "SELECT " + spanColumns(false) + `
 FROM @@table_otel_traces@@
 WHERE Timestamp BETWEEN @from AND @to AND TraceId IN @traceIds`
 	rows, err := c.Query(ctx, query,
@@ -693,6 +709,9 @@ type SpanQuery struct {
 	Sort             Sort
 
 	Diff bool
+
+	// WithBodies selects the request and response bodies too.
+	WithBodies bool
 }
 
 func (q *SpanQuery) AddFilter(field, op, value string) {

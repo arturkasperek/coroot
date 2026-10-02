@@ -49,12 +49,27 @@ func (c *Client) GetLogSources(ctx context.Context, from timeseries.Time) (otelS
 	return otelServices, agentLogsFound, nil
 }
 
+// GetLogsHistogram is answered by the per-minute rollup unless the query needs
+// raw rows (message text, trace id, attributes other than host.name) or the
+// buckets do not line up with whole minutes.
 func (c *Client) GetLogsHistogram(ctx context.Context, query LogQuery) ([]model.LogHistogramBucket, error) {
+	if where, args, ok := query.rollupFilters(nil); ok && query.Ctx.Step >= 60 && query.Ctx.Step%60 == 0 {
+		q := fmt.Sprintf("SELECT multiIf(SeverityNumber=0, 0, intDiv(SeverityNumber, 4)+1), toStartOfInterval(Minute, INTERVAL %d second), sum(Count)", query.Ctx.Step)
+		q += " FROM @@table_otel_logs_rollup@@ WHERE " + strings.Join(where, " AND ") + " GROUP BY 1, 2"
+		return c.queryLogsHistogram(ctx, query, q, args)
+	}
+	q, args := rawLogsHistogramSQL(query)
+	return c.queryLogsHistogram(ctx, query, q, args)
+}
+
+func rawLogsHistogramSQL(query LogQuery) (string, []any) {
 	where, args := query.filters(nil)
 	q := fmt.Sprintf("SELECT multiIf(SeverityNumber=0, 0, intDiv(SeverityNumber, 4)+1), toStartOfInterval(Timestamp, INTERVAL %d second), count(1)", query.Ctx.Step)
-	q += " FROM @@table_otel_logs@@"
-	q += " WHERE " + strings.Join(where, " AND ")
-	q += " GROUP BY 1, 2"
+	q += " FROM @@table_otel_logs@@ WHERE " + strings.Join(where, " AND ") + " GROUP BY 1, 2"
+	return q, args
+}
+
+func (c *Client) queryLogsHistogram(ctx context.Context, query LogQuery, q string, args []any) ([]model.LogHistogramBucket, error) {
 	rows, err := c.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
@@ -216,6 +231,19 @@ func (lf *LogFilter) Matches(value string) bool {
 }
 
 func (q LogQuery) filters(attr *string) ([]string, []any) {
+	where, args, _ := q.buildFilters(attr, false)
+	return where, args
+}
+
+// rollupFilters is filters for otel_logs_rollup, the per-minute counts. ok is
+// false when the rollup cannot give exactly the answer the raw table gives:
+// the rollup has no message text, trace ids or arbitrary attributes, only
+// whole minutes, and no "newer than" mode.
+func (q LogQuery) rollupFilters(attr *string) (where []string, args []any, ok bool) {
+	return q.buildFilters(attr, true)
+}
+
+func (q LogQuery) buildFilters(attr *string, rollup bool) ([]string, []any, bool) {
 	var where []string
 	var args []any
 
@@ -235,7 +263,20 @@ func (q LogQuery) filters(attr *string) ([]string, []any) {
 		args = append(args, clickhouse.Named("serviceName", q.Services))
 	}
 
-	if !q.Since.IsZero() {
+	if rollup {
+		from, to := q.Ctx.From.ToStandard(), q.Ctx.To.ToStandard()
+		// Whole minutes only, so a window that starts or ends inside a minute
+		// would count the rest of that minute. (Raw rows stamped exactly at the
+		// end instant are not counted either; that is one nanosecond.)
+		if !q.Since.IsZero() || from.Unix()%60 != 0 || to.Unix()%60 != 0 {
+			return nil, nil, false
+		}
+		where = append(where, "Minute >= toDateTime(@from) AND Minute < toDateTime(@to)")
+		args = append(args,
+			clickhouse.DateNamed("from", from, clickhouse.NanoSeconds),
+			clickhouse.DateNamed("to", to, clickhouse.NanoSeconds),
+		)
+	} else if !q.Since.IsZero() {
 		where = append(where, "Timestamp > @since")
 		args = append(args,
 			clickhouse.DateNamed("since", q.Since, clickhouse.NanoSeconds),
@@ -249,20 +290,22 @@ func (q LogQuery) filters(attr *string) ([]string, []any) {
 	}
 
 	filters := utils.Uniq(q.Filters)
-	var message []string
-	var notMessage [][]string
+	var message messageSearch
+	var notMessage []messageSearch
 	byName := map[string][]LogFilter{}
 	for _, f := range filters {
 		if f.Name == "Message" {
-			fields := strings.FieldsFunc(f.Value, func(r rune) bool {
-				return unicode.IsSpace(r) || (r <= unicode.MaxASCII && !unicode.IsNumber(r) && !unicode.IsLetter(r))
-			})
+			terms := parseMessageSearch(f.Value)
+			if rollup && !terms.empty() {
+				return nil, nil, false
+			}
 			if f.Op == "not contains" {
-				if len(fields) > 0 {
-					notMessage = append(notMessage, fields)
+				if !terms.empty() {
+					notMessage = append(notMessage, terms)
 				}
 			} else {
-				message = append(message, fields...)
+				message.tokens = append(message.tokens, terms.tokens...)
+				message.substrings = append(message.substrings, terms.substrings...)
 			}
 			continue
 		}
@@ -298,6 +341,9 @@ func (q LogQuery) filters(attr *string) ([]string, []any) {
 				args = append(args, clickhouse.Named(v2, r2))
 			}
 		case "TraceId":
+			if rollup {
+				return nil, nil, false
+			}
 			for j, a := range attrs {
 				var f *[]string
 				var expr string
@@ -373,6 +419,36 @@ func (q LogQuery) filters(attr *string) ([]string, []any) {
 				args = append(args, clickhouse.Named(v, a.Value))
 			}
 		default:
+			if rollup {
+				// the rollup keeps one attribute, host.name, in HostLog/HostRes
+				if name != "host.name" {
+					return nil, nil, false
+				}
+				for j, a := range attrs {
+					var f *[]string
+					var expr string
+					switch a.Op {
+					case "=":
+						expr = "(HostLog = @%[1]s OR HostRes = @%[1]s)"
+						f = &ors
+					case "!=":
+						expr = "(HostLog != @%[1]s AND HostRes != @%[1]s)"
+						f = &ands
+					case "~":
+						expr = "(match(HostLog, @%[1]s) OR match(HostRes, @%[1]s))"
+						f = &ors
+					case "!~":
+						expr = "(NOT match(HostLog, @%[1]s) AND NOT match(HostRes, @%[1]s))"
+						f = &ands
+					default:
+						continue
+					}
+					v := fmt.Sprintf("attr_values_%d_%d", i, j)
+					*f = append(*f, fmt.Sprintf(expr, v))
+					args = append(args, clickhouse.Named(v, a.Value))
+				}
+				break
+			}
 			for j, a := range attrs {
 				var f *[]string
 				var expr string
@@ -408,26 +484,86 @@ func (q LogQuery) filters(attr *string) ([]string, []any) {
 		i++
 	}
 
-	if len(message) > 0 {
-		if expr := messageTokensExpr(utils.Uniq(message), "token", &args); expr != "" {
-			where = append(where, expr)
-		}
+	if expr := messageExpr(message.dedup(), "token", &args); expr != "" {
+		where = append(where, expr)
 	}
-	for k, tokens := range notMessage {
-		if expr := messageTokensExpr(utils.Uniq(tokens), fmt.Sprintf("not_token_%d", k), &args); expr != "" {
+	for k, terms := range notMessage {
+		if expr := messageExpr(terms.dedup(), fmt.Sprintf("not_token_%d", k), &args); expr != "" {
 			where = append(where, fmt.Sprintf("NOT (%s)", expr))
 		}
 	}
 
-	return where, args
+	return where, args, true
 }
 
-func messageTokensExpr(tokens []string, prefix string, args *[]any) string {
+// messageSearch is what a Message filter asks for: words that must all occur
+// as whole words, and substrings that must occur anywhere.
+type messageSearch struct {
+	tokens     []string
+	substrings []string
+}
+
+func (m messageSearch) empty() bool {
+	return len(m.tokens) == 0 && len(m.substrings) == 0
+}
+
+// dedup drops repeats and keeps the order, so the same search always produces
+// the same query text and arguments.
+func (m messageSearch) dedup() messageSearch {
+	uniq := func(in []string) []string {
+		seen := map[string]bool{}
+		var out []string
+		for _, s := range in {
+			if !seen[s] {
+				seen[s] = true
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return messageSearch{tokens: uniq(m.tokens), substrings: uniq(m.substrings)}
+}
+
+// parseMessageSearch splits the search box text. A word is lowercased and cut
+// at spaces and ASCII punctuation, which is how the text index on
+// lowerUTF8(Body) tokenizes the message (splitByNonAlpha), so "db-5432" is the
+// words "db" and "5432". A term that starts or ends with * (fail*, *eout) is a
+// substring search instead: it can match inside a word, but it cannot use the
+// index and reads every message in the time range.
+func parseMessageSearch(value string) messageSearch {
+	var res messageSearch
+	for _, term := range strings.Fields(value) {
+		if strings.HasPrefix(term, "*") || strings.HasSuffix(term, "*") {
+			if sub := strings.Trim(term, "*"); sub != "" {
+				res.substrings = append(res.substrings, sub)
+			}
+			continue
+		}
+		tokens := strings.FieldsFunc(term, func(r rune) bool {
+			return unicode.IsSpace(r) || (r <= unicode.MaxASCII && !unicode.IsNumber(r) && !unicode.IsLetter(r))
+		})
+		for _, tok := range tokens {
+			res.tokens = append(res.tokens, strings.ToLower(tok))
+		}
+	}
+	return res
+}
+
+// messageExpr builds the WHERE part for a search. The words become one
+// hasAllTokens over lowerUTF8(Body): ClickHouse serves it from the text index
+// only when the expression is the same as the index's, so keep them in step
+// with idx_body in ch/client.go.
+func messageExpr(m messageSearch, prefix string, args *[]any) string {
 	var ands []string
-	for i, m := range tokens {
-		name := fmt.Sprintf("%s_%d", prefix, i)
+	if len(m.tokens) > 0 {
+		name := prefix + "_tokens"
+		ands = append(ands, fmt.Sprintf("hasAllTokens(lowerUTF8(Body), @%s)", name))
+		*args = append(*args, clickhouse.Named(name, m.tokens))
+	}
+	for i, sub := range m.substrings {
+		name := fmt.Sprintf("%s_sub_%d", prefix, i)
 		ands = append(ands, fmt.Sprintf("positionCaseInsensitiveUTF8(Body, @%s) > 0", name))
-		*args = append(*args, clickhouse.Named(name, m))
+		*args = append(*args, clickhouse.Named(name, sub))
 	}
 	return strings.Join(ands, " AND ")
 }

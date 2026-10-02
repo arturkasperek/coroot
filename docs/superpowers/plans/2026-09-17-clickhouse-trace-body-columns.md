@@ -6,6 +6,8 @@
 
 **Scope:** the coroot server: DDL migration, collector write path (extraction and a size cap), span read path, span model.
 
+**Prerequisite: ClickHouse 26.3** (task 0 of `2026-10-01-clickhouse-26-3-performance.md`). The body index below is the `text` index type, generally available from 26.2. Do not ship this plan against 24.3.
+
 **Non-goals:**
 - Front-end rendering of the bodies. After this plan they are stored, returned by the trace-detail API and searchable in SQL; nothing shows them in the UI yet.
 - Body redaction or any other protection of sensitive data in bodies. Out of scope for now, by decision.
@@ -24,7 +26,7 @@ A span carries the bodies as two string attributes:
 | `http.request.body` | the request body bytes as captured, possibly truncated |
 | `http.response.body` | the response body bytes as captured, possibly truncated |
 
-These names are not OpenTelemetry semantic conventions (those only define `http.request.body.size`); they are this project's contract. **No producer sends them yet**: `coroot-node-agent` emits only `http.url`, `http.method`, `http.status_code` and peer attributes (`tracing/tracing.go`), and its earlier body-capture plan was deleted. The node agent captures at most 4 KB of an HTTP/1 body per message and 4 KB per HTTP/2 stream direction in the kernel, so its bodies will be truncated.
+These names are not OpenTelemetry semantic conventions (those only define `http.request.body.size`); they are this project's contract. **No producer sends them yet.** `coroot-node-agent` emits only `http.url`, `http.method`, `http.status_code` and peer attributes (`tracing/tracing.go`); the producer is planned in `coroot-node-agent/docs/superpowers/plans/2026-10-01-http-body-capture-in-traces.md`, which sets exactly these two attributes. The node agent captures at most 4 KB of an HTTP/1 body per message and 4 KB per HTTP/2 stream direction in the kernel, so its bodies will be truncated.
 
 This plan is independent of the producer and safe to ship first. It must ship **before** any producer starts sending bodies in production, because without it the bodies land in `SpanAttributes` (see below).
 
@@ -54,25 +56,26 @@ Coroot already stores this shape of data the same way: `otel_logs.Body String CO
 | Leave the bodies in `SpanAttributes` | Every attribute filter reads them; table above |
 | `MATERIALIZED SpanAttributes['http.request.body']` columns (the `NetSockPeerAddr` precedent) | Keeps the body in the map, so the map cost stays and the body is stored twice |
 | `ngrambf_v1` index | Measured: `ngrambf_v1(4, 1048576, 3, 0)` was 38% the size of the data and skipped nothing (245/245 granules); ~900 4-grams per body saturate it |
-| `tokenbf_v1(32768, 3, 0)`, copied from `otel_logs` | Measured: skips only 32% of granules for a unique token (167/245). Log lines are short; bodies are not |
+| `tokenbf_v1(32768, 3, 0)`, copied from `otel_logs` | Measured on 24.3: skips only 32% of granules for a unique token (167/245). Log lines are short; bodies are not |
 | No index | A token search scans every body in the time range: 240 ms and 1.73 GiB for 2 M spans, versus 21 ms and 7 MiB with the index below |
 | `LowCardinality(String)` | Bodies are near-unique |
 
-### Index choice (measured)
+### Index choice (measured on ClickHouse 26.3.37.3)
 
-`tokenbf_v1(size_bytes, 3, 0)`, `GRANULARITY 1`, 8192-row granules, same data as above. Searching one unique token (an order id) and one token in ~20 bodies:
+Same ~920-byte JSON bodies, 2 M spans, one unique token (an order id) and one token in ~20 bodies, `hasToken(RequestBody, ...)`:
 
-| bloom filter size | index size vs. data | unique token: granules read | ~20 matches: granules read |
+| index | size vs. data | unique token | token in ~20 bodies |
 | --- | --- | --- | --- |
-| 32 KB | 0.9% | 167/245 | 210/245 |
-| 128 KB | 4.8% | 13/245 | 34/245 |
-| **256 KB** | **9.6%** | **1/245** | **18/245** |
-| 512 KB | 18.9% | 1/245 | 17/245 |
-| 1 MB | 28.9% | 1/245 | 17/245 |
+| none | 0 | 213 ms, 1.72 GiB read | 213 ms, 1.72 GiB |
+| `tokenbf_v1(32768, 3, 0)` (the `otel_logs` setting) | 0.9% | skips 32% of granules | skips 14% |
+| `tokenbf_v1(262144, 3, 0)` | 9.6-12% | 21 ms, 7 MiB | 45 ms, 120-150 MiB |
+| **`text(tokenizer = splitByNonAlpha)`** | **76-80%** | **2 ms, 8 KiB** | **3 ms, 136 KiB** |
 
-256 KB is the knee: as selective as larger filters at half the space. Bodies with many more distinct tokens than ~920-byte JSON need more; Task 3 Step 7 re-checks on real data.
+The `text` index is an inverted index: it reads only the postings of the searched token, so it stays flat as the table grows, whereas `tokenbf_v1` reads every granule's filter. The price is size: the index is about 0.8x the compressed bodies, so a body column with its index costs about 1.8x the bodies alone.
 
-**How to search.** The index serves `hasToken(RequestBody, 'token')` and `LIKE` patterns whose tokens are bounded by non-alphanumeric characters (`LIKE '%"order-1234567"%'`). It does **not** serve `LIKE '%order-1234567%'`: the tokens touching `%` may be parts of longer tokens, so the index is skipped and every granule is read (measured: 245/245). Any API or UI search built on these columns must use `hasToken` (or bounded `LIKE`).
+**Decision: `text`**, because the goal is fast search at large retention and bodies are the one column where search is by needle (an order id, an email). If storage turns out to dominate, fall back to `tokenbf_v1(262144, 3, 0)`: 5-10x slower than `text` but 8x smaller, still ~10x faster than no index. Task 3 Step 7 re-measures on real bodies and records the sizes.
+
+**How to search.** Both index types serve `hasToken(RequestBody, 'token')`, `hasAllTokens` and bounded `LIKE '%"order-1234567"%'`. Neither served `LIKE '%order-1234567%'` in the measurements (245/245 granules, 216-236 ms on 26.3): the tokens touching `%` may be parts of longer tokens. Any search built on these columns must use `hasToken`/`hasAllTokens`.
 
 ---
 
@@ -81,7 +84,7 @@ Coroot already stores this shape of data the same way: `otel_logs.Body String CO
 - Do not git commit; the user drives that.
 - No new README or summary documents.
 - Tests first for Go.
-- Migrations are additive and idempotent (`ADD COLUMN IF NOT EXISTS`, `ADD INDEX IF NOT EXISTS`); the list is replayed on every startup.
+- DDL is idempotent (`CREATE TABLE IF NOT EXISTS`); the list is replayed on every startup. No `ALTER` migrations: there is no older schema to keep.
 - Attribute key names are the contract above: `http.request.body`, `http.response.body`.
 
 ---
@@ -90,7 +93,7 @@ Coroot already stores this shape of data the same way: `otel_logs.Body String CO
 
 | File | Change |
 | --- | --- |
-| `ch/client.go` | Columns and index in `CREATE TABLE otel_traces`; `ALTER`s for existing installs; `ALTER`s for `otel_traces_distributed` |
+| `ch/client.go` | Columns and indexes in `CREATE TABLE otel_traces` |
 | `ch/client_test.go` | DDL assertions |
 | `collector/traces.go` | Extract the two keys out of `spanAttributes`, cap their size, write the new columns |
 | `collector/traces_test.go` (new) | Extraction and cap |
@@ -105,49 +108,40 @@ Coroot already stores this shape of data the same way: `otel_logs.Body String CO
 
 **Files:** modify `ch/client.go`, `ch/client_test.go`
 
+There is no data to keep and no older version to migrate from (the ClickHouse 26.3 move starts on an empty volume), so the columns go into `CREATE TABLE` only: no `ALTER`, no dual path. `otel_traces_distributed` is created `AS otel_traces` later in the same startup, so it copies the columns.
+
 - [ ] **Step 1: Write the failing DDL test.** In `ch/client_test.go`, next to `TestMaterializedColumnsOnCreateTable`, using `tableSQLContaining`:
 
 ```go
 func TestTraceBodyColumns(t *testing.T) {
 	traces := tableSQLContaining("CREATE TABLE IF NOT EXISTS otel_traces @on_cluster")
 	require.NotEmpty(t, traces)
-	// fresh install: the CREATE has them
 	assert.Contains(t, traces, "RequestBody String CODEC(ZSTD(1))")
 	assert.Contains(t, traces, "ResponseBody String CODEC(ZSTD(1))")
-	assert.Contains(t, traces, "INDEX idx_request_body RequestBody TYPE tokenbf_v1(262144, 3, 0) GRANULARITY 1")
-	assert.Contains(t, traces, "INDEX idx_response_body ResponseBody TYPE tokenbf_v1(262144, 3, 0) GRANULARITY 1")
+	assert.Contains(t, traces, "INDEX idx_request_body RequestBody TYPE text(tokenizer = 'splitByNonAlpha') GRANULARITY 1")
+	assert.Contains(t, traces, "INDEX idx_response_body ResponseBody TYPE text(tokenizer = 'splitByNonAlpha') GRANULARITY 1")
 
-	joined := strings.Join(tables, "\n")
-	// upgrade: an existing table gets them by ALTER
-	assert.Contains(t, joined, "ALTER TABLE otel_traces @on_cluster ADD COLUMN IF NOT EXISTS RequestBody String CODEC(ZSTD(1))")
-	assert.Contains(t, joined, "ALTER TABLE otel_traces @on_cluster ADD COLUMN IF NOT EXISTS ResponseBody String CODEC(ZSTD(1))")
-	assert.Contains(t, joined, "ALTER TABLE otel_traces @on_cluster ADD INDEX IF NOT EXISTS idx_request_body")
-	assert.Contains(t, joined, "ALTER TABLE otel_traces @on_cluster ADD INDEX IF NOT EXISTS idx_response_body")
-	// never materialized out of the map: that keeps the body in SpanAttributes
+	// no migration statements for them, and never materialized out of the map:
+	// that would keep the body in SpanAttributes
+	joined := strings.Join(tables, "\n") + strings.Join(distributedTables, "\n")
+	assert.NotContains(t, joined, "ADD COLUMN IF NOT EXISTS RequestBody")
 	assert.NotContains(t, joined, "MATERIALIZED SpanAttributes['http.request.body']")
 
-	// a Distributed table created AS otel_traces copies the structure once, so an
-	// upgraded cluster needs the columns added there too
+	// the Distributed table is created AS otel_traces after the local one, so it
+	// copies the columns; make sure that ordering does not change
 	dist := strings.Join(distributedTables, "\n")
-	assert.Contains(t, dist, "ALTER TABLE otel_traces_distributed ON CLUSTER @cluster ADD COLUMN IF NOT EXISTS RequestBody String")
-	assert.Contains(t, dist, "ALTER TABLE otel_traces_distributed ON CLUSTER @cluster ADD COLUMN IF NOT EXISTS ResponseBody String")
-	assert.Greater(t, strings.Index(dist, "ADD COLUMN IF NOT EXISTS RequestBody"), strings.Index(dist, "CREATE TABLE IF NOT EXISTS otel_traces_distributed"))
+	assert.Contains(t, dist, "CREATE TABLE IF NOT EXISTS otel_traces_distributed ON CLUSTER @cluster AS otel_traces")
 }
 ```
 
 - [ ] **Step 2: Run it (expect fail).** `go test ./ch -run TestTraceBodyColumns -count=1`
 
-- [ ] **Step 3: Implement.**
-  - In `CREATE TABLE IF NOT EXISTS otel_traces`, after `StatusMessage`: the two columns, and after `idx_duration`: the two indexes, exactly as asserted. This follows `3ad479e`, which moved new columns into the `CREATE`.
-  - After the existing `NetSockPeerAddr` alter: the four `ALTER TABLE otel_traces @on_cluster ...` statements (two `ADD COLUMN IF NOT EXISTS`, two `ADD INDEX IF NOT EXISTS ... TYPE tokenbf_v1(262144, 3, 0) GRANULARITY 1`).
-  - In `distributedTables`, right after the `otel_traces_distributed` create: two `ALTER TABLE otel_traces_distributed ON CLUSTER @cluster ADD COLUMN IF NOT EXISTS ... String`. No index on the Distributed table (it holds no data).
-  - `ADD INDEX` on an existing table applies to new parts only; old parts stay unindexed until they expire by TTL. Do not add `MATERIALIZE INDEX` (it rewrites every part at startup).
+- [ ] **Step 3: Implement.** In `CREATE TABLE IF NOT EXISTS otel_traces`: the two columns after `StatusMessage`, and the two indexes after `idx_duration`, exactly as asserted.
 
 - [ ] **Step 4: Run the package.** `go test ./ch -count=1 -v`
 
-- [ ] **Step 5: Verify against a real ClickHouse**, both paths:
-  - Fresh: `scripts/dev/dev.sh` on an empty volume, then `DESCRIBE TABLE otel_traces` lists both columns with `ZSTD(1)` and `SHOW CREATE TABLE otel_traces` lists both indexes.
-  - Upgrade: start the current `main` build first, then this build on the same volume. Same checks. Restart once more and confirm a clean startup (the replay is where a non-idempotent statement fails).
+- [ ] **Step 5: Verify against a real ClickHouse 26.3.** `scripts/dev/dev.sh` on an empty volume, then `DESCRIBE TABLE otel_traces` lists both columns with `ZSTD(1)` and `SHOW CREATE TABLE otel_traces` lists both indexes. Restart the server once and confirm a clean startup (the statements replay).
+  On a clustered install also `DESCRIBE TABLE otel_traces_distributed`.
 
 ---
 
@@ -299,7 +293,15 @@ EXPLAIN indexes = 1
 SELECT count() FROM otel_traces WHERE hasToken(RequestBody, '<a token from one body>')
 ```
 
-Expected: `idx_request_body` drops almost all granules. Compare with `SELECT round(sum(secondary_indices_compressed_bytes) / sum(data_compressed_bytes) * 100, 1) FROM system.parts WHERE table = 'otel_traces' AND active`. If the drop is poor, the bodies have more distinct tokens per granule than the measured ~920-byte JSON; raise the filter size (512 KB measured at 19% of data) and record the numbers here.
+Expected: `idx_request_body` drops almost all granules. Record the cost:
+
+```sql
+SELECT column, formatReadableSize(sum(column_data_compressed_bytes)) FROM system.parts_columns
+WHERE table = 'otel_traces' AND active AND column IN ('RequestBody', 'ResponseBody') GROUP BY column;
+SELECT name, formatReadableSize(data_compressed_bytes) FROM system.data_skipping_indices WHERE table = 'otel_traces';
+```
+
+If the two indexes together are more than about the size of the bodies and storage matters, switch to `tokenbf_v1(262144, 3, 0)` (see "Index choice"); if its drop is poor on the real bodies, raise the filter size (512 KB measured at 19% of the data).
 
 ---
 
@@ -307,7 +309,7 @@ Expected: `idx_request_body` drops almost all granules. Compare with `SELECT rou
 
 1. **The reason is measured, not assumed.** Moving bodies out of the map cut an attribute filter from 1.90 GiB to 174 MiB read. The weaker argument from the first draft (spoiling the map-values bloom filter) is called out as weak instead of being kept.
 2. **Lists do not pay for bodies.** The first draft added the columns to the shared SELECTs, which every list goes through; that would have recreated the read cost. Bodies are now opt-in and only the single-trace view asks for them, with a test and a query-log check.
-3. **The index is chosen from measurements.** The `otel_logs` parameters skip a third of granules on bodies and `ngrambf` skips none; 256 KB is the knee. The plan also records that `LIKE '%x%'` cannot use the index, so a search built later uses `hasToken`.
+3. **The index is chosen from measurements.** On 26.3 the `text` index is 7-15x faster than the best `tokenbf_v1` and flat as data grows, at 8x the index size; the plan states the trade and the fallback. The `otel_logs` `tokenbf_v1` parameters and `ngrambf` skip little or nothing on bodies. `LIKE '%x%'` cannot use either index, so a search built later uses `hasToken`.
 4. **The collector defends itself.** A 16 KB cap applies to any OTLP producer, not only the node agent.
-5. **Both install paths are covered.** Fresh installs get the columns from `CREATE TABLE`, upgrades from `ALTER`, clusters also on `otel_traces_distributed`, and the replay is tested by a restart.
+5. **One install path.** The columns are only in `CREATE TABLE`; the Distributed table copies them because it is created `AS otel_traces` afterwards, which the DDL test pins. The replay is tested by a restart.
 6. **What is not done is named.** No producer exists, nothing renders bodies, and nothing protects sensitive data in them; the last is a deliberate decision for now and must be revisited before bodies are captured from services that handle credentials or personal data.

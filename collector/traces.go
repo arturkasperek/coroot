@@ -15,6 +15,32 @@ import (
 	"k8s.io/klog"
 )
 
+const (
+	attrHTTPRequestBody  = "http.request.body"
+	attrHTTPResponseBody = "http.response.body"
+
+	// Any OTLP client can send these, not only the node agent (which captures
+	// at most 4 KB per message), so the collector caps them itself.
+	maxSpanBodyBytes = 16 * 1024
+)
+
+// extractBodies takes the HTTP bodies out of the span attributes. They go to
+// their own columns: a Map column is read whole for any key, so a body left in
+// SpanAttributes is read by every attribute filter.
+func extractBodies(attrs map[string]string) (string, string) {
+	req, resp := attrs[attrHTTPRequestBody], attrs[attrHTTPResponseBody]
+	delete(attrs, attrHTTPRequestBody)
+	delete(attrs, attrHTTPResponseBody)
+	return capBody(req), capBody(resp)
+}
+
+func capBody(s string) string {
+	if len(s) > maxSpanBodyBytes {
+		return s[:maxSpanBodyBytes]
+	}
+	return s
+}
+
 func (c *Collector) Traces(w http.ResponseWriter, r *http.Request) {
 	project, err := c.getProject(r.Header.Get(ApiKeyHeader))
 	if err != nil {
@@ -84,6 +110,8 @@ type TracesBatch struct {
 	Duration           *chproto.ColInt64
 	StatusCode         *chproto.ColLowCardinality[string]
 	StatusMessage      *chproto.ColStr
+	RequestBody        *chproto.ColStr
+	ResponseBody       *chproto.ColStr
 	EventsTimestamp    *chproto.ColArr[time.Time]
 	EventsName         *chproto.ColArr[string]
 	EventsAttributes   *chproto.ColArr[map[string]string]
@@ -112,6 +140,8 @@ func NewTracesBatch(limit int, timeout time.Duration, exec func(query ch.Query) 
 		Duration:           new(chproto.ColInt64),
 		StatusCode:         new(chproto.ColStr).LowCardinality(),
 		StatusMessage:      new(chproto.ColStr),
+		RequestBody:        new(chproto.ColStr),
+		ResponseBody:       new(chproto.ColStr),
 		EventsTimestamp:    new(chproto.ColDateTime64).WithPrecision(chproto.PrecisionNano).Array(),
 		EventsName:         new(chproto.ColStr).LowCardinality().Array(),
 		EventsAttributes:   chproto.NewArray[map[string]string](chproto.NewMap[string, string](new(chproto.ColStr).LowCardinality(), new(chproto.ColStr))),
@@ -163,6 +193,7 @@ func (b *TracesBatch) Add(req *v1.ExportTraceServiceRequest) {
 			scopeVersion := ss.GetScope().GetVersion()
 			for _, s := range ss.GetSpans() {
 				spanAttributes := attributesToMap(s.GetAttributes())
+				requestBody, responseBody := extractBodies(spanAttributes)
 				if scopeName != "" {
 					spanAttributes[semconv.AttributeOtelScopeName] = scopeName
 				}
@@ -201,6 +232,8 @@ func (b *TracesBatch) Add(req *v1.ExportTraceServiceRequest) {
 				b.Duration.Append(int64(s.GetEndTimeUnixNano() - s.GetStartTimeUnixNano()))
 				b.StatusCode.Append(s.GetStatus().GetCode().String())
 				b.StatusMessage.Append(s.GetStatus().GetMessage())
+				b.RequestBody.Append(requestBody)
+				b.ResponseBody.Append(responseBody)
 				b.EventsTimestamp.Append(eventTimestamps)
 				b.EventsName.Append(eventNames)
 				b.EventsAttributes.Append(eventAttributes)
@@ -236,6 +269,8 @@ func (b *TracesBatch) save() {
 		{Name: "Duration", Data: b.Duration},
 		{Name: "StatusCode", Data: b.StatusCode},
 		{Name: "StatusMessage", Data: b.StatusMessage},
+		{Name: "RequestBody", Data: b.RequestBody},
+		{Name: "ResponseBody", Data: b.ResponseBody},
 		{Name: "Events.Timestamp", Data: b.EventsTimestamp},
 		{Name: "Events.Name", Data: b.EventsName},
 		{Name: "Events.Attributes", Data: b.EventsAttributes},

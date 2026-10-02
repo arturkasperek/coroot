@@ -43,7 +43,10 @@
                         class="item"
                         @click="applyEnter({ action: 'push-filter', filter: freeTextMessageFilter })"
                     >
-                        Search messages: {{ freeTextMessageFilter.value }}
+                        <div>
+                            Search messages: {{ freeTextMessageFilter.value }}
+                            <div class="grey--text text--darken-1 caption">whole words; add * to match part of a word, e.g. fail*</div>
+                        </div>
                     </v-list-item>
                     <v-list-item v-else dense class="item"> No options found </v-list-item>
                 </v-list>
