@@ -709,6 +709,9 @@ export default {
             }
             const stats = (this.view.summary && this.view.summary.stats) || [];
             switch (name) {
+                case 'Source':
+                    this.qb.items = ['agent', 'otel'];
+                    break;
                 case 'Namespace':
                     this.qb.items = [
                         ...new Set(

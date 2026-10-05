@@ -764,7 +764,6 @@ func (q *SpanQuery) RootSpansFilter(fromMV bool) ([]string, []any) {
 func (q *SpanQuery) rootSpansFilter(fromMV bool, skipField string) ([]string, []any) {
 	filter, args := q.filter(skipField)
 	filter = append(filter, rootSpanCondition(fromMV))
-	filter = append(filter, "NOT startsWith(ServiceName, '/')")
 	if len(q.ExcludePeerAddrs) > 0 {
 		filter = append(filter, "NetSockPeerAddr NOT IN (@addrs)")
 		args = append(args, clickhouse.Named("addrs", q.ExcludePeerAddrs))
@@ -807,7 +806,7 @@ func (c *Client) useTracesHistogram(ctx context.Context, q SpanQuery, from times
 func (q *SpanQuery) filtersOnHistogramDimensions() bool {
 	for _, f := range q.Filters {
 		switch f.Field {
-		case "ServiceName", "SpanName", "SpanKind", "NetSockPeerAddr":
+		case "ServiceName", "SpanName", "SpanKind", "NetSockPeerAddr", "Source": // Source is derived from ServiceName
 		default:
 			return false
 		}

@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/textproto"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -20,7 +19,6 @@ import (
 	"github.com/coroot/coroot/config"
 	"github.com/coroot/coroot/db"
 	"golang.org/x/exp/maps"
-	"k8s.io/klog"
 )
 
 const (
@@ -32,7 +30,6 @@ const (
 type LowLevelClient struct {
 	pool    *chpool.Pool
 	cluster string
-	cloud   bool
 }
 
 func NewLowLevelClient(ctx context.Context, cfg *db.IntegrationClickhouse) (*LowLevelClient, error) {
@@ -76,12 +73,8 @@ func NewLowLevelClient(ctx context.Context, cfg *db.IntegrationClickhouse) (*Low
 
 func (c *LowLevelClient) Exec(ctx context.Context, query string) error {
 	var result chproto.Results
-	if c.cluster != "" {
-		query = strings.ReplaceAll(query, "@cluster", c.cluster)
-		query = strings.ReplaceAll(query, "@on_cluster", "ON CLUSTER "+c.cluster)
-	} else {
-		query = strings.ReplaceAll(query, "@on_cluster", "")
-	}
+	query = strings.ReplaceAll(query, "@cluster", c.cluster)
+	query = strings.ReplaceAll(query, "@on_cluster", "ON CLUSTER "+c.cluster)
 
 	return c.pool.Do(ctx, ch.Query{
 		Body: query,
@@ -93,7 +86,7 @@ func (c *LowLevelClient) Exec(ctx context.Context, query string) error {
 }
 
 func (c *LowLevelClient) Do(ctx context.Context, q ch.Query) (err error) {
-	q.Body = ReplaceTables(q.Body, c.cluster != "")
+	q.Body = ReplaceTables(q.Body)
 	return c.pool.Do(ctx, q)
 }
 
@@ -103,6 +96,9 @@ func (c *LowLevelClient) Close() {
 	}
 }
 
+// info finds the cluster Coroot works on. ClickHouse must run as a cluster
+// (Keeper plus remote_servers): every table is replicated and created ON
+// CLUSTER, and every read and insert goes through a Distributed table.
 func (c *LowLevelClient) info(ctx context.Context, address string) error {
 	var exists chproto.ColUInt8
 	q := ch.Query{Body: "EXISTS system.zookeeper", Result: chproto.Results{{Name: "result", Data: &exists}}}
@@ -110,24 +106,7 @@ func (c *LowLevelClient) info(ctx context.Context, address string) error {
 		return err
 	}
 	if exists.Row(0) != 1 {
-		return nil
-	}
-
-	var modeStr chproto.ColStr
-	q = ch.Query{
-		Body:   "SELECT value FROM system.settings WHERE name = 'cloud_mode_engine'",
-		Result: chproto.Results{{Name: "value", Data: &modeStr}},
-	}
-	if err := c.pool.Do(ctx, q); err != nil {
-		return err
-	}
-	if modeStr.Rows() > 0 {
-		mode, _ := strconv.ParseUint(modeStr.Row(0), 10, 64)
-		if mode >= 2 {
-			klog.Infoln(address, "is a ClickHouse cloud instance")
-			c.cloud = true
-			return nil
-		}
+		return fmt.Errorf("ClickHouse at %s is not a cluster: Keeper (ZooKeeper) is not configured", address)
 	}
 	var clusterCol chproto.ColStr
 	clusters := map[string]bool{}
@@ -148,6 +127,7 @@ func (c *LowLevelClient) info(ctx context.Context, address string) error {
 	}
 	switch {
 	case len(clusters) == 0:
+		return fmt.Errorf("ClickHouse at %s is not a cluster: no cluster in remote_servers", address)
 	case len(clusters) == 1:
 		c.cluster = maps.Keys(clusters)[0]
 	case clusters["coroot"]:
@@ -164,17 +144,9 @@ func (c *LowLevelClient) CreateDB(ctx context.Context, name string) error {
 	return c.Exec(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s @on_cluster", name))
 }
 
-func (c *LowLevelClient) GetInfo() (ClickHouseInfo, error) {
-	return ClickHouseInfo{Name: c.cluster, Cloud: c.cloud}, nil
-}
-
-type ClickHouseInfo struct {
-	Name  string
-	Cloud bool
-}
-
-func (ci ClickHouseInfo) UseDistributed() bool {
-	return !ci.Cloud && ci.Name != ""
+// Cluster is the ClickHouse cluster the client works on.
+func (c *LowLevelClient) Cluster() string {
+	return c.cluster
 }
 
 // @replacing_merge_tree_by(Column): a ReplacingMergeTree that keeps, among rows
@@ -187,30 +159,19 @@ func (c *LowLevelClient) Migrate(ctx context.Context, cfg config.CollectorConfig
 		t = strings.ReplaceAll(t, "@ttl_logs", fmt.Sprintf("%d", cfg.LogsTTL))
 		t = strings.ReplaceAll(t, "@ttl_profiles", fmt.Sprintf("%d", cfg.ProfilesTTL))
 		t = strings.ReplaceAll(t, "@ttl_metrics", fmt.Sprintf("%d", cfg.MetricsTTL))
-		if c.cluster != "" {
-			t = strings.ReplaceAll(t, "@merge_tree", "ReplicatedMergeTree('/clickhouse/tables/{shard}/{database}/{table}', '{replica}')")
-			t = replacingByVersion.ReplaceAllString(t, "ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/{database}/{table}', '{replica}', $1)")
-			t = strings.ReplaceAll(t, "@replacing_merge_tree", "ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/{database}/{table}', '{replica}')")
-			t = strings.ReplaceAll(t, "@summing_merge_tree", "ReplicatedSummingMergeTree('/clickhouse/tables/{shard}/{database}/{table}', '{replica}')")
-		} else {
-			t = strings.ReplaceAll(t, "@merge_tree", "MergeTree()")
-			t = replacingByVersion.ReplaceAllString(t, "ReplacingMergeTree($1)")
-			t = strings.ReplaceAll(t, "@replacing_merge_tree", "ReplacingMergeTree()")
-			t = strings.ReplaceAll(t, "@summing_merge_tree", "SummingMergeTree()")
-		}
+		t = strings.ReplaceAll(t, "@merge_tree", "ReplicatedMergeTree('/clickhouse/tables/{shard}/{database}/{table}', '{replica}')")
+		t = replacingByVersion.ReplaceAllString(t, "ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/{database}/{table}', '{replica}', $1)")
+		t = strings.ReplaceAll(t, "@replacing_merge_tree", "ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/{database}/{table}', '{replica}')")
+		t = strings.ReplaceAll(t, "@summing_merge_tree", "ReplicatedSummingMergeTree('/clickhouse/tables/{shard}/{database}/{table}', '{replica}')")
 		err := c.Exec(ctx, t)
 		if err != nil {
 			return err
 		}
 	}
-	if c.cluster != "" {
-		for _, t := range distributedTables {
-			err := c.Exec(ctx, t)
-			if err != nil {
-				return err
-			}
+	for _, t := range distributedTables {
+		if err := c.Exec(ctx, t); err != nil {
+			return err
 		}
-
 	}
 	return nil
 }
@@ -518,7 +479,8 @@ SETTINGS index_granularity = 8192`,
 	}
 )
 
-func ReplaceTables(query string, distributed bool) string {
+// ReplaceTables points @@table_X@@ at the Distributed table X_distributed.
+func ReplaceTables(query string) string {
 	tbls := []string{
 		"otel_logs", "otel_logs_service_name_severity_text", "otel_logs_rollup",
 		"otel_traces", "otel_traces_trace_id_ts", "otel_traces_service_name", "otel_traces_histogram",
@@ -526,11 +488,7 @@ func ReplaceTables(query string, distributed bool) string {
 		"metrics_samples", "metrics_series", "metrics_metadata",
 	}
 	for _, t := range tbls {
-		placeholder := "@@table_" + t + "@@"
-		if distributed {
-			t += "_distributed"
-		}
-		query = strings.ReplaceAll(query, placeholder, t)
+		query = strings.ReplaceAll(query, "@@table_"+t+"@@", t+"_distributed")
 	}
 	return query
 }

@@ -19,7 +19,7 @@ async function loadSortFromTraceQuery() {
 test('shows trace fields with user-facing names in the query builder', async () => {
     const { TRACE_QUERY_FIELDS } = await loadTraceQuery();
 
-    assert.deepEqual(TRACE_QUERY_FIELDS, ['Namespace', 'Application', 'API Route', 'Root Span Name', 'Trace ID', 'Sort']);
+    assert.deepEqual(TRACE_QUERY_FIELDS, ['Source', 'Namespace', 'Application', 'API Route', 'Root Span Name', 'Trace ID', 'Sort']);
 });
 
 test('maps existing trace filters to query-builder filters', async () => {
@@ -27,6 +27,7 @@ test('maps existing trace filters to query-builder filters', async () => {
 
     assert.deepEqual(
         toQueryBuilderFilters([
+            { field: 'Source', op: '=', value: 'agent' },
             { field: 'Namespace', op: '=', value: 'coroot-dev' },
             { field: 'ServiceName', op: '=', value: 'express-demo' },
             { field: 'ApiRoute', op: '=', value: 'GET /health' },
@@ -34,6 +35,7 @@ test('maps existing trace filters to query-builder filters', async () => {
             { field: 'TraceId', op: '=', value: 'abc123' },
         ]),
         [
+            { name: 'Source', op: '=', value: 'agent' },
             { name: 'Namespace', op: '=', value: 'coroot-dev' },
             { name: 'Application', op: '=', value: 'express-demo' },
             { name: 'API Route', op: '=', value: 'GET /health' },
@@ -48,6 +50,7 @@ test('maps query-builder filters back to the trace API schema', async () => {
 
     assert.deepEqual(
         fromQueryBuilderFilters([
+            { name: 'Source', op: '!=', value: 'otel' },
             { name: 'Namespace', op: '=', value: 'coroot-dev' },
             { name: 'Application', op: '!=', value: 'worker' },
             { name: 'API Route', op: '=', value: 'GET /health' },
@@ -55,6 +58,7 @@ test('maps query-builder filters back to the trace API schema', async () => {
             { name: 'Trace ID', op: '=', value: 'abc123' },
         ]),
         [
+            { field: 'Source', op: '!=', value: 'otel' },
             { field: 'Namespace', op: '=', value: 'coroot-dev' },
             { field: 'ServiceName', op: '!=', value: 'worker' },
             { field: 'ApiRoute', op: '=', value: 'GET /health' },

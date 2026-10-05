@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -157,14 +156,7 @@ func RenderTraces(ctx context.Context, chs clickhouse.Clients, w *model.World, q
 			services.Add(svcs...)
 		}
 
-		var otelTracesFound bool
-		for _, s := range services.Items() {
-			if !strings.HasPrefix(s, "/") {
-				otelTracesFound = true
-				break
-			}
-		}
-		if !otelTracesFound {
+		if len(services.Items()) == 0 {
 			res.Message = "not_found"
 			return res
 		}
@@ -220,6 +212,7 @@ func RenderTraces(ctx context.Context, chs clickhouse.Clients, w *model.World, q
 
 	for _, ch := range chs.Clients {
 		if q.TraceId == "" {
+			addFacet(ch, "Source")
 			addFacet(ch, "Namespace")
 			addFacet(ch, "ServiceName")
 			addFacet(ch, "ApiRoute")

@@ -34,7 +34,7 @@ func TestSelectSQLLabelMatchersAreResolvedOnTheSeriesTable(t *testing.T) {
 		matcher(labels.MatchEqual, "namespace", "a"),
 		matcher(labels.MatchRegexp, "pod", "x.*"),
 	})
-	assert.Contains(t, sql, "MetricHash IN (SELECT MetricHash FROM @@table_metrics_series@@ WHERE MetricName = 'up' AND Labels['namespace'] = 'a' AND match(Labels['pod']")
+	assert.Contains(t, sql, "MetricHash IN (SELECT MetricHash FROM metrics_series WHERE MetricName = 'up' AND Labels['namespace'] = 'a' AND match(Labels['pod']")
 	// the samples subquery filters by name and time only, never by a label
 	samples := sql[strings.Index(sql, "FROM @@table_metrics_samples@@"):strings.Index(sql, ") AS d")]
 	assert.Equal(t, 2, strings.Count(samples, "Labels['"), "only inside MetricHash IN (...)")

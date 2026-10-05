@@ -87,3 +87,31 @@ test('buildTraceQuickFilters hides empty groups and ignores unknown keys', async
         ['ServiceName'],
     );
 });
+
+test('buildTraceQuickFilters puts the Source facet first and names its values', async () => {
+    const { buildTraceQuickFilters, displayTraceSourceName } = await loadTraceQuickFilters();
+    const groups = buildTraceQuickFilters([
+        { key: 'ServiceName', values: [{ value: 'checkout', count: 3 }] },
+        {
+            key: 'Source',
+            values: [
+                { value: 'agent', count: 40 },
+                { value: 'otel', count: 3 },
+            ],
+        },
+    ]);
+
+    assert.deepEqual(
+        groups.map((g) => g.key),
+        ['Source', 'ServiceName'],
+    );
+    assert.deepEqual(
+        groups[0].values.map((v) => [v.value, v.label, v.count]),
+        [
+            ['agent', 'eBPF (node-agent)', 40],
+            ['otel', 'OpenTelemetry', 3],
+        ],
+    );
+    assert.equal(groups[0].label, 'Source');
+    assert.equal(displayTraceSourceName('other'), 'other');
+});

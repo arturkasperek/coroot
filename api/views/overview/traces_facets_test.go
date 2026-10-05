@@ -42,3 +42,14 @@ func TestTraceFacetGroupsFromMergedIncludesNamespaceLastNA(t *testing.T) {
 	assert.Equal(t, "n/a", groups[0].Values[len(groups[0].Values)-1].Value)
 	assert.Equal(t, uint64(5), groups[0].Values[len(groups[0].Values)-1].Count)
 }
+
+func TestTraceFacetGroupsFromMergedPutsSourceFirst(t *testing.T) {
+	groups := traceFacetGroupsFromMerged(map[string]map[string]uint64{
+		"SpanName":    {"GET /api/hello": 30},
+		"Source":      {"otel": 12, "agent": 40},
+		"Namespace":   {"coroot-dev": 52},
+		"ServiceName": {"express-demo": 12},
+	})
+	assert.Equal(t, []string{"Source", "Namespace", "ServiceName", "SpanName"}, []string{groups[0].Key, groups[1].Key, groups[2].Key, groups[3].Key})
+	assert.Equal(t, []clickhouse.FacetValue{{Value: "agent", Count: 40}, {Value: "otel", Count: 12}}, groups[0].Values)
+}

@@ -123,7 +123,7 @@ func TestLogSearchUsesTextIndex(t *testing.T) {
 
 	// the expression is the one the product builds for a word search (pinned by
 	// TestLogQueryFiltersMessageSearch in package clickhouse)
-	rows, err := c.Query(context.Background(), "EXPLAIN indexes = 1 SELECT count() FROM @@table_otel_logs@@ WHERE hasAllTokens(lowerUTF8(Body), ['ord', '715688382'])")
+	rows, err := c.Query(context.Background(), "EXPLAIN indexes = 1 SELECT max(length(Body)) FROM otel_logs WHERE hasAllTokens(lowerUTF8(Body), ['ord', '715688382'])")
 	require.NoError(t, err)
 	defer rows.Close()
 	var plan []string
@@ -136,10 +136,12 @@ func TestLogSearchUsesTextIndex(t *testing.T) {
 	t.Log(text)
 	require.Contains(t, text, "idx_body", "the text index is not used")
 
-	// the line after the index name reads "Granules: kept/total"
+	// The query reads Body, so it cannot be answered from the index alone (a
+	// count() is, since 26.9: ReadFromTextIndexCount). In the plan, the skip
+	// index section "Name: idx_body" is followed by "Granules: kept/total".
 	var kept, total int
 	for i, line := range plan {
-		if strings.Contains(line, "idx_body") {
+		if strings.TrimSpace(line) == "Name: idx_body" {
 			for _, l := range plan[i:] {
 				if _, err := fmt.Sscanf(strings.TrimSpace(l), "Granules: %d/%d", &kept, &total); err == nil {
 					break

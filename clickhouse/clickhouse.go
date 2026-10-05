@@ -2,8 +2,6 @@ package clickhouse
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 	"math"
 	"net"
@@ -26,10 +24,8 @@ const (
 )
 
 type Client struct {
-	conn           clickhouse.Conn
-	useDistributed bool
-	cloud          bool
-	project        *db.Project
+	conn    clickhouse.Conn
+	project *db.Project
 }
 
 func NewClient(config *db.IntegrationClickhouse, project *db.Project) (*Client, error) {
@@ -76,54 +72,11 @@ func NewClient(config *db.IntegrationClickhouse, project *db.Project) (*Client, 
 	if err != nil {
 		return nil, err
 	}
-	c := &Client{conn: conn, project: project}
-	if err := c.discoverCluster(); err != nil {
-		klog.Warningln("failed to discover ClickHouse cluster info:", err)
-	}
-	return c, nil
-}
-
-func (c *Client) discoverCluster() error {
-	ctx, cancel := context.WithTimeout(context.Background(), dialTimeout)
-	defer cancel()
-
-	var exists uint8
-	if err := c.conn.QueryRow(ctx, "EXISTS system.zookeeper").Scan(&exists); err != nil {
-		return err
-	}
-	if exists != 1 {
-		return nil
-	}
-
-	var modeStr string
-	err := c.conn.QueryRow(ctx, "SELECT value FROM system.settings WHERE name = 'cloud_mode_engine'").Scan(&modeStr)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return err
-	}
-	if modeStr != "" {
-		mode, _ := strconv.ParseUint(modeStr, 10, 64)
-		if mode >= 2 {
-			c.cloud = true
-			return nil
-		}
-	}
-
-	var count uint64
-	if err := c.conn.QueryRow(ctx, "SELECT count(DISTINCT cluster) FROM system.clusters").Scan(&count); err != nil {
-		return err
-	}
-	if count > 0 {
-		c.useDistributed = true
-	}
-	return nil
+	return &Client{conn: conn, project: project}, nil
 }
 
 func (c *Client) Project() *db.Project {
 	return c.project
-}
-
-func (c *Client) Cloud() bool {
-	return c.cloud
 }
 
 func (c *Client) Ping(ctx context.Context) error {
@@ -131,12 +84,12 @@ func (c *Client) Ping(ctx context.Context) error {
 }
 
 func (c *Client) Query(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
-	query = ch.ReplaceTables(query, c.useDistributed)
+	query = ch.ReplaceTables(query)
 	return c.conn.Query(ctx, query, args...)
 }
 
 func (c *Client) QueryRow(ctx context.Context, query string, args ...interface{}) driver.Row {
-	query = ch.ReplaceTables(query, c.useDistributed)
+	query = ch.ReplaceTables(query)
 	return c.conn.QueryRow(ctx, query, args...)
 }
 
@@ -149,22 +102,14 @@ func (c *Client) Close() error {
 
 func (c *Client) getClusterTopology(ctx context.Context) ([]ClusterNode, error) {
 	var clusterName string
-	if c.cloud {
-		clusterName = "default"
-	} else {
-		clusterQuery := `
+	clusterQuery := `
 		SELECT DISTINCT replaceRegexpOne(engine_full, '^Distributed\\(''([^'']+)''.*', '\\1') as cluster_name
 		FROM system.tables 
 		WHERE engine = 'Distributed' 
 			AND database = currentDatabase()
 		LIMIT 1`
-		row := c.conn.QueryRow(ctx, clusterQuery)
-		if err := row.Scan(&clusterName); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return []ClusterNode{}, nil
-			}
-			return nil, err
-		}
+	if err := c.conn.QueryRow(ctx, clusterQuery).Scan(&clusterName); err != nil {
+		return nil, fmt.Errorf("no Distributed table in the database, so no cluster: %w", err)
 	}
 
 	topologyQuery := `
@@ -484,13 +429,6 @@ func executeOnAllServers(ctx context.Context, config *db.IntegrationClickhouse, 
 }
 
 func getClusterTableSizes(ctx context.Context, config *db.IntegrationClickhouse, project *db.Project, topology []ClusterNode, ch *Client) ([]TableInfo, error) {
-	if ch.cloud {
-		allTables, err := ch.GetTableSizes(ctx)
-		if err != nil {
-			return nil, err
-		}
-		return aggregateTableStats(allTables), nil
-	}
 	results, err := executeOnAllServers(ctx, config, topology, project, func(client *Client) (interface{}, error) {
 		return client.GetTableSizes(ctx)
 	})
@@ -512,9 +450,6 @@ func getClusterTableSizes(ctx context.Context, config *db.IntegrationClickhouse,
 }
 
 func getClusterServerDisks(ctx context.Context, config *db.IntegrationClickhouse, project *db.Project, topology []ClusterNode, ch *Client) ([]ServerDiskInfo, error) {
-	if ch.cloud {
-		return nil, nil
-	}
 	results, err := executeOnAllServers(ctx, config, topology, project, func(client *Client) (interface{}, error) {
 		return client.GetDiskInfo(ctx)
 	})

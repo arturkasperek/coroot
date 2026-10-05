@@ -28,8 +28,7 @@ func (sm *SpaceManager) CheckAndCleanup(ctx context.Context, project *db.Project
 	}
 
 	if len(topology) == 0 {
-		klog.Infoln("no cluster topology found, running on single host")
-		return sm.runCleanup(ctx, sm.client, cluster)
+		return fmt.Errorf("cluster %s has no nodes", cluster)
 	}
 
 	for _, node := range topology {
@@ -223,11 +222,6 @@ func runSpaceManagerOnCluster(ctx context.Context, project *db.Project, managerC
 		return fmt.Errorf("failed to create client: %w", err)
 	}
 	defer client.Close()
-
-	if client.Cloud() {
-		klog.Infoln("storage manager is disabled for ClickHouse Cloud")
-		return nil
-	}
 
 	disks, err := client.GetDiskInfo(ctx)
 	if err != nil {

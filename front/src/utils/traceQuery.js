@@ -1,4 +1,5 @@
 const TRACE_FIELD_LABELS = {
+    Source: 'Source',
     Namespace: 'Namespace',
     ServiceName: 'Application',
     ApiRoute: 'API Route',

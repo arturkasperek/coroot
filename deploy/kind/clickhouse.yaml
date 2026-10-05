@@ -35,17 +35,129 @@ data:
       </http_options_response>
     </clickhouse>
 ---
+# ClickHouse runs as a cluster, always: Coroot creates replicated tables ON
+# CLUSTER and reads through Distributed tables. Dev uses 2 shards x 1 replica
+# (so that queries that only see local data fail in dev) and one Keeper.
 apiVersion: v1
-kind: PersistentVolumeClaim
+kind: ConfigMap
 metadata:
-  name: clickhouse-data
+  name: clickhouse-cluster
+  namespace: coroot-dev
+data:
+  cluster.xml: |
+    <clickhouse>
+      <remote_servers replace="true">
+        <coroot>
+          <shard>
+            <internal_replication>true</internal_replication>
+            <replica><host>clickhouse-0.clickhouse-headless.coroot-dev.svc.cluster.local</host><port>9000</port></replica>
+          </shard>
+          <shard>
+            <internal_replication>true</internal_replication>
+            <replica><host>clickhouse-1.clickhouse-headless.coroot-dev.svc.cluster.local</host><port>9000</port></replica>
+          </shard>
+        </coroot>
+      </remote_servers>
+      <zookeeper>
+        <node><host>clickhouse-keeper-0.clickhouse-keeper.coroot-dev.svc.cluster.local</host><port>9181</port></node>
+      </zookeeper>
+      <distributed_ddl>
+        <path>/clickhouse/task_queue/ddl</path>
+      </distributed_ddl>
+      <macros>
+        <shard from_env="CLICKHOUSE_SHARD"/>
+        <replica from_env="CLICKHOUSE_REPLICA"/>
+      </macros>
+    </clickhouse>
+  keeper.xml: |
+    <clickhouse>
+      <listen_host>0.0.0.0</listen_host>
+      <keeper_server>
+        <tcp_port>9181</tcp_port>
+        <server_id>1</server_id>
+        <log_storage_path>/var/lib/clickhouse/coordination/log</log_storage_path>
+        <snapshot_storage_path>/var/lib/clickhouse/coordination/snapshots</snapshot_storage_path>
+        <raft_configuration>
+          <server><id>1</id><hostname>clickhouse-keeper-0.clickhouse-keeper.coroot-dev.svc.cluster.local</hostname><port>9234</port></server>
+        </raft_configuration>
+      </keeper_server>
+    </clickhouse>
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: clickhouse-keeper
   namespace: coroot-dev
 spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 20Gi
+  clusterIP: None
+  selector:
+    app: clickhouse-keeper
+  ports:
+    - name: client
+      port: 9181
+    - name: raft
+      port: 9234
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: clickhouse-keeper
+  namespace: coroot-dev
+spec:
+  serviceName: clickhouse-keeper
+  replicas: 1
+  selector:
+    matchLabels:
+      app: clickhouse-keeper
+  template:
+    metadata:
+      labels:
+        app: clickhouse-keeper
+    spec:
+      containers:
+        - name: keeper
+          image: clickhouse/clickhouse-keeper:26.9.10.4
+          ports:
+            - containerPort: 9181
+            - containerPort: 9234
+          readinessProbe:
+            tcpSocket:
+              port: 9181
+            periodSeconds: 5
+          volumeMounts:
+            - name: config
+              mountPath: /etc/clickhouse-keeper/keeper_config.d/keeper.xml
+              subPath: keeper.xml
+            - name: data
+              mountPath: /var/lib/clickhouse
+      volumes:
+        - name: config
+          configMap:
+            name: clickhouse-cluster
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: clickhouse-headless
+  namespace: coroot-dev
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app: clickhouse
+  ports:
+    - name: native
+      port: 9000
+    - name: http
+      port: 8123
 ---
 apiVersion: v1
 kind: Service
@@ -67,14 +179,14 @@ spec:
       nodePort: 30812
 ---
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: clickhouse
   namespace: coroot-dev
 spec:
-  replicas: 1
-  strategy:
-    type: Recreate
+  serviceName: clickhouse-headless
+  replicas: 2
+  podManagementPolicy: Parallel
   selector:
     matchLabels:
       app: clickhouse
@@ -85,10 +197,18 @@ spec:
     spec:
       containers:
         - name: clickhouse
-          image: clickhouse/clickhouse-server:26.3.37.3
+          image: clickhouse/clickhouse-server:26.9.10.4
           env:
             - name: CLICKHOUSE_SKIP_USER_SETUP
               value: "1"
+            - name: CLICKHOUSE_SHARD
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['apps.kubernetes.io/pod-index']
+            - name: CLICKHOUSE_REPLICA
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
           ports:
             - containerPort: 9000
             - containerPort: 8123
@@ -104,12 +224,23 @@ spec:
             - name: cors
               mountPath: /etc/clickhouse-server/config.d/cors.xml
               subPath: cors.xml
+            - name: cluster
+              mountPath: /etc/clickhouse-server/config.d/cluster.xml
+              subPath: cluster.xml
             - name: data
               mountPath: /var/lib/clickhouse
       volumes:
         - name: cors
           configMap:
             name: clickhouse-cors
-        - name: data
-          persistentVolumeClaim:
-            claimName: clickhouse-data
+        - name: cluster
+          configMap:
+            name: clickhouse-cluster
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 20Gi

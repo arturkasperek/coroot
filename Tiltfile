@@ -127,9 +127,14 @@ k8s_yaml([
 ])
 
 k8s_resource(
+    'clickhouse-keeper',
+    objects=['clickhouse-cluster:configmap:coroot-dev'],
+)
+k8s_resource(
     'clickhouse',
-    objects=['clickhouse-data:persistentvolumeclaim:coroot-dev'],
+    objects=['clickhouse-cors:configmap:coroot-dev'],
     port_forwards=['18123:8123', '19000:9000'],
+    resource_deps=['clickhouse-keeper'],
 )
 k8s_resource(
     'postgres',

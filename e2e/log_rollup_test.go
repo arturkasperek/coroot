@@ -121,13 +121,13 @@ func chNowMicros(t *testing.T) int64 {
 // and the facet counts.
 func rollupUse(t *testing.T, ns string, sinceMicros int64) (histogram, facets, raw int) {
 	t.Helper()
-	chQueryOne(t, "SYSTEM FLUSH LOGS")
+	chQueryOne(t, "SYSTEM FLUSH LOGS ON CLUSTER coroot")
 	q := fmt.Sprintf(`SELECT
 	  countIf(position(query, 'otel_logs_rollup') > 0 AND position(query, 'toStartOfInterval(Minute') > 0),
 	  countIf(position(query, 'otel_logs_rollup') > 0 AND position(query, 'toStartOfInterval(Minute') = 0),
 	  countIf(position(query, 'otel_logs_rollup') = 0 AND position(query, 'otel_logs') > 0)
-	FROM system.query_log
-	WHERE type = 'QueryFinish' AND event_time_microseconds >= fromUnixTimestamp64Micro(%d)
+	FROM clusterAllReplicas(coroot, system.query_log)
+	WHERE type = 'QueryFinish' AND is_initial_query AND event_time_microseconds >= fromUnixTimestamp64Micro(%d)
 	  AND position(query, '%s') > 0 AND position(query, 'system.query_log') = 0
 	FORMAT TSV`, sinceMicros, ns)
 	f := strings.Fields(chQueryOne(t, q))
@@ -382,6 +382,6 @@ func clusterName(f map[string]uint64) string {
 
 func purgeRollupFixtures(t *testing.T) {
 	t.Helper()
-	chExec(t, "DELETE FROM otel_logs WHERE startsWith(LogAttributes['e2e.facets'], 'e2e-rollup-')", nil)
-	chExec(t, "DELETE FROM otel_logs_rollup WHERE startsWith(Namespace, 'e2e-ru-')", nil)
+	chExec(t, "DELETE FROM otel_logs ON CLUSTER coroot WHERE startsWith(LogAttributes['e2e.facets'], 'e2e-rollup-')", nil)
+	chExec(t, "DELETE FROM otel_logs_rollup ON CLUSTER coroot WHERE startsWith(Namespace, 'e2e-ru-')", nil)
 }

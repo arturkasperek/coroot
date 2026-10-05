@@ -10,10 +10,17 @@ import (
 
 const maxTraceFacetValues = 1000
 
+// traceSourceExpr tells the spans the node-agent made from eBPF (service name is
+// the container id, which starts with a slash) from the spans of applications
+// instrumented with OpenTelemetry.
+const traceSourceExpr = "if(startsWith(ServiceName, '/'), 'agent', 'otel')"
+
 func traceDerivedFieldExpr(field string) (string, bool) {
 	switch field {
 	case "Namespace", "ApiRoute":
 		return field, true
+	case "Source":
+		return traceSourceExpr, true
 	default:
 		return "", false
 	}

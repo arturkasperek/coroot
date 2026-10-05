@@ -227,7 +227,7 @@ func insertFacetFixture(t *testing.T, token string) {
 
 func deleteFacetFixture(t *testing.T, token string) {
 	t.Helper()
-	q := fmt.Sprintf("DELETE FROM otel_logs WHERE LogAttributes['e2e.facets'] = '%s'", token)
+	q := fmt.Sprintf("DELETE FROM otel_logs ON CLUSTER coroot WHERE LogAttributes['e2e.facets'] = '%s'", token)
 	chExec(t, q, nil)
 }
 
@@ -308,6 +308,6 @@ func deleteTraceFixture(t *testing.T, serviceNames ...string) {
 		quoted[i] = "'" + strings.ReplaceAll(name, "'", "\\'") + "'"
 	}
 	in := strings.Join(quoted, ", ")
-	chExec(t, "DELETE FROM otel_traces WHERE ServiceName IN ("+in+")", nil)
-	chExec(t, "DELETE FROM otel_traces_histogram WHERE ServiceName IN ("+in+")", nil)
+	chExec(t, "DELETE FROM otel_traces ON CLUSTER coroot WHERE ServiceName IN ("+in+")", nil)
+	chExec(t, "DELETE FROM otel_traces_histogram ON CLUSTER coroot WHERE ServiceName IN ("+in+")", nil)
 }

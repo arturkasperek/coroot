@@ -133,7 +133,7 @@ FROM numbers(%d)`, 300000))
 	require.NoError(t, err)
 	defer c.Close()
 
-	rows, err := c.Query(context.Background(), "EXPLAIN indexes = 1 SELECT count() FROM @@table_otel_traces@@ WHERE hasToken(RequestBody, 'ord') AND hasToken(RequestBody, '271828')")
+	rows, err := c.Query(context.Background(), "EXPLAIN indexes = 1 SELECT max(length(RequestBody)) FROM otel_traces WHERE hasToken(RequestBody, 'ord') AND hasToken(RequestBody, '271828')")
 	require.NoError(t, err)
 	defer rows.Close()
 	var plan []string
@@ -146,7 +146,7 @@ FROM numbers(%d)`, 300000))
 	require.Contains(t, text, "idx_request_body", text)
 	var kept, total int
 	for i, l := range plan {
-		if strings.Contains(l, "idx_request_body") {
+		if strings.TrimSpace(l) == "Name: idx_request_body" { // the skip index section, not the prewhere column
 			for _, l2 := range plan[i:] {
 				if _, err := fmt.Sscanf(strings.TrimSpace(l2), "Granules: %d/%d", &kept, &total); err == nil {
 					break

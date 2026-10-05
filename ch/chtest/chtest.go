@@ -66,7 +66,7 @@ func New(t *testing.T) *Env {
 	t.Cleanup(func() {
 		c, err := ch.NewLowLevelClient(context.Background(), integration("default"))
 		if err == nil {
-			_ = c.Exec(context.Background(), "DROP DATABASE IF EXISTS "+name+" SYNC")
+			_ = c.Exec(context.Background(), "DROP DATABASE IF EXISTS "+name+" @on_cluster SYNC")
 			c.Close()
 		}
 	})

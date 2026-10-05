@@ -50,7 +50,7 @@ func kubectlErr(args ...string) (string, error) {
 
 func requireDevCluster(t *testing.T) {
 	t.Helper()
-	out, err := kubectlErr("get", "deploy/coroot", "deploy/clickhouse", "deploy/postgres", "ds/coroot-node-agent")
+	out, err := kubectlErr("get", "deploy/coroot", "sts/clickhouse", "sts/clickhouse-keeper", "deploy/postgres", "ds/coroot-node-agent")
 	if err != nil {
 		t.Fatalf("dev cluster %s not ready (run make dev): %v\n%s", kubeContext(), err, out)
 	}

@@ -289,10 +289,3 @@ func (c *Collector) getMetricsBatch(project *db.Project) *MetricsBatch {
 	return b
 }
 
-func (c *Collector) GetClickhouseClusterInfo(project *db.Project) (ch.ClickHouseInfo, error) {
-	client, err := c.getClickhouseClient(project)
-	if err != nil {
-		return ch.ClickHouseInfo{}, err
-	}
-	return client.GetInfo()
-}

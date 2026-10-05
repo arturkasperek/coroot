@@ -144,7 +144,59 @@ func TestBuildTraceFacetQueryExcludesOwnField(t *testing.T) {
 	query, _, ok := buildTraceFacetQuery(q, "ServiceName", false)
 	require.True(t, ok)
 	assert.Contains(t, query, "ParentSpanId = ''")
-	assert.Contains(t, query, "NOT startsWith(ServiceName, '/')")
+	assert.NotContains(t, query, "startsWith(ServiceName", "spans of the node-agent are listed too")
 	assert.Contains(t, query, "SpanName")
 	assert.NotContains(t, query, "ServiceName =")
+}
+
+func TestTraceSourceFacet(t *testing.T) {
+	q := SpanQuery{
+		Ctx:    timeseries.NewContext(1_700_000_000, 1_700_003_600, 15),
+		TsFrom: 1_700_000_000,
+		TsTo:   1_700_003_600,
+	}
+	t.Run("the facet tells agent spans from OpenTelemetry spans", func(t *testing.T) {
+		query, _, ok := buildTraceFacetQuery(q, "Source", false)
+		require.True(t, ok)
+		assert.Contains(t, query, "SELECT if(startsWith(ServiceName, '/'), 'agent', 'otel') AS Source, count(1) FROM @@table_otel_traces@@")
+		assert.Contains(t, query, "ParentSpanId = ''")
+	})
+	t.Run("it does not filter on itself", func(t *testing.T) {
+		q := q
+		q.AddFilter("Source", "=", "agent")
+		q.AddFilter("SpanName", "=", "GET /x")
+		query, _, ok := buildTraceFacetQuery(q, "Source", false)
+		require.True(t, ok)
+		assert.NotContains(t, query, "= @filter_0")
+		assert.Contains(t, query, "SpanName")
+	})
+	t.Run("filters on it", func(t *testing.T) {
+		for op, want := range map[string]string{
+			"=":  "(if(startsWith(ServiceName, '/'), 'agent', 'otel')) = @filter_0",
+			"!=": "NOT ((if(startsWith(ServiceName, '/'), 'agent', 'otel')) = @filter_0)",
+			"~":  "match(if(startsWith(ServiceName, '/'), 'agent', 'otel'), @filter_0)",
+		} {
+			q := SpanQuery{}
+			q.AddFilter("Source", op, "agent")
+			filter, args := q.Filter()
+			require.Len(t, filter, 1, op)
+			assert.Equal(t, want, filter[0], op)
+			require.Len(t, args, 1)
+		}
+	})
+	t.Run("the histogram can still come from the minute table", func(t *testing.T) {
+		q := SpanQuery{}
+		q.AddFilter("Source", "=", "otel")
+		assert.True(t, q.filtersOnHistogramDimensions())
+		q.AddFilter("Namespace", "=", "prod")
+		assert.False(t, q.filtersOnHistogramDimensions())
+	})
+}
+
+func TestRootSpansFilterKeepsAgentSpans(t *testing.T) {
+	q := SpanQuery{}
+	for _, fromMV := range []bool{false, true} {
+		filter, _ := q.RootSpansFilter(fromMV)
+		assert.NotContains(t, strings.Join(filter, " AND "), "startsWith(ServiceName", "fromMV=%v", fromMV)
+	}
 }

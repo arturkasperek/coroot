@@ -69,7 +69,7 @@ You should see an output similar to this if the deployment is successful:
 CONTAINER ID   IMAGE                                 COMMAND                  CREATED         STATUS         PORTS                                                 NAMES
 b018f1cf6e09   ghcr.io/coroot/coroot-cluster-agent   "coroot-cluster-agen…"   5 seconds ago   Up 3 seconds                                                         coroot-cluster-agent-1
 10b4bc2eef63   ghcr.io/coroot/coroot                 "/opt/coroot/coroot …"   5 seconds ago   Up 3 seconds   0.0.0.0:8080->8080/tcp, :::8080->8080/tcp             coroot-coroot-1
-d0143aea889b   clickhouse/clickhouse-server:26.3.37.3    "/entrypoint.sh"         5 seconds ago   Up 4 seconds   8123/tcp, 9009/tcp, 127.0.0.1:9000->9000/tcp          coroot-clickhouse-1
+d0143aea889b   clickhouse/clickhouse-server:26.9.10.4    "/entrypoint.sh"         5 seconds ago   Up 4 seconds   8123/tcp, 9009/tcp, 127.0.0.1:9000->9000/tcp          coroot-clickhouse-1
 4cbae2f36c1c   ghcr.io/coroot/coroot-node-agent      "coroot-node-agent -…"   5 seconds ago   Up 4 seconds                                                         coroot-node-agent-1
 a6618978d560   prom/prometheus:v2.45.4               "/bin/prometheus --c…"   5 seconds ago   Up 4 seconds   127.0.0.1:9090->9090/tcp                              coroot-prometheus-1
 ```
@@ -170,7 +170,7 @@ You should see an output similar to this if the deployment is successful:
 CONTAINER ID   IMAGE                                 COMMAND                  CREATED              STATUS              PORTS                                          NAMES
 870119cb6859   ghcr.io/coroot/coroot-cluster-agent   "coroot-cluster-agen…"   29 seconds ago       Up 16 seconds                                                      coroot-cluster-agent-1
 6f3b8f1c821c   ghcr.io/coroot/coroot-ee:1.5.4        "/opt/coroot/coroot-…"   42 seconds ago       Up 16 seconds       0.0.0.0:8080->8080/tcp, :::8080->8080/tcp      coroot-coroot-1
-320e9154a8ba   clickhouse/clickhouse-server:26.3.37.3    "/entrypoint.sh"         About a minute ago   Up About a minute   8123/tcp, 9009/tcp, 127.0.0.1:9000->9000/tcp   coroot-clickhouse-1
+320e9154a8ba   clickhouse/clickhouse-server:26.9.10.4    "/entrypoint.sh"         About a minute ago   Up About a minute   8123/tcp, 9009/tcp, 127.0.0.1:9000->9000/tcp   coroot-clickhouse-1
 76b5968068f0   prom/prometheus:v2.45.4               "/bin/prometheus --c…"   About a minute ago   Up About a minute   127.0.0.1:9090->9090/tcp                       coroot-prometheus-1
 51e91e09e58a   ghcr.io/coroot/coroot-node-agent      "coroot-node-agent -…"   About a minute ago   Up About a minute                                                  coroot-node-agent-1
 ```
