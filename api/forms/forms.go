@@ -12,11 +12,9 @@ import (
 	"strings"
 
 	"github.com/coroot/coroot/clickhouse"
-	"github.com/coroot/coroot/config"
 	"github.com/coroot/coroot/db"
 	"github.com/coroot/coroot/model"
 	"github.com/coroot/coroot/notifications"
-	"github.com/coroot/coroot/prom"
 	"github.com/coroot/coroot/timeseries"
 	"github.com/coroot/coroot/utils"
 	"github.com/prometheus/prometheus/promql/parser"
@@ -314,10 +312,8 @@ type IntegrationForm interface {
 	Test(ctx context.Context, project *db.Project) error
 }
 
-func NewIntegrationForm(t db.IntegrationType, globalClickHouse *db.IntegrationClickhouse, globalPrometheus *db.IntegrationPrometheus) IntegrationForm {
+func NewIntegrationForm(t db.IntegrationType, globalClickHouse *db.IntegrationClickhouse) IntegrationForm {
 	switch t {
-	case db.IntegrationTypePrometheus:
-		return &IntegrationFormPrometheus{global: globalPrometheus, globalClickHouse: globalClickHouse}
 	case db.IntegrationTypeClickhouse:
 		return &IntegrationFormClickhouse{global: globalClickHouse}
 	case db.IntegrationTypeAWS:
@@ -332,78 +328,6 @@ func NewIntegrationForm(t db.IntegrationType, globalClickHouse *db.IntegrationCl
 		return &IntegrationFormOpsgenie{}
 	case db.IntegrationTypeWebhook:
 		return &IntegrationFormWebhook{}
-	}
-	return nil
-}
-
-type IntegrationFormPrometheus struct {
-	db.IntegrationPrometheus
-	global           *db.IntegrationPrometheus
-	globalClickHouse *db.IntegrationClickhouse
-}
-
-func (f *IntegrationFormPrometheus) Valid() bool {
-	if _, err := url.Parse(f.IntegrationPrometheus.Url); err != nil {
-		return false
-	}
-	if f.RemoteWriteUrl != "" {
-		if _, err := url.Parse(f.IntegrationPrometheus.RemoteWriteUrl); err != nil {
-			return false
-		}
-	}
-	if !config.IsPrometheusSelectorValid(f.IntegrationPrometheus.ExtraSelector) {
-		return false
-	}
-	var validHeaders []utils.Header
-	for _, h := range f.CustomHeaders {
-		if h.Valid() {
-			validHeaders = append(validHeaders, h)
-		}
-	}
-	f.CustomHeaders = validHeaders
-	return true
-}
-
-func (f *IntegrationFormPrometheus) Get(project *db.Project, masked bool) {
-	cfg := project.PrometheusConfig(f.global)
-	f.IntegrationPrometheus = *cfg
-	if cfg.Url == "" {
-		return
-	}
-	if masked {
-		f.Url = "http://<hidden>"
-		if f.BasicAuth != nil {
-			f.BasicAuth.User = "<hidden>"
-			f.BasicAuth.Password = "<hidden>"
-		}
-		for i := range f.CustomHeaders {
-			f.CustomHeaders[i].Value = "<hidden>"
-		}
-		if f.RemoteWriteUrl != "" {
-			f.RemoteWriteUrl = "<hidden>"
-		}
-	}
-}
-
-func (f *IntegrationFormPrometheus) Update(ctx context.Context, project *db.Project, clear bool) error {
-	if f.global != nil {
-		return fmt.Errorf("global Prometheus configuration is used and cannot be changed")
-	}
-	if err := f.Test(ctx, project); err != nil {
-		return err
-	}
-	project.Prometheus = f.IntegrationPrometheus
-	return nil
-}
-
-func (f *IntegrationFormPrometheus) Test(ctx context.Context, project *db.Project) error {
-	client, err := prom.NewClient(&f.IntegrationPrometheus, project.ClickHouseConfig(f.globalClickHouse))
-	if err != nil {
-		return err
-	}
-	defer client.Close()
-	if err = client.Ping(ctx); err != nil {
-		return err
 	}
 	return nil
 }

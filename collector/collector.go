@@ -9,11 +9,11 @@ import (
 	"time"
 
 	chgo "github.com/ClickHouse/ch-go"
-	"github.com/coroot/coroot/cache"
 	"github.com/coroot/coroot/ch"
 	"github.com/coroot/coroot/config"
 	"github.com/coroot/coroot/db"
 	"github.com/coroot/coroot/grpc"
+	"github.com/coroot/coroot/world"
 	"golang.org/x/exp/maps"
 	"k8s.io/klog"
 )
@@ -33,9 +33,8 @@ var (
 type Collector struct {
 	cfg              config.CollectorConfig
 	db               *db.DB
-	cache            *cache.Cache
+	evaluator        *world.Evaluator
 	globalClickHouse *db.IntegrationClickhouse
-	globalPrometheus *db.IntegrationPrometheus
 
 	projects     map[db.ProjectId]*db.Project
 	projectsLock sync.RWMutex
@@ -56,13 +55,12 @@ type Collector struct {
 	metricsBatchesLock sync.Mutex
 }
 
-func New(cfg config.CollectorConfig, database *db.DB, cache *cache.Cache, globalClickHouse *db.IntegrationClickhouse, globalPrometheus *db.IntegrationPrometheus, grpcServer *grpc.Server) *Collector {
+func New(cfg config.CollectorConfig, database *db.DB, evaluator *world.Evaluator, globalClickHouse *db.IntegrationClickhouse, grpcServer *grpc.Server) *Collector {
 	c := &Collector{
 		cfg:               cfg,
 		db:                database,
-		cache:             cache,
+		evaluator:         evaluator,
 		globalClickHouse:  globalClickHouse,
-		globalPrometheus:  globalPrometheus,
 		migrationDone:     map[db.ProjectId]bool{},
 		clickhouseClients: map[db.ProjectId]*ch.LowLevelClient{},
 		traceBatches:      map[db.ProjectId]*TracesBatch{},
@@ -288,4 +286,3 @@ func (c *Collector) getMetricsBatch(project *db.Project) *MetricsBatch {
 	}
 	return b
 }
-

@@ -47,7 +47,7 @@ func (c *Collector) Config(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "project not found", http.StatusNotFound)
 		return
 	}
-	cacheClient := c.cache.GetCacheClient(project.Id)
+	cacheClient := c.evaluator.Client(project.Id)
 	cacheTo, err := cacheClient.GetTo()
 	if err != nil {
 		klog.Errorln(err)

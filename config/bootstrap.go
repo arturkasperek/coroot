@@ -23,14 +23,6 @@ func (cfg *Config) Bootstrap(database *db.DB) error {
 			return err
 		}
 		if p != nil {
-			prometheus := cfg.GetBootstrapPrometheus()
-			if p.Prometheus.Url == "" && prometheus != nil && prometheus.Url != "" && prometheus.RefreshInterval > 0 {
-				p.Prometheus = *prometheus
-				err = database.SaveProjectIntegration(p, db.IntegrationTypePrometheus)
-				if err != nil {
-					return err
-				}
-			}
 			clickhouse := cfg.GetBootstrapClickhouse()
 			if p.Settings.Integrations.Clickhouse == nil && clickhouse != nil && clickhouse.Addr != "" {
 				p.Settings.Integrations.Clickhouse = clickhouse
@@ -76,10 +68,6 @@ func (cfg *Config) Bootstrap(database *db.DB) error {
 		}
 
 		if p.RemoteCoroot != nil {
-			pp.Prometheus = *p.RemoteCoroot.PrometheusConfig()
-			if err = database.SaveProjectIntegration(pp, db.IntegrationTypePrometheus); err != nil {
-				return err
-			}
 			pp.Settings.Integrations.Clickhouse = p.RemoteCoroot.ClickHouseConfig()
 			if err = database.SaveProjectSettings(pp); err != nil {
 				return err

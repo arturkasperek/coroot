@@ -323,7 +323,6 @@ spec:
 #        apiKeySecret: # Secret containing the API key.
 #          name: # Name of the secret to select from.
 #          key:  # Key of the secret to select from.
-#        metricResolution: 15s # Prometheus query resolution/refresh interval.
 #      # Project API keys, used by agents to send telemetry data (required unless memberProjects or remoteCoroot is set).
 #      apiKeys:
 #        - description: # The API key description (optional).

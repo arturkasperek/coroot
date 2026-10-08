@@ -11,10 +11,6 @@ import (
 	"github.com/coroot/coroot/utils"
 )
 
-const (
-	DefaultRefreshInterval = 30
-)
-
 var (
 	emptyApiKey = strings.Repeat("0", 32)
 )
@@ -25,8 +21,7 @@ type Project struct {
 	Id   ProjectId
 	Name string
 
-	Prometheus IntegrationPrometheus
-	Settings   ProjectSettings
+	Settings ProjectSettings
 }
 
 type ProjectSettings struct {
@@ -91,9 +86,6 @@ func (p *Project) ClusterId() string {
 }
 
 func (p *Project) applyDefaults() {
-	if p.Prometheus.RefreshInterval == 0 {
-		p.Prometheus.RefreshInterval = DefaultRefreshInterval
-	}
 	if p.Settings.CustomCloudPricing == nil {
 		p.Settings.CustomCloudPricing = &defaultCustomCloudPricing
 	}
@@ -124,19 +116,6 @@ func (p *Project) GetCustomApplicationName(instance string) string {
 	return ""
 }
 
-func (p *Project) PrometheusConfig(globalPrometheus *IntegrationPrometheus) *IntegrationPrometheus {
-	if p.Prometheus.Url != "" {
-		return &p.Prometheus
-	}
-	if globalPrometheus != nil {
-		gp := *globalPrometheus
-		gp.ExtraSelector = fmt.Sprintf(`{coroot_project_id="%s"}`, p.Id)
-		gp.ExtraLabels = map[string]string{"coroot_project_id": string(p.Id)}
-		return &gp
-	}
-	return &p.Prometheus
-}
-
 func (p *Project) ClickHouseConfig(globalClickHouse *IntegrationClickhouse) *IntegrationClickhouse {
 	if p.Settings.Integrations.Clickhouse != nil {
 		return p.Settings.Integrations.Clickhouse
@@ -150,7 +129,7 @@ func (p *Project) ClickHouseConfig(globalClickHouse *IntegrationClickhouse) *Int
 }
 
 func (db *DB) GetProjects() (map[string]*Project, error) {
-	rows, err := db.db.Query("SELECT id, name, prometheus, settings FROM project")
+	rows, err := db.db.Query("SELECT id, name, settings FROM project")
 	if err != nil {
 		return nil, err
 	}
@@ -158,17 +137,11 @@ func (db *DB) GetProjects() (map[string]*Project, error) {
 		_ = rows.Close()
 	}()
 	res := map[string]*Project{}
-	var prometheus sql.NullString
 	var settings sql.NullString
 	for rows.Next() {
 		var p Project
-		if err = rows.Scan(&p.Id, &p.Name, &prometheus, &settings); err != nil {
+		if err = rows.Scan(&p.Id, &p.Name, &settings); err != nil {
 			return nil, err
-		}
-		if prometheus.Valid {
-			if err = json.Unmarshal([]byte(prometheus.String), &p.Prometheus); err != nil {
-				return nil, err
-			}
 		}
 		if settings.Valid {
 			if err = json.Unmarshal([]byte(settings.String), &p.Settings); err != nil {
@@ -203,19 +176,13 @@ func (db *DB) GetProjectNames() (map[ProjectId]string, error) {
 
 func (db *DB) GetProject(id ProjectId) (*Project, error) {
 	p := Project{Id: id}
-	var prometheus sql.NullString
 	var settings sql.NullString
-	err := db.db.QueryRow("SELECT name, prometheus, settings FROM project WHERE id = $1", id).Scan(&p.Name, &prometheus, &settings)
+	err := db.db.QueryRow("SELECT name, settings FROM project WHERE id = $1", id).Scan(&p.Name, &settings)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
-	}
-	if prometheus.Valid {
-		if err = json.Unmarshal([]byte(prometheus.String), &p.Prometheus); err != nil {
-			return nil, err
-		}
 	}
 	if settings.Valid {
 		if err = json.Unmarshal([]byte(settings.String), &p.Settings); err != nil {
@@ -227,9 +194,6 @@ func (db *DB) GetProject(id ProjectId) (*Project, error) {
 }
 
 func (db *DB) SaveProject(p *Project) error {
-	if p.Prometheus.RefreshInterval == 0 {
-		p.Prometheus.RefreshInterval = DefaultRefreshInterval
-	}
 	if p.Id == "" {
 		p.Id = ProjectId(utils.NanoId(8))
 		_, err := db.db.Exec("INSERT INTO project (id, name) VALUES ($1, $2)", p.Id, p.Name)
@@ -330,16 +294,5 @@ func (db *DB) SaveCustomApplication(id ProjectId, name, newName string, instance
 }
 
 func (db *DB) SaveProjectIntegration(p *Project, typ IntegrationType) error {
-	if typ == IntegrationTypePrometheus {
-		if p.Prometheus.RefreshInterval == 0 {
-			p.Prometheus.RefreshInterval = DefaultRefreshInterval
-		}
-		prometheus, err := json.Marshal(p.Prometheus)
-		if err != nil {
-			return err
-		}
-		_, err = db.db.Exec("UPDATE project SET prometheus = $1 WHERE id = $2", string(prometheus), p.Id)
-		return err
-	}
 	return db.SaveProjectSettings(p)
 }

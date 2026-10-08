@@ -18,7 +18,6 @@ The following is an example of the reported payload:
         "database_type": "sqlite" // the type of database being used
     },
     "integration": {
-        "prometheus": true, // shows whether a Prometheus integration has been configured or not
         "node_agent": true, // shows whether Coroot has seen the metrics gathered by `node-agent` or not
         "kube_state_metrics": true, // shows whether Coroot has seen the metrics gathered by `kube-state-metrics` or not
         "inspection_overrides": { // the number of overridden inspection thresholds
@@ -112,12 +111,6 @@ Coroot Inc uses the described statistics for its own purposes (improving the pro
 
 ## Disable usage statistics
 You can disable the collecting of usage statistics by using the `--disable-usage-statistics` command line argument.
-
-Docker:
-
-```bash
-docker run ... ghcr.io/coroot/coroot --disable-usage-statistics
-```
 
 Kubernetes operator:
 

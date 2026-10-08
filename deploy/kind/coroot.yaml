@@ -43,12 +43,6 @@ spec:
               value: Admin
             - name: PG_CONNECTION_STRING
               value: postgres://coroot:coroot@postgres:5432/coroot?sslmode=disable
-            - name: GLOBAL_PROMETHEUS_USE_CLICKHOUSE
-              value: "true"
-            - name: GLOBAL_REFRESH_INTERVAL
-              value: 15s
-            - name: CACHE_BACKFILL_INTERVAL
-              value: 15m
             - name: BOOTSTRAP_CLICKHOUSE_ADDRESS
               value: clickhouse:9000
           ports:

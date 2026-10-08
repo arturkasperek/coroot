@@ -9,11 +9,11 @@ Dev, Staging, or Production environment, a regional cluster, or a cluster dedica
 
 ## Configuration
 
-By default, Coroot requires a dedicated ClickHouse and Prometheus configuration for each project.
+By default, Coroot requires a dedicated ClickHouse configuration for each project.
 
-To enable multi-tenancy mode, specify a global ClickHouse and Prometheus by using the [GLOBAL_CLICKHOUSE_ADDRESS](/configuration/configuration) 
-and [GLOBAL_PROMETHEUS_URL](/configuration/configuration) environment variables or their corresponding CLI arguments.  
-**Note**: When these parameters are set, ClickHouse and Prometheus configurations will no longer be editable in the UI.
+To enable multi-tenancy mode, specify a global ClickHouse by using the [GLOBAL_CLICKHOUSE_ADDRESS](/configuration/configuration) 
+environment variable or its corresponding CLI argument.  
+**Note**: When this parameter is set, the ClickHouse configuration will no longer be editable in the UI.
 
 ## ClickHouse
 
@@ -24,8 +24,7 @@ respective project databases, ensuring data isolation and enabling efficient que
 ## Prometheus
 
 Multi-tenancy mode requires Coroot's agent to operate in push mode for metrics using the Prometheus Remote Write Protocol. 
-This functionality is enabled by default when Coroot is deployed on Kubernetes using the [Coroot Operator](/installation/k8s-operator), 
-Docker, or virtual machines (VMs).
+This functionality is enabled by default when Coroot is deployed on Kubernetes using the [Coroot Operator](/installation/k8s-operator).
 
 Coroot automatically appends the `coroot_project_id` label to each metric and uses `{coroot_project_id="XXXX"}` as an 
 additional selector when querying metrics for a specific project. This ensures precise data segmentation and retrieval per project.

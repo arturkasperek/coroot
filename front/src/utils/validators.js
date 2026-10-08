@@ -1,7 +1,6 @@
 const slugRe = /^[-_0-9a-z]{3,}$/;
 const urlRe = /^https?:\/\/.{3,}$/;
 const addrRe = /^[-_0-9a-z.]+:[0-9]+$/;
-const selectorRe = /^{.+=.+}$/;
 const emailRe = /[^@\r\n\t\f\v ]+@[^@\r\n\t\f\v ]+\.[a-z]+/;
 const minPasswordLength = 8;
 
@@ -23,10 +22,6 @@ export function isAddr(v) {
 
 export function isFloat(v) {
     return !isNaN(parseFloat(v)) || 'number is required';
-}
-
-export function isPrometheusSelector(v) {
-    return !v || selectorRe.test(v) || 'a valid Prometheus selector is required, e.g. {label_name="label_value", another_label=~"some_regexp"}';
 }
 
 export function isEmail(email) {

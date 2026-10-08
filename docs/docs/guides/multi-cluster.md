@@ -195,14 +195,12 @@ spec:
         apiKeySecret:
           name: remote-coroot-clusters
           key: prod-a
-        metricResolution: 15s
     - name: prod-b
       remoteCoroot:
         url: https://coroot-b.example.com
         apiKeySecret:
           name: remote-coroot-clusters
           key: prod-b
-        metricResolution: 15s
     - name: prod-c
       apiKeys:
         - description: API key used by Coroot agents to ingest telemetry data

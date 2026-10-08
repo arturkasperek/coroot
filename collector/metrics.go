@@ -1,56 +1,22 @@
 package collector
 
 import (
-	"bufio"
-	"bytes"
-	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
-	"sort"
 	"sync"
 	"time"
 
 	"github.com/ClickHouse/ch-go"
 	chproto "github.com/ClickHouse/ch-go/proto"
+	coch "github.com/coroot/coroot/ch"
 	"github.com/gogo/protobuf/proto"
 	"github.com/golang/snappy"
 	promModel "github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/prompb"
 	"k8s.io/klog"
 )
-
-var (
-	secureClient = &http.Client{Transport: &http.Transport{
-		TLSHandshakeTimeout: 10 * time.Second,
-	}}
-	insecureClient = &http.Client{Transport: &http.Transport{
-		TLSHandshakeTimeout: 10 * time.Second,
-		TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
-	}}
-)
-
-func addLabelsIfNeeded(r *http.Request, body []byte, extraLabels map[string]string) ([]byte, error) {
-	if len(extraLabels) == 0 {
-		return body, nil
-	}
-	req, err := parseMetricsRequestBody(r, body)
-	if err != nil {
-		return nil, err
-	}
-	for i := range req.Timeseries {
-		for k, v := range extraLabels {
-			req.Timeseries[i].Labels = append(req.Timeseries[i].Labels, prompb.Label{Name: k, Value: v})
-		}
-	}
-	decompressed, err := proto.Marshal(req)
-	if err != nil {
-		return nil, err
-	}
-	return snappy.Encode(nil, decompressed), nil
-}
 
 func (c *Collector) Metrics(w http.ResponseWriter, r *http.Request) {
 	project, err := c.getProject(r.Header.Get(ApiKeyHeader))
@@ -63,104 +29,19 @@ func (c *Collector) Metrics(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "", http.StatusInternalServerError)
 		return
 	}
-	cfg := project.PrometheusConfig(c.globalPrometheus)
-
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		klog.Errorln(err)
 		http.Error(w, "", http.StatusBadRequest)
-	}
-	if cfg.UseClickHouse {
-		req, err := parseMetricsRequestBody(r, body)
-		if err != nil {
-			klog.Errorln(err)
-			http.Error(w, "", http.StatusBadRequest)
-			return
-		}
-		c.getMetricsBatch(project).Add(req)
 		return
 	}
-
-	var u *url.URL
-	if cfg.RemoteWriteUrl == "" {
-		u, err = url.Parse(cfg.Url)
-		if err != nil {
-			klog.Errorln(err)
-			http.Error(w, "", http.StatusInternalServerError)
-			return
-		}
-		u = u.JoinPath("/api/v1/write")
-	} else {
-		u, err = url.Parse(cfg.RemoteWriteUrl)
-		if err != nil {
-			klog.Errorln(err)
-			http.Error(w, "", http.StatusInternalServerError)
-			return
-		}
-	}
-
-	if cfg.BasicAuth != nil {
-		u.User = url.UserPassword(cfg.BasicAuth.User, cfg.BasicAuth.Password)
-	}
-	body, err = addLabelsIfNeeded(r, body, cfg.ExtraLabels)
+	req, err := parseMetricsRequestBody(r, body)
 	if err != nil {
 		klog.Errorln(err)
 		http.Error(w, "", http.StatusBadRequest)
 		return
 	}
-
-	req, err := http.NewRequestWithContext(r.Context(), r.Method, u.String(), bytes.NewReader(body))
-	if err != nil {
-		klog.Errorln(err)
-		http.Error(w, "", http.StatusInternalServerError)
-		return
-	}
-
-	for _, h := range cfg.CustomHeaders {
-		req.Header.Add(h.Key, h.Value)
-	}
-	for k, vs := range r.Header {
-		if k == ApiKeyHeader {
-			continue
-		}
-		for _, v := range vs {
-			req.Header.Add(k, v)
-		}
-	}
-	httpClient := secureClient
-	if cfg.TlsSkipVerify {
-		httpClient = insecureClient
-	}
-	res, err := httpClient.Do(req)
-	if err != nil {
-		klog.Errorln(err)
-		http.Error(w, "", http.StatusInternalServerError)
-		return
-	}
-	defer func() {
-		io.Copy(io.Discard, res.Body)
-		res.Body.Close()
-	}()
-	if res.StatusCode == http.StatusBadRequest {
-		scanner := bufio.NewScanner(io.LimitReader(res.Body, 1024))
-		line := ""
-		if scanner.Scan() {
-			line = scanner.Text()
-		}
-		klog.Errorf("failed to write: got %d (%s) from prometheus, responding to the agent with 200 (to prevent retry)", res.StatusCode, line)
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-	if res.StatusCode > 400 {
-		klog.Errorf("failed to write: got %d from prometheus", res.StatusCode)
-	}
-	for k, vs := range res.Header {
-		for _, v := range vs {
-			w.Header().Add(k, v)
-		}
-	}
-	w.WriteHeader(res.StatusCode)
-	_, _ = io.Copy(w, res.Body)
+	c.getMetricsBatch(project).Add(req)
 }
 
 func parseMetricsRequestBody(r *http.Request, body []byte) (*prompb.WriteRequest, error) {
@@ -184,6 +65,20 @@ func parseMetricsRequestBody(r *http.Request, body []byte) (*prompb.WriteRequest
 	return &req, nil
 }
 
+// Metrics go into one ClickHouse TimeSeries table (see ch.MetricsCluster). The
+// engine takes a row per series: its name, its labels and all its samples as an
+// array of (time, value) pairs, and keeps the labels once per series itself.
+// ch-go has a bare proto.ColTuple (a slice of per-element columns), but no
+// typed column for an array of tuples: ColTuple has no Array() and ColAuto
+// cannot infer Tuple or Array(Tuple) (checked on v0.62 and v0.74). So the batch
+// sends the times and the values as two arrays and ClickHouse zips them.
+const (
+	insertSamplesSQL = `INSERT INTO metrics (metric_name, tags, samples)
+SELECT name, tags, arrayZip(ts, vs) FROM input('name String, tags Map(String, String), ts Array(DateTime64(3)), vs Array(Float64)') FORMAT Native`
+	insertMetadataSQL = `INSERT INTO metrics (metric_family, type, unit, help)
+SELECT family, type, unit, help FROM input('family String, type String, unit String, help String') FORMAT Native`
+)
+
 type MetricsBatch struct {
 	limit int
 	exec  func(query ch.Query) error
@@ -191,19 +86,21 @@ type MetricsBatch struct {
 	lock sync.Mutex
 	done chan struct{}
 
-	// samples
-	Timestamp  *chproto.ColDateTime
-	MetricHash *chproto.ColUInt64
-	Value      *chproto.ColFloat64
-	MetricName *chproto.ColLowCardinality[string]
+	rows int // samples in the batch
 
-	// series: the labels of a series, once per batch instead of once per sample
-	series map[uint64]*metricSeries
+	name *chproto.ColStr
+	tags *chproto.ColMap[string, string]
+	ts   *chproto.ColArr[time.Time]
+	vs   *chproto.ColArr[float64]
 
-	MetricFamilyName *chproto.ColLowCardinality[string]
-	Type             *chproto.ColLowCardinality[string]
-	Help             *chproto.ColStr
-	Unit             *chproto.ColLowCardinality[string]
+	family *chproto.ColStr
+	typ    *chproto.ColStr
+	unit   *chproto.ColStr
+	help   *chproto.ColStr
+}
+
+func newTimeColumn() *chproto.ColArr[time.Time] {
+	return chproto.NewArray[time.Time](new(chproto.ColDateTime64).WithPrecision(chproto.PrecisionMilli))
 }
 
 func NewMetricsBatch(limit int, timeout time.Duration, exec func(query ch.Query) error) *MetricsBatch {
@@ -212,16 +109,15 @@ func NewMetricsBatch(limit int, timeout time.Duration, exec func(query ch.Query)
 		exec:  exec,
 		done:  make(chan struct{}),
 
-		Timestamp:  new(chproto.ColDateTime),
-		MetricHash: new(chproto.ColUInt64),
-		Value:      new(chproto.ColFloat64),
-		MetricName: new(chproto.ColStr).LowCardinality(),
-		series:     map[uint64]*metricSeries{},
+		name: new(chproto.ColStr),
+		tags: chproto.NewMap[string, string](new(chproto.ColStr), new(chproto.ColStr)),
+		ts:   newTimeColumn(),
+		vs:   chproto.NewArray[float64](new(chproto.ColFloat64)),
 
-		MetricFamilyName: new(chproto.ColStr).LowCardinality(),
-		Type:             new(chproto.ColStr).LowCardinality(),
-		Help:             new(chproto.ColStr),
-		Unit:             new(chproto.ColStr).LowCardinality(),
+		family: new(chproto.ColStr),
+		typ:    new(chproto.ColStr),
+		unit:   new(chproto.ColStr),
+		help:   new(chproto.ColStr),
 	}
 
 	go func() {
@@ -249,116 +145,82 @@ func (b *MetricsBatch) Close() {
 	b.save()
 }
 
-type metricSeries struct {
-	name     string
-	labels   []chproto.KV[string, string]
-	lastSeen time.Time
-}
-
 func (b *MetricsBatch) Add(req *prompb.WriteRequest) {
 	b.lock.Lock()
 	defer b.lock.Unlock()
 
 	for _, md := range req.GetMetadata() {
-		b.MetricFamilyName.Append(md.GetMetricFamilyName())
-		b.Type.Append(md.GetType().String())
-		b.Help.Append(md.GetHelp())
-		b.Unit.Append(md.GetUnit())
+		b.family.Append(md.GetMetricFamilyName())
+		b.typ.Append(md.GetType().String())
+		b.unit.Append(md.GetUnit())
+		b.help.Append(md.GetHelp())
 	}
 
 	for _, ts := range req.GetTimeseries() {
-		labels := make(map[string]string, len(ts.Labels))
-		sortable := make([]chproto.KV[string, string], 0, len(ts.Labels))
-		var metricName string
-		for _, label := range ts.Labels {
-			if label.Name == promModel.MetricNameLabel {
-				metricName = label.Value
-			} else {
-				sortable = append(sortable, chproto.KV[string, string]{Key: label.Name, Value: label.Value})
-			}
-			labels[label.Name] = label.Value
+		if len(ts.Samples) == 0 {
+			continue
 		}
-		sort.Slice(sortable, func(i, j int) bool {
-			return sortable[i].Key < sortable[j].Key
-		})
-		hash := promModel.LabelsToSignature(labels)
-		for _, sample := range ts.Samples {
-			t := time.Unix(sample.Timestamp/1000, 0)
-			b.MetricName.Append(metricName)
-			b.Timestamp.Append(t)
-			b.MetricHash.Append(hash)
-			b.Value.Append(sample.Value)
-			if sr := b.series[hash]; sr == nil {
-				b.series[hash] = &metricSeries{name: metricName, labels: sortable, lastSeen: t}
-			} else if t.After(sr.lastSeen) {
-				sr.lastSeen = t
+		var name string
+		tags := make(map[string]string, len(ts.Labels))
+		for _, l := range ts.Labels {
+			switch {
+			case l.Name == promModel.MetricNameLabel:
+				name = l.Value
+			case l.Value == "": // in PromQL an empty label is an absent label
+			default:
+				tags[l.Name] = l.Value
 			}
 		}
-		delete(labels, promModel.MetricNameLabel)
+		times := make([]time.Time, len(ts.Samples))
+		values := make([]float64, len(ts.Samples))
+		for i, s := range ts.Samples {
+			times[i] = time.UnixMilli(s.Timestamp)
+			values[i] = s.Value
+		}
+		b.name.Append(name)
+		b.tags.Append(tags)
+		b.ts.Append(times)
+		b.vs.Append(values)
+		b.rows += len(ts.Samples)
 	}
 
-	if b.Timestamp.Rows() < b.limit {
+	if b.rows < b.limit {
 		return
 	}
 	b.save()
 }
 
 func (b *MetricsBatch) save() {
-	if b.Timestamp.Rows() == 0 {
-		return
-	}
-
-	// The series go first, so a query that finds samples always finds their labels.
-	seriesName := new(chproto.ColStr).LowCardinality()
-	seriesHash := new(chproto.ColUInt64)
-	seriesLabels := chproto.NewMap[string, string](new(chproto.ColStr).LowCardinality(), new(chproto.ColStr))
-	seriesLastSeen := new(chproto.ColDateTime)
-	for hash, sr := range b.series {
-		seriesName.Append(sr.name)
-		seriesHash.Append(hash)
-		seriesLabels.AppendKV(sr.labels)
-		seriesLastSeen.Append(sr.lastSeen)
-	}
-	seriesInput := chproto.Input{
-		chproto.InputColumn{Name: "MetricName", Data: seriesName},
-		chproto.InputColumn{Name: "MetricHash", Data: seriesHash},
-		chproto.InputColumn{Name: "Labels", Data: seriesLabels},
-		chproto.InputColumn{Name: "LastSeen", Data: seriesLastSeen},
-	}
-	if err := b.exec(ch.Query{Body: seriesInput.Into("@@table_metrics_series@@"), Input: seriesInput}); err != nil {
-		klog.Errorln("failed to insert metric series:", err)
-	}
-
-	samplesInput := chproto.Input{
-		chproto.InputColumn{Name: "MetricName", Data: b.MetricName},
-		chproto.InputColumn{Name: "Timestamp", Data: b.Timestamp},
-		chproto.InputColumn{Name: "MetricHash", Data: b.MetricHash},
-		chproto.InputColumn{Name: "Value", Data: b.Value},
-	}
-	if err := b.exec(ch.Query{Body: samplesInput.Into("@@table_metrics_samples@@"), Input: samplesInput}); err != nil {
-		klog.Errorln("failed to insert metrics:", err)
-	}
-
-	if b.MetricFamilyName.Rows() > 0 {
-		metadataInput := chproto.Input{
-			chproto.InputColumn{Name: "MetricFamilyName", Data: b.MetricFamilyName},
-			chproto.InputColumn{Name: "Type", Data: b.Type},
-			chproto.InputColumn{Name: "Help", Data: b.Help},
-			chproto.InputColumn{Name: "Unit", Data: b.Unit},
+	if b.rows > 0 {
+		input := chproto.Input{
+			{Name: "name", Data: b.name},
+			{Name: "tags", Data: b.tags},
+			{Name: "ts", Data: b.ts},
+			{Name: "vs", Data: b.vs},
 		}
-		if err := b.exec(ch.Query{Body: metadataInput.Into("@@table_metrics_metadata@@"), Input: metadataInput}); err != nil {
+		if err := b.exec(ch.Query{Body: insertSamplesSQL, Settings: coch.TimeSeriesSettings, Input: input}); err != nil {
+			klog.Errorln("failed to insert metrics:", err)
+		}
+		b.name.Reset()
+		b.tags.Reset()
+		b.ts.Reset()
+		b.vs.Reset()
+		b.rows = 0
+	}
+
+	if b.family.Rows() > 0 {
+		input := chproto.Input{
+			{Name: "family", Data: b.family},
+			{Name: "type", Data: b.typ},
+			{Name: "unit", Data: b.unit},
+			{Name: "help", Data: b.help},
+		}
+		if err := b.exec(ch.Query{Body: insertMetadataSQL, Settings: coch.TimeSeriesSettings, Input: input}); err != nil {
 			klog.Errorln("failed to insert metrics metadata:", err)
 		}
-		b.MetricFamilyName.Reset()
-		b.Type.Reset()
-		b.Help.Reset()
-		b.Unit.Reset()
+		b.family.Reset()
+		b.typ.Reset()
+		b.unit.Reset()
+		b.help.Reset()
 	}
-
-	// Reset all columns
-	b.MetricName.Reset()
-	b.series = map[uint64]*metricSeries{}
-	b.Timestamp.Reset()
-	b.MetricHash.Reset()
-	b.Value.Reset()
 }

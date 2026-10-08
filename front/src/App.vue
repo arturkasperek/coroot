@@ -200,22 +200,14 @@
                         <template v-if="status.error">
                             {{ status.error }}
                         </template>
-                        <template v-else-if="status.prometheus.status !== 'ok'">
+                        <template v-else-if="status.metrics.status !== 'ok'">
                             <div class="flex-grow-1 mb-3 mb-sm-0">
-                                {{ status.prometheus.message }}
-                                <div v-if="status.prometheus.error" class="mt-1" style="font-size: 14px">
-                                    {{ status.prometheus.error }}
+                                {{ status.metrics.message }}
+                                <div v-if="status.metrics.error" class="mt-1" style="font-size: 14px">
+                                    {{ status.metrics.error }}
                                 </div>
                             </div>
-                            <v-btn
-                                v-if="status.prometheus.action === 'configure'"
-                                outlined
-                                :to="{ name: 'project_settings', params: { tab: 'prometheus' } }"
-                            >
-                                <template v-if="status.prometheus.error"> Review the configuration </template>
-                                <template v-else> Configure </template>
-                            </v-btn>
-                            <v-btn v-if="status.prometheus.action === 'wait'" outlined @click="refresh">refresh</v-btn>
+                            <v-btn v-if="status.metrics.action === 'wait'" outlined @click="refresh">refresh</v-btn>
                         </template>
                         <template v-else-if="status.node_agent.status !== 'ok'">
                             <div class="flex-grow-1 mb-3 mb-sm-0">

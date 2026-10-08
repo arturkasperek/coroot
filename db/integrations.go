@@ -5,7 +5,6 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/coroot/coroot/timeseries"
 	"github.com/coroot/coroot/utils"
 )
 
@@ -16,7 +15,6 @@ func boolValue(b *bool) bool {
 type IntegrationType string
 
 const (
-	IntegrationTypePrometheus IntegrationType = "prometheus"
 	IntegrationTypeClickhouse IntegrationType = "clickhouse"
 	IntegrationTypeAWS        IntegrationType = "aws"
 	IntegrationTypeSlack      IntegrationType = "slack"
@@ -148,19 +146,6 @@ func (integrations Integrations) GetInfo() []IntegrationInfo {
 	res = append(res, i)
 
 	return res
-}
-
-type IntegrationPrometheus struct {
-	Global          bool                `json:"global"`
-	Url             string              `json:"url"`
-	RefreshInterval timeseries.Duration `json:"refresh_interval"`
-	TlsSkipVerify   bool                `json:"tls_skip_verify"`
-	BasicAuth       *utils.BasicAuth    `json:"basic_auth"`
-	ExtraSelector   string              `json:"extra_selector"`
-	CustomHeaders   []utils.Header      `json:"custom_headers"`
-	RemoteWriteUrl  string              `json:"remote_write_url"`
-	ExtraLabels     map[string]string   `json:"-"`
-	UseClickHouse   bool                `json:"use_clickhouse"`
 }
 
 type IntegrationClickhouse struct {

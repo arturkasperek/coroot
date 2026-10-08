@@ -6,16 +6,15 @@
         </v-alert>
         <div v-if="status">
             <div class="d-flex flex-nowrap">
-                <Led :status="status.prometheus.status" />
+                <Led :status="status.metrics.status" />
                 <div>
-                    <span class="font-weight-medium">prometheus</span>:
-                    <template v-if="status.prometheus.error">
-                        {{ status.prometheus.error }}
+                    <span class="font-weight-medium">metrics</span>:
+                    <template v-if="status.metrics.error">
+                        {{ status.metrics.error }}
                     </template>
                     <template v-else>
-                        {{ status.prometheus.message }}
+                        {{ status.metrics.message }}
                     </template>
-                    <router-link v-if="status.prometheus.action === 'configure'" :to="{ params: { tab: 'prometheus' } }">configure</router-link>
                 </div>
             </div>
 

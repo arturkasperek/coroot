@@ -31,8 +31,6 @@ For instance, the `projects` parameter (a list of predefined projects) can only 
 | --tls-key-file                       | TLS_KEY_FILE                       |               | Path to the TLS private key file.                                                                                                                                               |
 | --url-base-path                      | URL_BASE_PATH                      | /             | Base URL to run Coroot at a sub-path, e.g., `/coroot/`.                                                                                                                         |
 | --data-dir                           | DATA_DIR                           | /data         | Path to the data directory.                                                                                                                                                     |
-| --cache-ttl                          | CACHE_TTL                          | 30d           | Metric Cache Time-To-Live (TTL).                                                                                                                                                |
-| --cache-gc-interval                  | CACHE_GC_INTERVAL                  | 10m           | Metric Cache Garbage Collection (GC) interval.                                                                                                                                  |
 | --traces-ttl                         | TRACES_TTL                         | 7d            | Traces Time-To-Live (TTL).                                                                                                                                                      |
 | --logs-ttl                           | LOGS_TTL                           | 7d            | Logs Time-To-Live (TTL).                                                                                                                                                        |
 | --profiles-ttl                       | PROFILES_TTL                       | 7d            | Profiles Time-To-Live (TTL).                                                                                                                                                        |                                                                                                    
@@ -54,14 +52,6 @@ For instance, the `projects` parameter (a list of predefined projects) can only 
 | --global-clickhouse-tls-enabled      | GLOBAL_CLICKHOUSE_TLS_ENABLED      | false         | Whether TLS is enabled for the ClickHouse server connection (true or false).                                                                                                    |
 | --global-clickhouse-tls-skip-verify  | GLOBAL_CLICKHOUSE_TLS_SKIP_VERIFY  | false         | Whether to skip verification of the ClickHouse server's TLS certificate (true or false).                                                                                        |
 | --global-clickhouse-tls-ca-file      | GLOBAL_CLICKHOUSE_TLS_CA_FILE      |               | Path to the CA certificate file for ClickHouse TLS verification.                                                                                                              |
-| --global-prometheus-url              | GLOBAL_PROMETHEUS_URL              |               | The URL of the Prometheus server to be used for all projects.                                                                                                                   |
-| --global-prometheus-tls-skip-verify  | GLOBAL_PROMETHEUS_TLS_SKIP_VERIFY  | false         | Whether to skip verification of the Prometheus server's TLS certificate (true or false).                                                                                        |
-| --global-refresh-interval            | GLOBAL_REFRESH_INTERVAL            | 15s           | The interval for refreshing Prometheus data.                                                                                                                                    |
-| --global-prometheus-user             | GLOBAL_PROMETHEUS_USER             |               | The username for the Prometheus server to be used for all projects.                                                                                                             |
-| --global-prometheus-password         | GLOBAL_PROMETHEUS_PASSWORD         |               | The password for the Prometheus server to be used for all projects.                                                                                                             |
-| --global-prometheus-custom-headers   | GLOBAL_PROMETHEUS_CUSTOM_HEADERS   |               | Custom headers to include in requests to the Prometheus server.                                                                                                                 |
-| --global-prometheus-remote-write-url | GLOBAL_PROMETHEUS_REMOTE_WRITE_URL |               | The URL for metric ingestion though the Prometheus Remote Write protocol.                                                                                                       |
-| --global-prometheus-use-clickhouse   | GLOBAL_PROMETHEUS_USE_CLICKHOUSE   | false         | Use ClickHouse for metrics storage instead of Prometheus. When enabled, ClickHouse becomes the primary metrics backend.                                                        |
 | --disable-clickhouse-space-manager   | CLICKHOUSE_SPACE_MANAGER_DISABLED  | false         | Disable ClickHouse space manager that automatically cleans up old partitions.                                                                                                   |
 | --clickhouse-space-manager-usage-threshold | CLICKHOUSE_SPACE_MANAGER_USAGE_THRESHOLD | 70      | Disk usage percentage threshold for triggering partition cleanup in ClickHouse.                                                                                                 |
 | --clickhouse-space-manager-min-partitions | CLICKHOUSE_SPACE_MANAGER_MIN_PARTITIONS | 1        | Minimum number of partitions to keep when cleaning up ClickHouse disk space.                                                                                                    |
@@ -87,10 +77,6 @@ tls:
   certFile: # Path to the TLS certificate file.
   keyFile:  # Path to the TLS private key file.
 
-cache:
-  ttl: 30d        # Metric Cache Time-To-Live (TTL).
-  gc_interval: 10m # Metric Cache Garbage Collection (GC) interval. 
-
 # Coroot stores Traces, Logs, and Profiles in ClickHouse.  
 # Their retention is managed by setting a Time-To-Live (TTL) for the corresponding Clickhouse tables.  
 # The TTLs below are applied during table creation and do not currently affect existing tables.
@@ -107,15 +93,6 @@ postgres: # Store configuration in a Postgres DB instead of SQLite
   # https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING
   connection_string: 
 
-global_prometheus: # The Prometheus server to be used for all projects.
-  url:                   # http(s)://IP:Port/ or http(s)://Domain:Port/
-  refresh_interval: 15s  # The interval for refreshing Prometheus data.
-  tls_skip_verify: false # Whether to skip verification of the Prometheus server's TLS certificate.
-  user:                  # The basic-auth username.
-  password:              # The basic-auth password.
-  custom_headers:        # Custom headers to include in requests to the Prometheus server.
-#    header_name: header_value
-  remote_write_url:      # The URL for metric ingestion though the Prometheus Remote Write protocol.
   use_clickhouse: false  # Use ClickHouse for metrics storage instead of Prometheus.
 
 global_clickhouse: # The ClickHouse server to be used for all projects.
@@ -162,7 +139,6 @@ projects: # Create or update projects (configuration file only).
       url: https://coroot.example.com # Base URL of the remote Coroot instance.
       apiKey:                         # API key of the remote project (required).
       tlsSkipVerify: false            # Whether to skip TLS verification (default: false).
-      metricResolution: 15s           # Prometheus query resolution/refresh interval (required).
     # Project notification integrations.
     notificationIntegrations:
       baseURL: # The URL of Coroot instance (required). Used for generating links in notifications.

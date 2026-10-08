@@ -207,6 +207,53 @@ func FillAny(ts *TimeSeries, from Time, step Duration, data []float32) bool {
 	return changed
 }
 
+// FillMax keeps the largest value of each bucket (FillAny keeps the last one), so a
+// spike inside a bucket stays visible on long-range charts.
+func FillMax(ts *TimeSeries, from Time, step Duration, data []float32) bool {
+	changed := false
+	maxIndex := len(ts.data) - 1
+	tSrc, iSrc := from, 0
+	if ts.from.Sub(tSrc) >= ts.step {
+		tSrc = tSrc.Add(ts.from.Sub(tSrc.Truncate(ts.step)).Truncate(ts.step))
+		if tSrc > ts.from {
+			tSrc = tSrc.Add(-ts.step)
+		}
+		iSrc = int((tSrc - from) / Time(step))
+	}
+	tDst, iDst := ts.from, 0
+	if tSrc > tDst {
+		tDst = tSrc.Truncate(ts.step)
+		if tDst < tSrc {
+			tDst = tDst.Add(ts.step)
+		}
+		iDst = int((tDst - ts.from) / Time(ts.step))
+	}
+	vv := NaN
+	for _, v := range data[iSrc:] {
+		if tSrc > tDst {
+			ts.data[iDst] = vv
+			vv = NaN
+			iDst++
+			if iDst > maxIndex {
+				break
+			}
+			tDst += Time(ts.step)
+		}
+		if !IsNaN(v) {
+			if IsNaN(vv) || v > vv {
+				vv = v
+			}
+			changed = true
+		}
+		tSrc += Time(step)
+	}
+	if iDst <= maxIndex {
+		ts.data[iDst] = vv
+	}
+	ts.last = ts.data[maxIndex]
+	return changed
+}
+
 func FillSum(ts *TimeSeries, from Time, step Duration, data []float32) bool {
 	changed := false
 	maxIndex := len(ts.data) - 1

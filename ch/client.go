@@ -30,6 +30,9 @@ const (
 type LowLevelClient struct {
 	pool    *chpool.Pool
 	cluster string
+	// metricsCluster has one shard and every node as its replica: PromQL runs
+	// on a single node, so that node must hold all series (see MetricsCluster).
+	metricsCluster string
 }
 
 func NewLowLevelClient(ctx context.Context, cfg *db.IntegrationClickhouse) (*LowLevelClient, error) {
@@ -72,12 +75,19 @@ func NewLowLevelClient(ctx context.Context, cfg *db.IntegrationClickhouse) (*Low
 }
 
 func (c *LowLevelClient) Exec(ctx context.Context, query string) error {
+	return c.ExecWithSettings(ctx, query, nil)
+}
+
+// ExecWithSettings is Exec with query settings (e.g. TimeSeriesSettings).
+func (c *LowLevelClient) ExecWithSettings(ctx context.Context, query string, settings []ch.Setting) error {
 	var result chproto.Results
-	query = strings.ReplaceAll(query, "@cluster", c.cluster)
+	query = strings.ReplaceAll(query, "@on_metrics_cluster", "ON CLUSTER "+c.metricsCluster)
 	query = strings.ReplaceAll(query, "@on_cluster", "ON CLUSTER "+c.cluster)
+	query = strings.ReplaceAll(query, "@cluster", c.cluster)
 
 	return c.pool.Do(ctx, ch.Query{
-		Body: query,
+		Body:     query,
+		Settings: settings,
 		OnResult: func(ctx context.Context, block chproto.Block) error {
 			return nil
 		},
@@ -137,8 +147,21 @@ func (c *LowLevelClient) info(ctx context.Context, address string) error {
 	default:
 		return fmt.Errorf(`multiple ClickHouse clusters found, but neither "coroot" nor "default" cluster found`)
 	}
+	c.metricsCluster = c.cluster
+	if clusters[MetricsCluster] {
+		c.metricsCluster = MetricsCluster
+	}
 	return nil
 }
+
+// MetricsCluster is the cluster the metrics (TimeSeries) table lives on: one
+// shard, every node a replica, so that a PromQL query evaluated on any node
+// sees all series. ClickHouse 26.9 cannot evaluate PromQL over a sharded
+// TimeSeries table: per-shard evaluation gives partial sums, and a TimeSeries
+// table over Distributed tables fails on queries that read more than one
+// metric ("Unknown identifier (hash, uuid)"). When no cluster with this name
+// exists the main cluster is used, which is correct only if it has one shard.
+const MetricsCluster = "coroot_metrics"
 
 func (c *LowLevelClient) CreateDB(ctx context.Context, name string) error {
 	return c.Exec(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s @on_cluster", name))
@@ -147,6 +170,11 @@ func (c *LowLevelClient) CreateDB(ctx context.Context, name string) error {
 // Cluster is the ClickHouse cluster the client works on.
 func (c *LowLevelClient) Cluster() string {
 	return c.cluster
+}
+
+// MetricsCluster is the cluster of the metrics table, see MetricsCluster.
+func (c *LowLevelClient) MetricsCluster() string {
+	return c.metricsCluster
 }
 
 // @replacing_merge_tree_by(Column): a ReplacingMergeTree that keeps, among rows
@@ -163,6 +191,7 @@ func (c *LowLevelClient) Migrate(ctx context.Context, cfg config.CollectorConfig
 		t = replacingByVersion.ReplaceAllString(t, "ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/{database}/{table}', '{replica}', $1)")
 		t = strings.ReplaceAll(t, "@replacing_merge_tree", "ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/{database}/{table}', '{replica}')")
 		t = strings.ReplaceAll(t, "@summing_merge_tree", "ReplicatedSummingMergeTree('/clickhouse/tables/{shard}/{database}/{table}', '{replica}')")
+		t = strings.ReplaceAll(t, "@aggregating_merge_tree", "ReplicatedAggregatingMergeTree('/clickhouse/tables/{shard}/{database}/{table}', '{replica}')")
 		err := c.Exec(ctx, t)
 		if err != nil {
 			return err
@@ -170,6 +199,12 @@ func (c *LowLevelClient) Migrate(ctx context.Context, cfg config.CollectorConfig
 	}
 	for _, t := range distributedTables {
 		if err := c.Exec(ctx, t); err != nil {
+			return err
+		}
+	}
+	for _, t := range timeSeriesTables {
+		t = strings.ReplaceAll(t, "@ttl_metrics", fmt.Sprintf("%d", cfg.MetricsTTL))
+		if err := c.ExecWithSettings(ctx, t, TimeSeriesSettings); err != nil {
 			return err
 		}
 	}
@@ -403,37 +438,93 @@ PARTITION BY toDate(LastSeen)`,
 CREATE MATERIALIZED VIEW IF NOT EXISTS profiling_profiles_mv @on_cluster TO profiling_profiles AS
 SELECT ServiceName, Type, max(End) AS LastSeen FROM profiling_samples group by ServiceName, Type`,
 
+		// The results of the constructor's queries (package world), every 15 s, so that a
+		// page does not evaluate PromQL. Query is the query text; a series lives on one
+		// shard (see distributedTables). The rollups are right-closed: a row stamped T
+		// covers (T - 5 min, T], like timeseries.FillAny.
 		`
-CREATE TABLE IF NOT EXISTS metrics_samples @on_cluster (
-    MetricName LowCardinality(String) CODEC(ZSTD(1)),
-    MetricHash UInt64 CODEC(ZSTD(1)),
+CREATE TABLE IF NOT EXISTS world_series @on_cluster (
+    Query LowCardinality(String),
+    SeriesHash UInt64,
+    Labels Map(LowCardinality(String), String),
+    LastSeen DateTime('UTC')
+) ENGINE @replacing_merge_tree_by(LastSeen)
+ORDER BY (Query, SeriesHash)
+TTL LastSeen + toIntervalSecond(@ttl_metrics)
+SETTINGS index_granularity = 256`,
+
+		`
+CREATE TABLE IF NOT EXISTS world_points @on_cluster (
+    Query LowCardinality(String),
+    SeriesHash UInt64,
     Timestamp DateTime('UTC') CODEC(DoubleDelta, ZSTD(1)),
-    Value Float64 CODEC(Gorilla, ZSTD(1))
+    Value Float32 CODEC(Gorilla, ZSTD(1))
 ) ENGINE @merge_tree
 PARTITION BY toDate(Timestamp)
-ORDER BY (MetricName, MetricHash, Timestamp)
+ORDER BY (toStartOfHour(Timestamp), Query, SeriesHash, Timestamp)
 TTL Timestamp + toIntervalSecond(@ttl_metrics)
-SETTINGS index_granularity = 8192, ttl_only_drop_parts = 1`,
+SETTINGS ttl_only_drop_parts = 1`,
 
 		`
-CREATE TABLE IF NOT EXISTS metrics_series @on_cluster (
-    MetricName LowCardinality(String) CODEC(ZSTD(1)),
-    MetricHash UInt64 CODEC(ZSTD(1)),
-    Labels Map(LowCardinality(String), String) CODEC(ZSTD(1)),
-    LastSeen DateTime('UTC') CODEC(Delta, ZSTD(1))
-) ENGINE @replacing_merge_tree_by(LastSeen)
-ORDER BY (MetricName, MetricHash)
-TTL LastSeen + toIntervalSecond(@ttl_metrics)`,
+CREATE TABLE IF NOT EXISTS world_points_5m @on_cluster (
+    Query LowCardinality(String),
+    SeriesHash UInt64,
+    Timestamp DateTime('UTC'),
+    Last AggregateFunction(argMax, Float32, DateTime('UTC')),
+    Sum SimpleAggregateFunction(sum, Float64),
+    Cnt SimpleAggregateFunction(sum, UInt64),
+    Max SimpleAggregateFunction(max, Float32)
+) ENGINE @aggregating_merge_tree
+PARTITION BY toDate(Timestamp)
+ORDER BY (toStartOfDay(Timestamp), Query, SeriesHash, Timestamp)
+TTL Timestamp + toIntervalSecond(@ttl_metrics)`,
 
 		`
-CREATE TABLE IF NOT EXISTS metrics_metadata @on_cluster (
-    MetricFamilyName LowCardinality(String) CODEC(ZSTD(1)),
-    Type LowCardinality(String) CODEC(ZSTD(1)),
-    Help String CODEC(ZSTD(1)),
-    Unit LowCardinality(String) CODEC(ZSTD(1)),
-) ENGINE @replacing_merge_tree
-ORDER BY MetricFamilyName
-SETTINGS index_granularity = 8192`,
+CREATE MATERIALIZED VIEW IF NOT EXISTS world_points_5m_mv @on_cluster TO world_points_5m AS
+SELECT Query, SeriesHash, Bucket AS Timestamp,
+       argMaxState(Value, Ts) AS Last, sum(toFloat64(Value)) AS Sum, count() AS Cnt, max(Value) AS Max
+FROM (SELECT Query, SeriesHash, Value, Timestamp AS Ts,
+             toStartOfInterval(Timestamp - INTERVAL 1 SECOND, INTERVAL 5 MINUTE) + INTERVAL 5 MINUTE AS Bucket
+      FROM world_points)
+GROUP BY Query, SeriesHash, Bucket`,
+
+		`
+CREATE TABLE IF NOT EXISTS world_points_1h @on_cluster (
+    Query LowCardinality(String),
+    SeriesHash UInt64,
+    Timestamp DateTime('UTC'),
+    Last AggregateFunction(argMax, Float32, DateTime('UTC')),
+    Sum SimpleAggregateFunction(sum, Float64),
+    Cnt SimpleAggregateFunction(sum, UInt64),
+    Max SimpleAggregateFunction(max, Float32)
+) ENGINE @aggregating_merge_tree
+PARTITION BY toDate(Timestamp)
+ORDER BY (toStartOfDay(Timestamp), Query, SeriesHash, Timestamp)
+TTL Timestamp + toIntervalSecond(@ttl_metrics)`,
+
+		`
+CREATE MATERIALIZED VIEW IF NOT EXISTS world_points_1h_mv @on_cluster TO world_points_1h AS
+SELECT Query, SeriesHash, Bucket AS Timestamp,
+       argMaxState(Value, Ts) AS Last, sum(toFloat64(Value)) AS Sum, count() AS Cnt, max(Value) AS Max
+FROM (SELECT Query, SeriesHash, Value, Timestamp AS Ts,
+             toStartOfInterval(Timestamp - INTERVAL 1 SECOND, INTERVAL 1 HOUR) + INTERVAL 1 HOUR AS Bucket
+      FROM world_points)
+GROUP BY Query, SeriesHash, Bucket`,
+	}
+
+	// timeSeriesTables live on the metrics cluster (one shard, every node a
+	// replica), not on the sharded main cluster, and need the TimeSeries
+	// settings: ClickHouse 26.9 can evaluate PromQL only on a table that holds
+	// all the series on one node. There is no Distributed table for them.
+	timeSeriesTables = []string{
+		`CREATE TABLE IF NOT EXISTS metrics @on_metrics_cluster ENGINE = TimeSeries
+SETTINGS recent_samples_ttl_seconds = 0
+SAMPLES INNER ENGINE = ReplicatedMergeTree('/clickhouse/tables/metrics/{database}/samples', '{replica}')
+  ORDER BY (id, timestamp) TTL toDateTime(timestamp) + toIntervalSecond(@ttl_metrics) SETTINGS index_granularity = 32768, ttl_only_drop_parts = 1
+TAGS INNER ENGINE = ReplicatedAggregatingMergeTree('/clickhouse/tables/metrics/{database}/tags', '{replica}')
+  PRIMARY KEY metric_name ORDER BY (metric_name, id)
+METRIC FAMILIES INNER ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/metrics/{database}/families', '{replica}')
+  ORDER BY metric_family_name`,
 	}
 
 	distributedTables = []string{
@@ -467,15 +558,18 @@ SETTINGS index_granularity = 8192`,
 		`CREATE TABLE IF NOT EXISTS profiling_profiles_distributed ON CLUSTER @cluster AS profiling_profiles
 		ENGINE = Distributed(@cluster, currentDatabase(), profiling_profiles)`,
 
-		`CREATE TABLE IF NOT EXISTS metrics_samples_distributed ON CLUSTER @cluster AS metrics_samples
-		ENGINE = Distributed(@cluster, currentDatabase(), metrics_samples, MetricHash)`,
+		// all the points of a series are on one shard, so that a series is read whole
+		`CREATE TABLE IF NOT EXISTS world_series_distributed ON CLUSTER @cluster AS world_series
+		ENGINE = Distributed(@cluster, currentDatabase(), world_series, cityHash64(Query, SeriesHash))`,
 
-		// sharded like the samples, so a series and its samples are on one shard
-		`CREATE TABLE IF NOT EXISTS metrics_series_distributed ON CLUSTER @cluster AS metrics_series
-		ENGINE = Distributed(@cluster, currentDatabase(), metrics_series, MetricHash)`,
+		`CREATE TABLE IF NOT EXISTS world_points_distributed ON CLUSTER @cluster AS world_points
+		ENGINE = Distributed(@cluster, currentDatabase(), world_points, cityHash64(Query, SeriesHash))`,
 
-		`CREATE TABLE IF NOT EXISTS metrics_metadata_distributed ON CLUSTER @cluster AS metrics_metadata
-		ENGINE = Distributed(@cluster, currentDatabase(), metrics_metadata, sipHash64(MetricFamilyName))`,
+		`CREATE TABLE IF NOT EXISTS world_points_5m_distributed ON CLUSTER @cluster AS world_points_5m
+		ENGINE = Distributed(@cluster, currentDatabase(), world_points_5m, cityHash64(Query, SeriesHash))`,
+
+		`CREATE TABLE IF NOT EXISTS world_points_1h_distributed ON CLUSTER @cluster AS world_points_1h
+		ENGINE = Distributed(@cluster, currentDatabase(), world_points_1h, cityHash64(Query, SeriesHash))`,
 	}
 )
 
@@ -485,7 +579,7 @@ func ReplaceTables(query string) string {
 		"otel_logs", "otel_logs_service_name_severity_text", "otel_logs_rollup",
 		"otel_traces", "otel_traces_trace_id_ts", "otel_traces_service_name", "otel_traces_histogram",
 		"profiling_stacks", "profiling_samples", "profiling_profiles",
-		"metrics_samples", "metrics_series", "metrics_metadata",
+		"world_series", "world_points", "world_points_5m", "world_points_1h",
 	}
 	for _, t := range tbls {
 		query = strings.ReplaceAll(query, "@@table_"+t+"@@", t+"_distributed")

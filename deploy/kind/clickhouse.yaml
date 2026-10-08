@@ -57,6 +57,15 @@ data:
             <replica><host>clickhouse-1.clickhouse-headless.coroot-dev.svc.cluster.local</host><port>9000</port></replica>
           </shard>
         </coroot>
+        <!-- one shard, every node a replica: metrics are not sharded, so a
+             PromQL query evaluated on any node sees all series -->
+        <coroot_metrics>
+          <shard>
+            <internal_replication>true</internal_replication>
+            <replica><host>clickhouse-0.clickhouse-headless.coroot-dev.svc.cluster.local</host><port>9000</port></replica>
+            <replica><host>clickhouse-1.clickhouse-headless.coroot-dev.svc.cluster.local</host><port>9000</port></replica>
+          </shard>
+        </coroot_metrics>
       </remote_servers>
       <zookeeper>
         <node><host>clickhouse-keeper-0.clickhouse-keeper.coroot-dev.svc.cluster.local</host><port>9181</port></node>

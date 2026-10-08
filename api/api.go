@@ -16,7 +16,6 @@ import (
 	"github.com/coroot/coroot/api/forms"
 	"github.com/coroot/coroot/api/views"
 	"github.com/coroot/coroot/auditor"
-	"github.com/coroot/coroot/cache"
 	"github.com/coroot/coroot/ch"
 	"github.com/coroot/coroot/clickhouse"
 	pricing "github.com/coroot/coroot/cloud-pricing"
@@ -26,11 +25,12 @@ import (
 	"github.com/coroot/coroot/db"
 	"github.com/coroot/coroot/model"
 	"github.com/coroot/coroot/notifications"
-	"github.com/coroot/coroot/prom"
+	"github.com/coroot/coroot/promql"
 	"github.com/coroot/coroot/rbac"
 	"github.com/coroot/coroot/stats"
 	"github.com/coroot/coroot/timeseries"
 	"github.com/coroot/coroot/utils"
+	"github.com/coroot/coroot/world"
 	"github.com/gorilla/mux"
 	"golang.org/x/exp/maps"
 	"gopkg.in/yaml.v3"
@@ -45,14 +45,13 @@ type LoadWorldF func(ctx context.Context, project *db.Project, from, to timeseri
 
 type Api struct {
 	cfg              *config.Config
-	cache            *cache.Cache
+	evaluator        *world.Evaluator
 	db               *db.DB
 	collector        *collector.Collector
 	stats            *stats.Collector
 	pricing          *pricing.Manager
 	roles            rbac.RoleManager
 	globalClickHouse *db.IntegrationClickhouse
-	globalPrometheus *db.IntegrationPrometheus
 	licenseMgr       LicenseManager
 
 	authSecret        string
@@ -64,20 +63,19 @@ type Api struct {
 	loadWorld LoadWorldF
 }
 
-func NewApi(cfg *config.Config, cache *cache.Cache, db *db.DB, collector *collector.Collector, stats *stats.Collector, pricing *pricing.Manager, roles rbac.RoleManager, licenseMgr LicenseManager,
-	globalClickHouse *db.IntegrationClickhouse, globalPrometheus *db.IntegrationPrometheus,
+func NewApi(cfg *config.Config, evaluator *world.Evaluator, db *db.DB, collector *collector.Collector, stats *stats.Collector, pricing *pricing.Manager, roles rbac.RoleManager, licenseMgr LicenseManager,
+	globalClickHouse *db.IntegrationClickhouse,
 	deploymentUuid, instanceUuid string, loadWorld LoadWorldF) *Api {
 
 	return &Api{
 		cfg:              cfg,
-		cache:            cache,
+		evaluator:        evaluator,
 		db:               db,
 		collector:        collector,
 		stats:            stats,
 		pricing:          pricing,
 		roles:            roles,
 		globalClickHouse: globalClickHouse,
-		globalPrometheus: globalPrometheus,
 		licenseMgr:       licenseMgr,
 		deploymentUuid:   deploymentUuid,
 		instanceUuid:     instanceUuid,
@@ -278,10 +276,9 @@ func (api *Api) Project(w http.ResponseWriter, r *http.Request, u *db.User) {
 				http.Error(w, "", http.StatusInternalServerError)
 				return
 			}
-			prometheusCfg := project.PrometheusConfig(api.globalPrometheus)
 			res.Readonly = project.Settings.Readonly
 			res.Name = project.Name
-			res.RefreshInterval = prometheusCfg.RefreshInterval
+			res.RefreshInterval = world.Step
 			res.MemberProjects = project.Settings.MemberProjects
 			if isAllowed {
 				res.ApiKeys = project.Settings.ApiKeys
@@ -397,7 +394,7 @@ func (api *Api) Status(w http.ResponseWriter, r *http.Request, u *db.User) {
 		http.Error(w, "", http.StatusInternalServerError)
 		return
 	}
-	utils.WriteJson(w, api.WithContext(project, cacheStatus, world, renderStatus(project, cacheStatus, world, api.globalPrometheus)))
+	utils.WriteJson(w, api.WithContext(project, cacheStatus, world, renderStatus(project, cacheStatus, world)))
 }
 
 func (api *Api) Overview(w http.ResponseWriter, r *http.Request, u *db.User) {
@@ -548,19 +545,16 @@ func (api *Api) PanelData(w http.ResponseWriter, r *http.Request, u *db.User) {
 		http.Error(w, "Invalid query", http.StatusBadRequest)
 		return
 	}
-	promClients := map[string]prom.Client{}
+	promClients := map[string]*promql.Client{}
 
-	var maxRefreshInterval timeseries.Duration
+	var maxRefreshInterval timeseries.Duration = world.Step
 	if !project.Multicluster() {
-		promConfig := project.PrometheusConfig(api.globalPrometheus)
-		promClient, err := prom.NewClient(promConfig, project.ClickHouseConfig(api.globalClickHouse))
+		promClient, err := api.evaluator.PromQL(project)
 		if err != nil {
 			klog.Errorln(err)
 			http.Error(w, "", http.StatusInternalServerError)
 			return
 		}
-		maxRefreshInterval = promConfig.RefreshInterval
-		defer promClient.Close()
 		promClients[project.Name] = promClient
 	} else {
 		projects, err := api.db.GetProjects()
@@ -576,18 +570,13 @@ func (api *Api) PanelData(w http.ResponseWriter, r *http.Request, u *db.User) {
 				http.Error(w, "", http.StatusInternalServerError)
 				return
 			}
-			promConfig := p.PrometheusConfig(api.globalPrometheus)
-			promClient, err := prom.NewClient(promConfig, p.ClickHouseConfig(api.globalClickHouse))
+			promClient, err := api.evaluator.PromQL(p)
 			if err != nil {
 				klog.Errorln(err)
 				http.Error(w, "", http.StatusInternalServerError)
 				return
 			}
-			defer promClient.Close()
 			promClients[p.Name] = promClient
-			if promConfig.RefreshInterval > maxRefreshInterval {
-				maxRefreshInterval = promConfig.RefreshInterval
-			}
 		}
 	}
 
@@ -895,7 +884,7 @@ func (api *Api) Integration(w http.ResponseWriter, r *http.Request, u *db.User) 
 		return
 	}
 	t := db.IntegrationType(vars["type"])
-	form := forms.NewIntegrationForm(t, api.globalClickHouse, api.globalPrometheus)
+	form := forms.NewIntegrationForm(t, api.globalClickHouse)
 	if form == nil {
 		klog.Warningln("unknown integration type:", t)
 		http.Error(w, "", http.StatusBadRequest)
@@ -1003,15 +992,14 @@ func (api *Api) Prom(w http.ResponseWriter, r *http.Request, u *db.User) {
 		http.Error(w, "", http.StatusInternalServerError)
 		return
 	}
-	var c prom.Client
+	var c *promql.Client
 	if !project.Multicluster() {
-		c, err = prom.NewClient(project.PrometheusConfig(api.globalPrometheus), project.ClickHouseConfig(api.globalClickHouse))
+		c, err = api.evaluator.PromQL(project)
 		if err != nil {
 			klog.Errorln(err)
 			http.Error(w, "", http.StatusInternalServerError)
 			return
 		}
-		defer c.Close()
 	} else {
 		ds := r.Header.Get("X-Datasource")
 		if ds == "" {
@@ -1031,13 +1019,12 @@ func (api *Api) Prom(w http.ResponseWriter, r *http.Request, u *db.User) {
 			http.Error(w, "", http.StatusBadRequest)
 			return
 		}
-		c, err = prom.NewClient(p.PrometheusConfig(api.globalPrometheus), p.ClickHouseConfig(api.globalClickHouse))
+		c, err = api.evaluator.PromQL(p)
 		if err != nil {
 			klog.Errorln(err)
 			http.Error(w, "", http.StatusInternalServerError)
 			return
 		}
-		defer c.Close()
 	}
 
 	rest := vars["rest"]
@@ -2309,10 +2296,10 @@ func (api *Api) Node(w http.ResponseWriter, r *http.Request, u *db.User) {
 	utils.WriteJson(w, api.WithContext(project, cacheStatus, world, auditor.AuditNode(world, node)))
 }
 
-func (api *Api) LoadWorld(ctx context.Context, project *db.Project, from, to timeseries.Time) (*model.World, *cache.Status, error) {
+func (api *Api) LoadWorld(ctx context.Context, project *db.Project, from, to timeseries.Time) (*model.World, *world.Status, error) {
 	if api.loadWorld != nil {
 		w, err := api.loadWorld(ctx, project, from, to)
-		return w, &cache.Status{}, err
+		return w, &world.Status{}, err
 	}
 
 	var (
@@ -2321,10 +2308,10 @@ func (api *Api) LoadWorld(ctx context.Context, project *db.Project, from, to tim
 	)
 
 	cacheClients := map[db.ProjectId]constructor.Cache{}
-	var cacheStatus = &cache.Status{}
+	var cacheStatus = &world.Status{}
 
 	if !project.Multicluster() {
-		cacheClient := api.cache.GetCacheClient(project.Id)
+		cacheClient := api.evaluator.Client(project.Id)
 		if cacheStatus, err = cacheClient.GetStatus(); err != nil {
 			return nil, nil, err
 		}
@@ -2353,7 +2340,7 @@ func (api *Api) LoadWorld(ctx context.Context, project *db.Project, from, to tim
 				klog.Warningln("member project not found:", mp)
 				return nil, nil, fmt.Errorf("member project not found: %s", mp)
 			}
-			cacheClient := api.cache.GetCacheClient(p.Id)
+			cacheClient := api.evaluator.Client(p.Id)
 			cs, err := cacheClient.GetStatus()
 			if err != nil {
 				return nil, nil, err
@@ -2395,7 +2382,7 @@ func (api *Api) LoadWorld(ctx context.Context, project *db.Project, from, to tim
 	return world, cacheStatus, err
 }
 
-func (api *Api) LoadWorldByRequest(r *http.Request) (*model.World, *db.Project, *cache.Status, error) {
+func (api *Api) LoadWorldByRequest(r *http.Request) (*model.World, *db.Project, *world.Status, error) {
 	projectId := db.ProjectId(mux.Vars(r)["project"])
 	project, err := api.db.GetProject(projectId)
 	if err != nil {

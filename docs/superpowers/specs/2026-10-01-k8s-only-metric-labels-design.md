@@ -13,9 +13,10 @@ If we decide that **Coroot only runs on Kubernetes**, most of that can be remove
 records what the labels are today, what each one is for, what a Kubernetes-only version could
 look like, and what has to change together. It is a decision aid, not a plan.
 
-Why now: the metrics storage was just split into `metrics_series` (labels stored once per
-series) and `metrics_samples` (hash + time + value). A shorter, more regular label set makes
-`metrics_series` smaller and the lookups by label cheaper, and it is the cheapest moment to
+Why now: the metrics storage moved to a ClickHouse TimeSeries table (see
+`plans/2026-10-05-clickhouse-promql-metrics.md`): the labels of a series are stored once, in the
+engine's tags table (`timeSeriesTags`), and the samples in its data table. A shorter, more regular label set makes
+the tags table smaller and the lookups by label cheaper, and it is the cheapest moment to
 agree on the label contract.
 
 ## What a series looks like today
@@ -85,7 +86,7 @@ Effects on storage:
 
 * Series carry five short labels instead of seven, two of which were long hex strings, and
   none of them is a path that has to be split in SQL or Go.
-* `metrics_series.Labels` shrinks. Because the hash is over the label set, **every series is
+* The tags of every series shrink. Because the hash is over the label set, **every series is
   re-created once** after the change (a one-time churn), so the change should be made
   together with other breaking changes.
 * The Namespace and Application generated columns in `otel_logs` / `otel_traces` become plain

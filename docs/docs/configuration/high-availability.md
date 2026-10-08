@@ -5,7 +5,7 @@ sidebar_position: 7
 # High Availability
 
 Coroot supports high availability by allowing multiple instances to run simultaneously. 
-These instances work with the same ClickHouse and Prometheus servers while maintaining independent copies of the [metric cache](/configuration/prometheus#metric-cache).
+These instances work with the same ClickHouse cluster. Only one of them writes the evaluated metrics; the others read them.
 
 ## Configuration Database
 

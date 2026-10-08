@@ -6,24 +6,24 @@ import (
 	"time"
 
 	"github.com/coroot/coroot/auditor"
-	"github.com/coroot/coroot/cache"
 	"github.com/coroot/coroot/clickhouse"
 	pricing "github.com/coroot/coroot/cloud-pricing"
 	"github.com/coroot/coroot/config"
 	"github.com/coroot/coroot/constructor"
 	"github.com/coroot/coroot/db"
 	"github.com/coroot/coroot/timeseries"
+	"github.com/coroot/coroot/world"
 	"golang.org/x/exp/maps"
 	"k8s.io/klog"
 )
 
-func Start(database *db.DB, mcache *cache.Cache, pricing *pricing.Manager, incidents *Incidents, checkDeployments bool, globalClickHouse *db.IntegrationClickhouse, globalPrometheus *db.IntegrationPrometheus, spaceManagerCfg config.ClickHouseSpaceManager, logPatternEvaluator LogPatternEvaluator, kubernetesEventEvaluator KubernetesEventEvaluator) {
+func Start(database *db.DB, evaluator *world.Evaluator, pricing *pricing.Manager, incidents *Incidents, checkDeployments bool, globalClickHouse *db.IntegrationClickhouse, spaceManagerCfg config.ClickHouseSpaceManager, logPatternEvaluator LogPatternEvaluator, kubernetesEventEvaluator KubernetesEventEvaluator) {
 	var deployments *Deployments
 	if checkDeployments {
 		deployments = NewDeployments(database, pricing)
 	}
 
-	alerts := NewAlerts(database, globalPrometheus, globalClickHouse, logPatternEvaluator, kubernetesEventEvaluator)
+	alerts := NewAlerts(database, evaluator, globalClickHouse, logPatternEvaluator, kubernetesEventEvaluator)
 
 	if incidents == nil && deployments == nil && alerts == nil {
 		return
@@ -37,7 +37,7 @@ func Start(database *db.DB, mcache *cache.Cache, pricing *pricing.Manager, incid
 
 	// Fast consumer goroutine - just receives and deduplicates
 	go func() {
-		for projectId := range mcache.Updates() {
+		for projectId := range evaluator.Updates() {
 			pendingLock.Lock()
 			if !pending[projectId] {
 				pending[projectId] = true
@@ -55,11 +55,7 @@ func Start(database *db.DB, mcache *cache.Cache, pricing *pricing.Manager, incid
 
 	go func() {
 		// multi-cluster projects are skipped in the cache updater, so we need to check Incidents and Deployments by a ticker
-		var step timeseries.Duration
-		if globalPrometheus != nil {
-			step = globalPrometheus.RefreshInterval
-		}
-		ticker := time.NewTicker(cache.UpdaterPeriod(step)).C
+		ticker := time.NewTicker(world.Step.ToStandard()).C
 
 		for {
 			select {
@@ -73,7 +69,7 @@ func Start(database *db.DB, mcache *cache.Cache, pricing *pricing.Manager, incid
 				} else {
 					for _, project := range projects {
 						if project.Multicluster() {
-							handleProjectUpdate(database, mcache, pricing, incidents, deployments, alerts, project.Id)
+							handleProjectUpdate(database, evaluator, pricing, incidents, deployments, alerts, project.Id)
 						}
 					}
 				}
@@ -88,7 +84,7 @@ func Start(database *db.DB, mcache *cache.Cache, pricing *pricing.Manager, incid
 					continue
 				}
 
-				handleProjectUpdate(database, mcache, pricing, incidents, deployments, alerts, projectId)
+				handleProjectUpdate(database, evaluator, pricing, incidents, deployments, alerts, projectId)
 
 				if time.Since(lastSpaceManagerRun) >= time.Hour {
 					lastSpaceManagerRun = time.Now()
@@ -99,7 +95,7 @@ func Start(database *db.DB, mcache *cache.Cache, pricing *pricing.Manager, incid
 	}()
 }
 
-func handleProjectUpdate(database *db.DB, cache *cache.Cache, pricing *pricing.Manager, incidents *Incidents, deployments *Deployments, alerts *Alerts, projectId db.ProjectId) {
+func handleProjectUpdate(database *db.DB, evaluator *world.Evaluator, pricing *pricing.Manager, incidents *Incidents, deployments *Deployments, alerts *Alerts, projectId db.ProjectId) {
 	start := time.Now()
 	project, err := database.GetProject(projectId)
 	if err != nil {
@@ -115,7 +111,7 @@ func handleProjectUpdate(database *db.DB, cache *cache.Cache, pricing *pricing.M
 	)
 
 	if !project.Multicluster() {
-		cacheClient := cache.GetCacheClient(project.Id)
+		cacheClient := evaluator.Client(project.Id)
 		cacheTo, err := cacheClient.GetTo()
 		if err != nil {
 			klog.Errorln(err)
@@ -147,7 +143,7 @@ func handleProjectUpdate(database *db.DB, cache *cache.Cache, pricing *pricing.M
 				klog.Warningln("member project not found:", mp)
 				return
 			}
-			cacheClient := cache.GetCacheClient(p.Id)
+			cacheClient := evaluator.Client(p.Id)
 			cacheTo, err := cacheClient.GetTo()
 			if err != nil {
 				klog.Errorln(err)

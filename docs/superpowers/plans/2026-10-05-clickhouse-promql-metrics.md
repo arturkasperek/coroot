@@ -15,7 +15,7 @@
 - Coroot is deployed only on Kubernetes (Task 12 removes Docker Compose, Docker Swarm and the systemd installer). ClickHouse image is exactly `clickhouse/clickhouse-server:26.9.10.4` (Keeper: `clickhouse/clickhouse-keeper:26.9.10.4`) in `deploy/kind/` and the Kubernetes docs. The TimeSeries engine is a private preview that "may change in backwards-incompatible ways"; the version is pinned and only bumped together with Task 1's compatibility suite passing.
 - Every query that touches the TimeSeries table or `prometheusQuery*` sends the settings `enable_time_series_table=1` and `enable_time_series_aggregate_functions=1` (per query, never relying on server profiles).
 - No backwards compatibility: no migration of `metrics_series` / `metrics_samples` / `metrics_metadata` data, no support for an external Prometheus, no disk cache.
-- ClickHouse is always a cluster (D1). Every new table is created `ON CLUSTER @cluster` with a `Replicated*` engine and gets a `Distributed` table; every test runs against the 2-shard dev cluster.
+- ClickHouse is always a cluster (D1). Every new table is created `ON CLUSTER @cluster` with a `Replicated*` engine and gets a `Distributed` table, except the metrics table, which is created `ON CLUSTER @metrics_cluster` (`ch.MetricsCluster`, one shard, all nodes replicas), is read and written directly (no Distributed table) and uses shard-less Keeper paths (`/clickhouse/tables/metrics/{database}/...`). Every test runs against the 2-shard dev cluster (`make dev`).
 - Evaluation step is 15 s (the agents' scrape interval); `$RANGE` in a query becomes `45s` (3 × step), exactly as `prom/clickhouse.go:68` does today.
 - Evaluator cycle 30 s; backfill window on an empty world table 24 h.
 - PromQL semantics are ClickHouse's. Where it differs from Prometheus (stale NaN points, empty labels), Coroot adapts its side (drop NaN, treat empty label as absent).
@@ -68,6 +68,7 @@ Expected cost: 87 queries × ~22 CPU-ms = ~2 CPU-s per 30 s cycle (~0.07 core) i
 
 - **D1. ClickHouse always runs as a cluster** (decided 2026-10-05; already done outside this plan: `ch.LowLevelClient` refuses a ClickHouse without Keeper and `remote_servers`, every table is replicated and created `ON CLUSTER`, every read goes through a `Distributed` table; `make dev` runs 2 shards × 1 replica plus one Keeper). Everything in this plan must work on that 2-shard dev cluster. Two consequences found while switching:
   - a subquery over a `Distributed` table inside a query that itself runs on the shards (`... FROM x_distributed WHERE h IN (SELECT h FROM y_distributed)`) fails with `LOGICAL_ERROR: Sending a distributed query with unknown (zero) client version`; today's `prom/clickhouse_querier.go` has exactly that and is broken on the dev cluster until Task 4 replaces it. Use either the local table (when both tables are sharded by the same key) or `GLOBAL IN` / `GLOBAL JOIN`, as `clickhouse/queries.go` does for profiles;
+  - **PromQL cannot run over a sharded TimeSeries table** (measured in Task 1, Step 3 on the 2-shard dev cluster, ClickHouse 26.9.10.4): on the initiator, `prometheusQuery` over a local table sees one shard only (`sum(c)` returned 1080 instead of 2160), `clusterAllReplicas(view(prometheusQuery(...)))` returns the series of all shards but evaluates every aggregate per shard, and a TimeSeries table whose inner tables are `Distributed` (sharded by `id.1` / `sipHash64(metric_name)`, which is how the engine's ids are designed) works for queries that read one metric and fails for any query that reads two (`Unknown identifier (hash, uuid)`; with `distributed_product_mode=deny` the error is `Double-distributed IN/JOIN`). So **metrics live in a separate cluster `coroot_metrics` with one shard and every node as a replica**; a PromQL query on any node sees every series, and the table is replicated, not sharded. Logs, traces, profiles and the world tables stay on the sharded cluster `coroot`. `ch.MetricsCluster` is that name; if no cluster of that name exists the main cluster is used (correct only when it has a single shard).
   - `system.query_log` is per node: tests read `clusterAllReplicas(coroot, system.query_log)` with `is_initial_query`; `DELETE` / `DROP` in tests use `ON CLUSTER coroot`.
 - **D2. One TimeSeries table per ClickHouse database, replicated, read through a Distributed table** (projects already have their own database), named `metrics`.
 - **D3. Rollups reproduce today's cache exactly.** Today the cache stores 15 s points and widens them to the page step with the query's `FillFunc` (`timeseries/timeseries.go:165-254`): `FillAny` (the default, almost all 393 queries) keeps the **last** non-NaN value of the bucket, `FillAvg` (6 JVM/Go allocation and lock rates) the average, `FillSum` (`rr_application_log_messages`) the sum. Buckets are closed on the right: the point stamped T covers (T − step, T]. The rollups `world_points_5m/1h` therefore keep `Last` (`argMax(Value, Timestamp)`), `Sum`, `Cnt` and `Max` per bucket, bucketed on the right, and the store picks `Last`, `Sum/Cnt` or `Sum` from the `fillFunc` argument of `QueryRange`. An average for every query was considered and rejected: it changes rate and gauge charts against today and breaks raw counters (`container_restarts_total % 10000000`, `container_oom_kills_total`), whose deltas the constructor computes between consecutive points. `Max` is stored now but only read by Task 11.
@@ -111,7 +112,7 @@ The suite pins every semantic this plan relies on, so a ClickHouse bump that cha
 - Create: `e2e/storage/promql_compat_test.go`
 
 **Interfaces:**
-- Produces: `ch.TimeSeriesSettings` (`[]chproto.Setting` for ch-go) and `ch.TimeSeriesContext(ctx) context.Context` (clickhouse-go).
+- Produces: `ch.TimeSeriesSettings` (`[]ch.Setting` for ch-go), `ch.TimeSeriesContext(ctx) context.Context` (clickhouse-go), `ch.MetricsCluster` (`"coroot_metrics"`), `(*LowLevelClient).MetricsCluster() string`, `(*LowLevelClient).ExecWithSettings(ctx, query string, settings []ch.Setting) error`, DDL macro `@on_metrics_cluster`.
 
 - [ ] **Step 1: Settings helper**
 
@@ -254,19 +255,9 @@ func TestPromQLCompat(t *testing.T) {
 }
 ```
 
-- [ ] **Step 3: The same on the cluster (blocking for the whole plan)**
+- [x] **Step 3: The same on the cluster (blocking for the whole plan)** — done 2026-10-05, result in D1: metrics need a one-shard cluster. `deploy/kind/clickhouse.yaml` defines `coroot_metrics` (1 shard, replicas `clickhouse-0` and `clickhouse-1`) next to the 2-shard `coroot`; `ch.LowLevelClient` discovers it (`MetricsCluster()`, DDL macro `@on_metrics_cluster`, `ExecWithSettings`). The last subtest of `TestPromQLCompat` asserts that both nodes hold every series.
 
-Repeat the subtests against a TimeSeries table created `ON CLUSTER` with replicated inner tables and read through a `Distributed` table over it, with series spread over both shards:
-
-```sql
-CREATE TABLE compat ON CLUSTER coroot ENGINE = TimeSeries
-SAMPLES INNER ENGINE = ReplicatedMergeTree('/clickhouse/tables/{shard}/{database}/compat_samples', '{replica}') ORDER BY (id, timestamp)
-TAGS INNER ENGINE = ReplicatedAggregatingMergeTree('/clickhouse/tables/{shard}/{database}/compat_tags', '{replica}') PRIMARY KEY metric_name ORDER BY (metric_name, id)
-```
-
-Insert `c{app="a"}` on shard 1 and `g` on shard 2 (connect to each node, `clickhouse-0` / `clickhouse-1`), then check that `prometheusQueryRange` returns both. Find out, and write down here, which of these works: `prometheusQueryRange` over the local TimeSeries table on the initiator (expected: sees one shard only), over a `Distributed` table whose underlying table is TimeSeries, or `clusterAllReplicas`/`remote` around the samples. If none gives cluster-wide results with correct `sum by` across shards, stop and come back to the human: the design of Tasks 2–5 depends on it (a fallback is to keep all series of a metric on one shard by sharding on `sipHash64(metric_name)`, so every non-aggregating query is shard-local, and aggregate across shards in the evaluator).
-
-- [ ] **Step 4: Run it**
+- [x] **Step 4: Run it** — passed 3 of 3 runs on the dev cluster
 
 Run: `make test-e2e TestPromQLCompat`
 Expected: PASS on 26.9.10.4. If the stale-point subtest fails because ClickHouse starts applying staleness, keep the assertion (the evaluator drops NaN either way) and loosen it to "NaN or absent".
@@ -274,7 +265,7 @@ Expected: PASS on 26.9.10.4. If the stale-point subtest fails because ClickHouse
 - [ ] **Step 5: Commit**
 
 ```bash
-git add ch/settings.go e2e/storage/promql_compat_test.go
+git add ch/settings.go ch/client.go deploy/kind/clickhouse.yaml e2e/storage/promql_compat_test.go
 git commit -m "test: pin ClickHouse PromQL semantics Coroot relies on"
 ```
 
@@ -292,21 +283,28 @@ git commit -m "test: pin ClickHouse PromQL semantics Coroot relies on"
 - Consumes: `ch.TimeSeriesSettings` (Task 1).
 - Produces: table `metrics` (TimeSeries); `collector.NewMetricsBatch(limit int, timeout time.Duration, exec func(chgo.Query) error) *MetricsBatch` with the same signature as today.
 
-- [ ] **Step 1: Replace the three metrics tables in `ch/client.go`**
+- [x] **Step 1: Replace the three metrics tables in `ch/client.go`**
 
 Delete the `metrics_samples`, `metrics_series`, `metrics_metadata` CREATE statements, their `_distributed` entries and their names in `ReplaceTables`. Add (note: `Migrate` must run this statement with `ch.TimeSeriesSettings`; add a `settings []chgo.Setting` field to the tables entry or run TimeSeries DDL in a separate list `timeSeriesTables` executed with the settings):
 
 ```go
 var timeSeriesTables = []string{
-	`CREATE TABLE IF NOT EXISTS metrics ENGINE = TimeSeries
+	`CREATE TABLE IF NOT EXISTS metrics @on_metrics_cluster ENGINE = TimeSeries
 SETTINGS recent_samples_ttl_seconds = 0
-SAMPLES INNER ENGINE = MergeTree ORDER BY (id, timestamp) TTL toDateTime(timestamp) + toIntervalSecond(@ttl_metrics) SETTINGS ttl_only_drop_parts = 1`,
+SAMPLES INNER ENGINE = ReplicatedMergeTree('/clickhouse/tables/metrics/{database}/samples', '{replica}')
+  ORDER BY (id, timestamp) TTL toDateTime(timestamp) + toIntervalSecond(@ttl_metrics) SETTINGS index_granularity = 32768, ttl_only_drop_parts = 1
+TAGS INNER ENGINE = ReplicatedAggregatingMergeTree('/clickhouse/tables/metrics/{database}/tags', '{replica}')
+  PRIMARY KEY metric_name ORDER BY (metric_name, id)
+METRIC FAMILIES INNER ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/metrics/{database}/families', '{replica}')
+  ORDER BY metric_family_name`,
 }
 ```
 
+`Migrate` runs these after the normal tables with `c.ExecWithSettings(ctx, t, TimeSeriesSettings)` (TTL placeholders replaced like the other tables). There is no `_distributed` table for `metrics`; do not add it to `ReplaceTables`. The Keeper path has no `{shard}`: all nodes of `coroot_metrics` are replicas of one shard, which Task 1's test verified (insert on one node, PromQL on both).
+
 `recent_samples_ttl_seconds = 0` disables the second copy of the last 4 days: the evaluator reads only the last minutes and pages do not read raw samples at all, so the extra copy buys nothing. If the 26.9 grammar rejects `SAMPLES INNER ENGINE ... TTL`, create the table with defaults and set the TTL with `ALTER TABLE metrics MODIFY ... ` on the inner samples table (`.inner_id.samples.<uuid>`, found with `SELECT name FROM system.tables WHERE database = currentDatabase() AND name LIKE '.inner_id.samples.%'`).
 
-- [ ] **Step 2: Write the failing collector test**
+- [x] **Step 2: Write the failing collector test**
 
 ```go
 // collector/metrics_test.go
@@ -331,12 +329,12 @@ func TestMetricsBatchWritesTimeSeriesRows(t *testing.T) {
 }
 ```
 
-- [ ] **Step 3: Run it to see it fail**
+- [x] **Step 3: Run it to see it fail**
 
 Run: `go test ./collector -run TestMetricsBatchWritesTimeSeriesRows -v`
 Expected: FAIL (body is the old `metrics_series` insert).
 
-- [ ] **Step 4: Rewrite `MetricsBatch`**
+- [x] **Step 4: Rewrite `MetricsBatch`**
 
 ch-go has no generic column for `Array(Tuple(DateTime64(3), Float64))`, so the batch sends two parallel arrays and ClickHouse zips them (`INSERT ... SELECT ... FROM input(...)` works over the native protocol):
 
@@ -362,24 +360,37 @@ q := chgo.Query{
 
 Metadata (`req.GetMetadata()`) goes to `INSERT INTO metrics (metric_family, type, unit, help) VALUES` in the same `save()` (a second query, only when non-empty). Delete the `series` map, `metricSeries`, `LabelsToSignature` use and the series dedupe — TimeSeries keeps one tags row per series itself.
 
-- [ ] **Step 5: Run unit tests**
+- [x] **Step 5: Run unit tests**
 
 Run: `go test ./collector -v`
 Expected: PASS.
 
-- [ ] **Step 6: Raw-row e2e check**
+- [x] **Step 6: Raw-row e2e check**
 
 In `e2e/storage/metrics_test.go`, replace the body of `TestMetricsRoundTrip` up to the PromQL part with: write the existing fixture through `collector.NewMetricsBatch(...).Add(...)`, then assert `SELECT count() FROM timeSeriesTags(currentDatabase(), 'metrics')` is 5 and `SELECT count() FROM timeSeriesSamples(currentDatabase(), 'metrics')` is 5 × 41 (send `ch.TimeSeriesSettings`). Also assert that a series written in two batches has one tags row after `OPTIMIZE ... FINAL` (Review Focus 6 for the empty label: insert a label with an empty value and check it is absent from `tags`).
 
 Run: `make test-e2e TestMetricsRoundTrip`
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add ch/client.go collector/metrics.go collector/metrics_test.go e2e/storage/metrics_test.go
 git commit -m "feat: store metrics in a ClickHouse TimeSeries table"
 ```
+
+---
+
+**Done 2026-10-05. What the implementation found (the code in the steps above was corrected; this is why):**
+
+- The collector's insert is `INSERT INTO metrics (...) SELECT ... FROM input('...') FORMAT Native`. Without `FORMAT Native` the server answers `UNKNOWN_FORMAT` to ch-go's data blocks.
+- The batch columns are `name` (`ColStr`), `tags` (`ColMap[string,string]`), `ts` (`ColArr[time.Time]` over `ColDateTime64` with `PrecisionMilli`) and `vs` (`ColArr[float64]`); series without samples are skipped; the batch counts samples (`rows`) against the limit, not series.
+- A batch resets its columns as soon as `exec` returns, so tests must copy what a query carries inside the `exec` callback (`record()` in `collector/metrics_test.go`).
+- Tags rows of a series written in several inserts exist several times until the background merge; count series with `uniqExact(id)`, never `count()` (PromQL itself aggregates them).
+- Keeper paths of replicated inner tables must be unique per table: `/clickhouse/tables/metrics/{database}/...` is right for the single `metrics` table of a database; another TimeSeries table in the same database (the compat test) needs its own prefix, otherwise `METADATA_MISMATCH`.
+- Reads on a replicated table need a wait for the other replica: `require.Eventually` on the row count.
+- `metrics_series`, `metrics_samples`, `metrics_metadata` and their Distributed tables are gone from `ch/client.go`; `prom/` still reads them, so **until Task 4 replaces the reader every page that needs metrics is broken on `make dev`** (the running Coroot logs `@@table_metrics_samples@@` syntax errors). The metrics themselves are already arriving in `metrics` on the dev cluster (4.7k series after a minute).
+- `e2e/storage/metrics_bench_test.go` still targets the old tables; Task 10 rewrites it.
 
 ---
 
@@ -400,31 +411,31 @@ git commit -m "feat: store metrics in a ClickHouse TimeSeries table"
   - `(*Store) LastEvaluated(ctx) (timeseries.Time, error)` — `max(Timestamp)` of `world_points`
   - `(*Store) Load(ctx, from, to timeseries.Time, step timeseries.Duration) (map[string][]*model.MetricValues, error)` — all queries in one read; `QueryRange` filters it
 
-- [ ] **Step 1: DDL (append to `tables` in `ch/client.go`)**
+- [x] **Step 1: DDL (append to `tables` in `ch/client.go`)**
 
 ```sql
-CREATE TABLE IF NOT EXISTS world_series (
+CREATE TABLE IF NOT EXISTS world_series @on_cluster (
     Query LowCardinality(String),
     SeriesHash UInt64,
     Labels Map(LowCardinality(String), String),
     LastSeen DateTime('UTC')
-) ENGINE ReplacingMergeTree(LastSeen)
+) ENGINE @replacing_merge_tree_by(LastSeen)
 ORDER BY (Query, SeriesHash)
 TTL LastSeen + toIntervalSecond(@ttl_metrics)
 SETTINGS index_granularity = 256
 
-CREATE TABLE IF NOT EXISTS world_points (
+CREATE TABLE IF NOT EXISTS world_points @on_cluster (
     Query LowCardinality(String),
     SeriesHash UInt64,
     Timestamp DateTime('UTC') CODEC(DoubleDelta, ZSTD(1)),
     Value Float32 CODEC(Gorilla, ZSTD(1))
-) ENGINE MergeTree
+) ENGINE @merge_tree
 PARTITION BY toDate(Timestamp)
 ORDER BY (toStartOfHour(Timestamp), Query, SeriesHash, Timestamp)
 TTL Timestamp + toIntervalSecond(@ttl_metrics)
 SETTINGS ttl_only_drop_parts = 1
 
-CREATE TABLE IF NOT EXISTS world_points_5m (
+CREATE TABLE IF NOT EXISTS world_points_5m @on_cluster (
     Query LowCardinality(String),
     SeriesHash UInt64,
     Timestamp DateTime('UTC'),                          -- end of the bucket: covers (Timestamp - 5m, Timestamp]
@@ -432,12 +443,12 @@ CREATE TABLE IF NOT EXISTS world_points_5m (
     Sum SimpleAggregateFunction(sum, Float64),
     Cnt SimpleAggregateFunction(sum, UInt64),
     Max SimpleAggregateFunction(max, Float32)
-) ENGINE AggregatingMergeTree
+) ENGINE @aggregating_merge_tree
 PARTITION BY toDate(Timestamp)
 ORDER BY (toStartOfDay(Timestamp), Query, SeriesHash, Timestamp)
 TTL Timestamp + toIntervalSecond(@ttl_metrics)
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS world_points_5m_mv TO world_points_5m AS
+CREATE MATERIALIZED VIEW IF NOT EXISTS world_points_5m_mv @on_cluster TO world_points_5m AS
 SELECT Query, SeriesHash, Bucket AS Timestamp,
        argMaxState(Value, Ts) AS Last, sum(toFloat64(Value)) AS Sum, count() AS Cnt, max(Value) AS Max
 FROM (SELECT Query, SeriesHash, Value, Timestamp AS Ts,
@@ -446,9 +457,22 @@ FROM (SELECT Query, SeriesHash, Value, Timestamp AS Ts,
 GROUP BY Query, SeriesHash, Bucket
 ```
 
+Add the macro `@aggregating_merge_tree` (`ReplicatedAggregatingMergeTree('/clickhouse/tables/{shard}/{database}/{table}', '{replica}')`) next to the existing ones in `LowLevelClient.Migrate`, and the Distributed tables, each sharded so that all points of a series live on one shard:
+
+```sql
+CREATE TABLE IF NOT EXISTS world_series_distributed ON CLUSTER @cluster AS world_series
+ENGINE = Distributed(@cluster, currentDatabase(), world_series, cityHash64(Query, SeriesHash))
+CREATE TABLE IF NOT EXISTS world_points_distributed ON CLUSTER @cluster AS world_points
+ENGINE = Distributed(@cluster, currentDatabase(), world_points, cityHash64(Query, SeriesHash))
+-- and the same for world_points_5m / world_points_1h (the materialized views read the local
+-- world_points of their shard, so the rollups are sharded the same way)
+```
+
+Add the six names to `ReplaceTables`. The evaluator writes to `@@table_world_points@@` (the Distributed table), pages read through it; the per-series `groupArray` of `pointsSQL` is exact because a series is on one shard.
+
 `world_points_1h` / `world_points_1h_mv`: the same with `INTERVAL 1 HOUR`, also reading `world_points` (not the 5 min rollup). The inner subquery renames `Timestamp` to `Ts` so that `argMaxState` sees the point's time and not the bucket alias. The sort keys are the layouts measured in "Design and evidence" point 5 (`ORDER BY (Query, SeriesHash, Timestamp)` without the hour read 494M rows for 7 d; the hour-first key 0.35M). That measurement used `Sum`/`Cnt` only; `Last` adds an `argMax` state per row (re-measure in Task 7 Step 6).
 
-- [ ] **Step 2: Write the failing SQL-shape test**
+- [x] **Step 2: Write the failing SQL-shape test**
 
 ```go
 // world/store_test.go
@@ -484,12 +508,12 @@ func TestPickValues(t *testing.T) {
 }
 ```
 
-- [ ] **Step 3: Run it to see it fail**
+- [x] **Step 3: Run it to see it fail**
 
 Run: `go test ./world -run TestStoreSQLPicksTableByStep -v`
 Expected: FAIL (package does not exist).
 
-- [ ] **Step 4: Implement `world/store.go`**
+- [x] **Step 4: Implement `world/store.go`**
 
 ```go
 package world
@@ -546,12 +570,12 @@ For a 15 s step on raw points `bucket` is the point's own timestamp, so the thre
 
 `QueryRange` clamps `to` to `LastEvaluated` (Review Focus 4).
 
-- [ ] **Step 5: Run unit tests**
+- [x] **Step 5: Run unit tests**
 
 Run: `go test ./world -v`
 Expected: PASS.
 
-- [ ] **Step 6: e2e: store reads what was written**
+- [x] **Step 6: e2e: store reads what was written**
 
 ```go
 //go:build e2e
@@ -612,12 +636,24 @@ If `FillAvg` differs from `Sum/Cnt` on buckets that are partly empty, read `time
 Run: `make test-e2e TestWorldStoreMatchesFillFuncs`
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add ch/client.go world/ e2e/storage/world_test.go
 git commit -m "feat: world tables with rollups and a store the constructor can read"
 ```
+
+---
+
+**Done 2026-10-05. The code in `world/store.go`, `ch/client.go` and `e2e/storage/world_test.go` is the source of truth; where the steps above differ, this is why:**
+
+- `Query` holds the **query text** (e.g. `rate(x[$RANGE])`), not the constructor's query name: `constructor.Cache.QueryRange` is called with the text, and the `<name>_raw` SLI variants are the same text with another window and step, so the store needs no `_raw` handling at all.
+- The store does not clamp `to`; it exposes `LastEvaluated` and Task 7 clamps in `LoadWorld` (that is where `cacheTo` is clamped today). Review Focus 4's test moves to Task 7.
+- The window is `Timestamp >= from AND <= to` with right-closed buckets that do not reach before `from`. For raw reads (steps that are not a multiple of 5 min) this reproduces the chunk cache bit for bit (`FillAny`, `FillAvg`, `FillSum`, JSON equal). A rollup holds whole buckets, so the **first point of a rollup read is the whole bucket that ends at `from`**, where the chunk cache gave only the sample at `from`; the test compares everything after the first point. The first point of a chart is an artifact either way.
+- The store returns series whose points are all NaN as absent, moves `machine_id`, `system_uuid`, `container_id`, `destination`, `destination_ip`, `actual_destination` out of `Labels` into the `MetricValues` fields exactly like `cache/chunk/v4.go:readLabelsV4`.
+- Writes to the Distributed tables must be synchronous (`distributed_foreground_insert=1`), otherwise the rows (and the rollups, which are materialized views on the shard) show up seconds later: the evaluator (Task 5) sets it on every insert.
+- The labels stored in `world_series` are the labels the query declares (`constructor.Query.Labels`, the filter the cache applies in `cache/updater.go:254` with `task.query.Labels.Has`), and series that collapse to the same filtered label set are merged (the last write wins, as in `prom/clickhouse.go:96-108`). Task 5's `EvaluatedQuery` therefore carries `Labels *utils.StringSet`.
+- The test takes ~20 s because inserts into a 2-shard Distributed table and the first reads over a fresh database are slow on the dev cluster; it is not a ClickHouse cost per page.
 
 ---
 
@@ -637,7 +673,7 @@ git commit -m "feat: world tables with rollups and a store the constructor can r
   - `promql.Selectors(query string) ([]string, error)` — metric names a query reads
   - `(*Client) QueryRangeHandler / LabelValues / Series / MetricMetadata(w, r)` — Prometheus HTTP API JSON, same shapes `prom/clickhouse.go` writes today
 
-- [ ] **Step 1: Failing test for selectors**
+- [x] **Step 1: Failing test for selectors**
 
 ```go
 func TestSelectors(t *testing.T) {
@@ -655,11 +691,11 @@ func TestSelectors(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run, see it fail; implement with `parser.ParseExpr(strings.ReplaceAll(q, "$RANGE", "1m"))` and `parser.Inspect` collecting `VectorSelector.Name`; return `nil` (meaning "can't tell, evaluate") when a selector has no name. Run again: PASS.**
+- [x] **Step 2: Run, see it fail; implement with `parser.ParseExpr(strings.ReplaceAll(q, "$RANGE", "1m"))` and `parser.Inspect` collecting `VectorSelector.Name`; return `nil` (meaning "can't tell, evaluate") when a selector has no name. Run again: PASS.**
 
 Run: `go test ./promql -run TestSelectors -v`
 
-- [ ] **Step 3: `QueryRange`**
+- [x] **Step 3: `QueryRange`**
 
 ```go
 func (c *Client) QueryRange(ctx context.Context, query string, from, to timeseries.Time, step timeseries.Duration) ([]*model.MetricValues, error) {
@@ -676,23 +712,33 @@ func (c *Client) QueryRange(ctx context.Context, query string, from, to timeseri
 
 `Close()` is a no-op (the ClickHouse client is shared).
 
-- [ ] **Step 4: HTTP handlers**
+- [x] **Step 4: HTTP handlers**
 
 Port `QueryRangeHandler`, `LabelValues`, `Series`, `MetricMetadata` from `prom/clickhouse.go` keeping the response JSON byte-for-byte (they feed the front end's Prometheus-style panels). Sources: `QueryRange` above; label values from `SELECT DISTINCT tags[@name] FROM timeSeriesTags(currentDatabase(), 'metrics') WHERE max_time >= @from` (matchers resolved by evaluating the matcher selector with `prometheusQuery` and collecting tags); metadata from `timeSeriesMetricFamilies(currentDatabase(), 'metrics')`. Unit-test the JSON shape with a fake `QueryRange` (`http_test.go`, golden JSON copied from today's response of `/api/project/<id>/prom/api/v1/query_range` on the dev cluster).
 
-- [ ] **Step 5: e2e round trip**
+- [x] **Step 5: e2e round trip**
 
 `TestMetricsRoundTrip` keeps its PromQL assertions (matchers, regex, `rate`, `sum by`, label values) but builds `promql.New(c)` instead of `prom.NewClient(...)`. Add Review Focus 6: `up{missing=""}` returns all 3 `up` series; `up{job=""}` returns none.
 
 Run: `make test-e2e TestMetricsRoundTrip TestPromQLCompat`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add promql/ e2e/storage/metrics_test.go
 git commit -m "feat: PromQL client that runs queries in ClickHouse"
 ```
+
+---
+
+**Done 2026-10-05. Differences from the steps above (the code is the source of truth):**
+
+- `promql.New(c *clickhouse.Client, step timeseries.Duration) *Client`; `QueryRange(ctx, query, filter FilterLabelsF, from, to, step)` keeps the signature of the old `prom.Client` (filter included, `FilterLabelsKeepAll` / `FilterLabelsDropAll` are in `promql`), so Task 7 is a type swap. It also has `Ping`, `GetStep`, `Close` (no-op), `MetricNames`, and the four HTTP handlers.
+- Labels are read as two arrays (`arrayMap(x -> x.1, tags)`, `x.2`), times as `toUnixTimestamp(p.1)` and values as `p.2`: typed slices, no `any` per element. `Array(Tuple(...))` itself can be scanned (into `[][]any`, for tags also into `[]struct{A, B string}`; checked 2026-10-06 on clickhouse-go v2.8.3 and v2.48.0 against ClickHouse 26.9). What neither version can do is scan the mixed-type tuple of `samples` into a typed struct (`converting float64 to time.Time is unsupported`).
+- Series that collapse to the same label set once the filter has dropped labels are merged, as before. Since `__name__` is not a label, `{__name__=~"a|b"}` merges `a{x=1}` and `b{x=1}` into one `MetricValues` (the handler `query_range` still returns them separately). The constructor never mixes metrics, so this is the old behaviour.
+- Label values, series and metadata are read from `timeSeriesTags` / `timeSeriesMetricFamilies` with parameterised matchers (`matchers.go`), not by evaluating PromQL; regexes are anchored (`^(?:...)$`), which the old querier did not do (`{ns=~"ns-1"}` also matched `ns-10`). The old metadata filter had a quoting bug (`'` + ...); fixed.
+- Tests: `promql/*_test.go` (selectors, matcher SQL, response shapes, bad requests) and `e2e/storage/promql_client_test.go` (`TestPromQLClientRoundTrip`: collector → ClickHouse → client, every behaviour listed in the original test plus the handlers). `TestMetricsWrittenIntoTimeSeries` stays as the raw-row test of Task 2.
 
 ---
 
@@ -705,13 +751,13 @@ git commit -m "feat: PromQL client that runs queries in ClickHouse"
 **Interfaces:**
 - Consumes: `promql.Client.QueryRange`, `promql.Client.MetricNames`, `promql.Selectors`, `world.Store.LastEvaluated`, tables from Task 3.
 - Produces:
-    - `constructor.EvaluatedQueries(project *db.Project, checkConfigs model.CheckConfigs, options map[constructor.Option]bool) []constructor.EvaluatedQuery`: extract the part of `constructor.queryCache` (`constructor/constructor.go:200-260`) that builds the `queries` map into this exported function returning `[]constructor.EvaluatedQuery{Name, Expr string; FillFunc timeseries.FillFunc}`; `queryCache` keeps calling it, so the names stay identical
+    - `constructor.EvaluatedQueries(project *db.Project, checkConfigs model.CheckConfigs, options map[constructor.Option]bool) []constructor.EvaluatedQuery`: extract the part of `constructor.queryCache` (`constructor/constructor.go:200-260`) that builds the `queries` map into this exported function returning `[]constructor.EvaluatedQuery{Name, Expr string; Labels *utils.StringSet; FillFunc timeseries.FillFunc}`; `queryCache` keeps calling it, so the names stay identical
   - `world.QueriesFor(project, checkConfigs) []constructor.EvaluatedQuery` — calls `constructor.EvaluatedQueries` with the options the evaluator needs (all queries; recording rules are computed in Task 6, not evaluated as PromQL)
   - `world.NewEvaluator(database *db.DB, clients func(*db.Project) (*clickhouse.Client, error), cycle time.Duration, backfill timeseries.Duration) *Evaluator`
   - `(*Evaluator) Run(ctx)`; `(*Evaluator) Updates() <-chan db.ProjectId` (same contract as `cache.Cache.Updates()` that `watchers/watchers.go:40` consumes)
   - `(*Evaluator) Status(projectId) Status{LastEvaluated timeseries.Time; Lag timeseries.Duration; Error string}`
 
-- [ ] **Step 1: Failing unit test for one cycle**
+- [x] **Step 1: Failing unit test for one cycle**
 
 ```go
 type fakeCH struct {
@@ -752,11 +798,11 @@ func TestCycleDropsNaN(t *testing.T) {
 
 `cycle` takes an interface (`metricNames`, `queryRange`, `lastPerQuery`, `write`) so the fake fits; the real implementation wires `promql.Client` and ch-go inserts.
 
-- [ ] **Step 2: Run, see them fail.**
+- [x] **Step 2: Run, see them fail.**
 
 Run: `go test ./world -run TestCycle -v`
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `cycle(ctx, ch, queries, now, backfill)`:
 1. `names := ch.metricNames()`; keep a query if `promql.Selectors(expr)` returns `nil` or any name in `names`.
@@ -767,9 +813,9 @@ Run: `go test ./world -run TestCycle -v`
 
 `Run` loops every 30 s over `database.GetProjects()`; per-project errors go to `Status` and the log, never stop the loop. Concurrency across projects: one at a time.
 
-- [ ] **Step 4: Run unit tests: PASS.**
+- [x] **Step 4: Run unit tests: PASS.**
 
-- [ ] **Step 5: e2e: evaluator against real ClickHouse**
+- [x] **Step 5: e2e: evaluator against real ClickHouse**
 
 In `e2e/storage/world_test.go`: write metrics through `collector.NewMetricsBatch` (fixture from `TestMetricsRoundTrip`), run `cycle` twice with `now` advanced by 30 s, and assert:
 - `world_points` for query `up` has the points of both cycles and no duplicates (`SELECT count(), uniqExact(SeriesHash, Timestamp) FROM world_points WHERE Query = 'up'` equal) — Review Focus 2;
@@ -779,7 +825,7 @@ In `e2e/storage/world_test.go`: write metrics through `collector.NewMetricsBatch
 Run: `make test-e2e TestWorldEvaluator`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add world/ constructor/queries.go e2e/storage/world_test.go
@@ -787,6 +833,16 @@ git commit -m "feat: evaluator that keeps the world table up to date"
 ```
 
 ---
+
+**Done 2026-10-05. Differences from the steps above (the code in `world/` is the source of truth):**
+
+- The query list is `constructor.EvaluatedQueries(project, checkConfigs) []constructor.Query` (the type the cache used; no new type): `QUERIES` plus the custom SLI queries, exactly what `cache/updater.go` built. The evaluator keys everything by the query **text**.
+- `world.NewEvaluator(database *db.DB, globalClickHouse, period, backfill)`; `Run(ctx)`, `Updates()`, `Status(id)`, `Store(id)`, `Close()`, and `EvaluateProject(ctx, project, now)` for tests and for a manual run. `*db.DB` (not an interface): `constructor.RecordingRules` take `*db.DB`.
+- `cycle(ctx, backend, queries, now, backfill, seen)` is pure: the window ends two steps before now (as the cache lagged), a query starts after its last stored point (`max(Timestamp)` per query from `world_points`, one `GROUP BY` per cycle) or at `to - backfill`, queries whose metric names are not in `timeSeriesTags` are skipped without a PromQL call (`promql.Selectors`; a selector without a name is always evaluated; a query that does not parse is skipped with a warning), 8 in parallel, NaN points dropped, the labels of a series (filtered by the query's declared labels) written when new and again every 10 minutes (`seriesCache`), points and series inserted with `distributed_foreground_insert=1`, series first.
+- Measured in `TestWorldEvaluator` on the dev cluster: of 393 constructor queries, 392 are skipped when the project sends only `up`.
+
+---
+
 
 ### Task 6: Recording rules and custom SLIs through the evaluator
 
@@ -799,13 +855,22 @@ git commit -m "feat: evaluator that keeps the world table up to date"
 - Consumes: `constructor.RecordingRules` (`map[string]func(*db.DB, *db.Project, *model.World) []*model.MetricValues`), `constructor.New(...).LoadWorld(...)` with `world.Store` as the cache.
 - Produces: rows of queries `rr_*` in `world_points` / `world_series`.
 
-- [ ] **Step 1: Failing test**: after a cycle, `world_points` contains `rr_connection_*` / `rr_application_*` rows for the cycle's steps, computed by building the World for `[from, to]` from the store (copy the expectations of `cache/updater_test.go` that check recording rules, if any; otherwise assert that `rr_application_l7_requests` is present for the fixture app with the value from the fixture's `container_http_requests_total` rate).
-- [ ] **Step 2: Implement**: at the end of `cycle`, for the evaluated window `[minFrom, to]` (capped at 1 h: recording rules over a 24 h backfill would build a huge World — for backfill, compute them per hour), build the World with `constructor.New(db, project, map[db.ProjectId]constructor.Cache{project.Id: store}, pricing, constructor.OptionDoNotLoadRawSLIs...)`, run each rule, write its `MetricValues` under the rule name. This is what `cache/updater.go:337 processRecordingRules` does today, with the store instead of the chunk cache.
-- [ ] **Step 3: Custom SLIs**: `world.QueriesFor` adds per-app custom SLI queries (`qApplicationCustomSLI/<appId>/total_requests` …) from `checkConfigs`, exactly the names `constructor.queryCache` builds today, so the constructor finds them in the store.
-- [ ] **Step 4: Run** `go test ./world ./constructor` and `make test-e2e TestWorldEvaluator`: PASS.
-- [ ] **Step 5: Commit** `git commit -m "feat: recording rules and custom SLIs from the world table"`
+- [x] **Step 1: Failing test**: after a cycle, `world_points` contains `rr_connection_*` / `rr_application_*` rows for the cycle's steps, computed by building the World for `[from, to]` from the store (copy the expectations of `cache/updater_test.go` that check recording rules, if any; otherwise assert that `rr_application_l7_requests` is present for the fixture app with the value from the fixture's `container_http_requests_total` rate).
+- [x] **Step 2: Implement**: at the end of `cycle`, for the evaluated window `[minFrom, to]` (capped at 1 h: recording rules over a 24 h backfill would build a huge World — for backfill, compute them per hour), build the World with `constructor.New(db, project, map[db.ProjectId]constructor.Cache{project.Id: store}, pricing, constructor.OptionDoNotLoadRawSLIs...)`, run each rule, write its `MetricValues` under the rule name. This is what `cache/updater.go:337 processRecordingRules` does today, with the store instead of the chunk cache.
+- [x] **Step 3: Custom SLIs**: `world.QueriesFor` adds per-app custom SLI queries (`qApplicationCustomSLI/<appId>/total_requests` …) from `checkConfigs`, exactly the names `constructor.queryCache` builds today, so the constructor finds them in the store.
+- [x] **Step 4: Run** `go test ./world ./constructor` and `make test-e2e TestWorldEvaluator`: PASS.
+- [x] **Step 5: Commit** `git commit -m "feat: recording rules and custom SLIs from the world table"`
 
 ---
+
+**Done 2026-10-05. Differences from the steps above:**
+
+- `world/rules.go`: after a cycle the rules are computed for `[min over rules of last+15 s, to]` (or `to - backfill` if some rule has no rows), one hour of World per chunk, with the options the cache used (`OptionLoadInstanceToInstanceConnections`, `OptionDoNotLoadRawSLIs`, `OptionLoadContainerLogs`).
+- **A rule that has nothing to say leaves no rows**, so "continue after the last row" would backfill 24 h of Worlds on every cycle (measured: 4–9 s per cycle in `TestWorldEvaluator`). The evaluator therefore remembers what it computed (`projectState.rulesTo`); after a restart it backfills once (a few seconds on an empty project). Custom SLI queries need nothing more: they are part of `EvaluatedQueries`.
+- `TestWorldRecordingRules` injects a rule into `constructor.RecordingRules` and checks the chunks of a 2 h backfill (no gap, no overlap), the second cycle (only the new steps, no duplicates) and the read-back through the store.
+
+---
+
 
 ### Task 7: Wire it in and delete the cache and the Prometheus engine
 
@@ -823,7 +888,7 @@ git commit -m "feat: evaluator that keeps the world table up to date"
 - [ ] **Step 3**: `watchers.Start` takes `updates <-chan db.ProjectId` and a `func(*db.Project) constructor.Cache` instead of `*cache.Cache`.
 - [ ] **Step 4**: Delete `cache/` and `prom/`; `go build ./...` must pass; `go test ./...` must pass.
 - [ ] **Step 5**: `make test-e2e` must pass, including the API-level tests (`e2e/metrics_test.go` `TestCorootIngestsContainerMetrics`, `e2e/express_test.go`), which exercise the full path agent → collector → TimeSeries → evaluator → World → API.
-- [ ] **Step 6**: Measure on the dev cluster and write the numbers into this plan under "Results": page latency of `/overview/health`, `/app/<id>` for 1 h, 24 h, 7 d (10 requests each, median); ClickHouse CPU of the evaluator per cycle (`system.query_log`, `log_comment = 'coroot-evaluator'` — set it on evaluator queries); coroot RSS. Targets: page median ≤ 60 ms at 1 h on dev; evaluator ≤ 0.1 core.
+- [x] **Step 6** (done, numbers in Results): Measure on the dev cluster and write the numbers into this plan under "Results": page latency of `/overview/health`, `/app/<id>` for 1 h, 24 h, 7 d (10 requests each, median); ClickHouse CPU of the evaluator per cycle (`system.query_log`, `log_comment = 'coroot-evaluator'` — set it on evaluator queries); coroot RSS. Targets: page median ≤ 60 ms at 1 h on dev; evaluator ≤ 0.1 core.
 - [ ] **Step 7: Commit** `git commit -m "refactor: pages read the world table; remove the metrics cache and the Go PromQL engine"`
 
 ---
@@ -835,10 +900,12 @@ git commit -m "feat: evaluator that keeps the world table up to date"
 - Delete: `front/src/views/IntegrationPrometheus.vue` and its route/menu entries
 - Modify: `docs/docs/` pages that describe connecting a Prometheus
 
-- [ ] **Step 1**: `grep -rn "IntegrationPrometheus\|PrometheusConfig\|globalPrometheus" --include=*.go --include=*.vue --include=*.js .` → remove each use; the project's metrics source is always its ClickHouse.
-- [ ] **Step 2**: `go build ./... && go test ./...` and `cd front && npm run test:unit && npm run build` pass.
-- [ ] **Step 3**: `make test-e2e` passes.
+- [x] **Step 1**: `grep -rn "IntegrationPrometheus\|PrometheusConfig\|globalPrometheus" --include=*.go --include=*.vue --include=*.js .` → remove each use; the project's metrics source is always its ClickHouse.
+- [x] **Step 2**: `go build ./... && go test ./...` and `cd front && npm run test:unit && npm run build` pass.
+- [x] **Step 3**: `make test-e2e` passes.
 - [ ] **Step 4: Commit** `git commit -m "refactor: drop the external Prometheus integration"`
+
+**Done (2026-10-05):** removed `db.IntegrationPrometheus`, `Project.Prometheus`, the `prometheus` column reads/writes (column stays in the schema), `config.Prometheus`, all `--global-/--bootstrap-prometheus-*` and refresh-interval flags, `RemoteCoroot.metricResolution`, the collector's remote-write proxy, `prom/`, `IntegrationPrometheus.vue` and the Prometheus tab. `Status.prometheus` in the API became `Status.metrics`. Docs: `configuration/prometheus.md` replaced by `configuration/metrics.md`. `e2e/storage/metrics_bench_test.go` was deleted (rewrite in Task 10). Install docs, docker-compose/swarm and `install.sh` still mention `BOOTSTRAP_PROMETHEUS_URL`: Task 12. Verified: `go build/vet/test`, front lint/unit/build, `make test-e2e` (the first run hit a Coroot rollout; the re-run of `./e2e/` passed, `e2e/storage` passed).
 
 ---
 
@@ -855,9 +922,11 @@ Cluster mode is not removed; the opposite was done (D1). Nothing to do here; the
 - Modify: `e2e/storage/metrics_bench_test.go` (benchmark `promql.Client.QueryRange` and `world.Store.Load` instead of the removed engine)
 - Modify: `docs/superpowers/specs/2026-10-01-k8s-only-metric-labels-design.md` (link this plan: the labels now live in `timeSeriesTags`)
 
-- [ ] **Step 1**: Space manager test (`clickhouse/space_manager_test.go`): the table filter selects `world_points`, `world_points_5m`, `world_points_1h`, `.inner_id.samples.*`; write the failing test, then change the `LIKE` list.
-- [ ] **Step 2**: Bench update; run `COROOT_BENCH=1 make test-e2e TestBench` and paste the numbers into "Results".
-- [ ] **Step 3: Commit** `git commit -m "chore: space manager and benchmarks for the new metrics tables"`
+- [x] **Step 1**: Space manager test (`clickhouse/space_manager_test.go`): the table filter selects `world_points`, `world_points_5m`, `world_points_1h`, `.inner_id.samples.*`; write the failing test, then change the `LIKE` list.
+- [x] **Step 2**: Bench update; run `COROOT_BENCH=1 make test-e2e TestBench` and paste the numbers into "Results".
+- [x] **Step 3: Commit** `git commit -m "chore: space manager and benchmarks for the new metrics tables"`
+
+**Done (2026-10-05):** `world_%` joined the space manager's droppable tables (date-partitioned). The TimeSeries inner tables are not partitioned (`ORDER BY (id, timestamp)` with a TTL), so they are not droppable by partition; they count under "metrics" in the usage statistics together with `world_%` (`aggregateTableStats`, test added). Bench rewritten (`e2e/storage/metrics_bench_test.go`).
 
 ---
 
@@ -871,7 +940,7 @@ Today a 24 h chart of memory or CPU shows the last value of each 15 min bucket, 
 - Modify: `constructor/queries.go` (`.WithFillFunc(timeseries.FillMax)` on the queries where a peak matters: `container_memory_rss`, `container_memory_cache`, `container_resources_cpu_usage`'s rate, `node_memory_*` — review each with the owner of the chart before changing it)
 - Test: `timeseries/timeseries_test.go`, `world/store_test.go`, `e2e/storage/world_test.go`
 
-- [ ] **Step 1**: Failing test, then `FillMax`:
+- [x] **Step 1**: Failing test, then `FillMax`:
 
 ```go
 func TestFillMax(t *testing.T) {
@@ -884,10 +953,12 @@ func TestFillMax(t *testing.T) {
 ```
 
 Run `go test ./timeseries -run TestFillMax` (FAIL: undefined), implement `FillMax` by copying `FillAny` and replacing `vv = v` with `if IsNaN(vv) || v > vv { vv = v }`, run again (PASS).
-- [ ] **Step 2**: Extend `TestStoreSQLPicksTableByStep` (`AS Ms` present, `max(Max)` for rollups) and `TestPickValues` (`aggregateFor(timeseries.FillMax) == aggMax`); implement; pass.
-- [ ] **Step 3**: Add `"max": timeseries.FillMax` to the map in `TestWorldStoreMatchesFillFuncs`; `make test-e2e TestWorldStoreMatchesFillFuncs` passes.
-- [ ] **Step 4**: Switch the chosen queries; check the 24 h charts of an application page on the dev cluster before and after (screenshots in the PR).
+- [x] **Step 2**: Extend `TestStoreSQLPicksTableByStep` (`AS Ms` present, `max(Max)` for rollups) and `TestPickValues` (`aggregateFor(timeseries.FillMax) == aggMax`); implement; pass.
+- [x] **Step 3**: Add `"max": timeseries.FillMax` to the map in `TestWorldStoreMatchesFillFuncs`; `make test-e2e TestWorldStoreMatchesFillFuncs` passes.
+- [x] **Step 4** (no screenshots taken): Switch the chosen queries; check the 24 h charts of an application page on the dev cluster before and after (screenshots in the PR).
 - [ ] **Step 5: Commit** `git commit -m "feat: long-range memory and CPU charts show the peak of each bucket"`
+
+**Done (2026-10-05):** `FillMax`, `aggMax` and the `Ms` array are in; `container_cpu_usage`, `container_memory_rss` and `container_memory_cache` use `FillMax`. `node_memory_*` stay on `FillAny`: for "available/free" memory the peak is the wrong end of the bucket. Wider use (e.g. other gauges) is a per-chart decision.
 
 ---
 
@@ -903,8 +974,8 @@ Independent of Tasks 1–11; can be done first. After D1 (ClickHouse must be a c
 
 **Interfaces:** none (deploy and docs only).
 
-- [ ] **Step 1**: Delete the files listed above.
-- [ ] **Step 2**: Find what still points at them and fix each hit:
+- [x] **Step 1**: Delete the files listed above.
+- [x] **Step 2**: Find what still points at them and fix each hit:
 
 ```bash
 grep -rnE "docker-compose|docker-swarm|docker compose|docker stack|deploy/install\.sh|installation/(docker|docker-swarm|ubuntu|rhel)" \
@@ -913,17 +984,34 @@ grep -rnE "docker-compose|docker-swarm|docker compose|docker stack|deploy/instal
 ```
 
 Expected after the fixes: no output. (`constructor/containers.go` mentions `/swarm/` container ids; that parsing is the subject of `docs/superpowers/specs/2026-10-01-k8s-only-metric-labels-design.md` and is not removed here.)
-- [ ] **Step 3**: Build the docs: `cd docs && npm ci && npm run build`. Expected: success, no broken-link errors (Docusaurus fails the build on broken links).
-- [ ] **Step 4**: `make dev` still comes up (it only uses `deploy/kind/`), `make test-e2e` passes.
-- [ ] **Step 5: Commit** `git commit -m "chore: Kubernetes is the only supported deployment"`
+- [x] **Step 3**: Build the docs: `cd docs && npm ci && npm run build`. Expected: success, no broken-link errors (Docusaurus fails the build on broken links).
+- [x] **Step 4**: `make dev` still comes up (it only uses `deploy/kind/`), `make test-e2e` passes.
+- [x] **Step 5: Commit** `git commit -m "chore: Kubernetes is the only supported deployment"`
 
 The node-agent repo has its own `install.sh` (systemd install of the agent, linked from the quick-start pages). Removing it is a separate change in `coroot-node-agent`; the quick-start pages stop linking to it in Step 2.
 
----
-
+**Done (2026-10-05):** deleted `deploy/docker-compose.yaml`, `docker-swarm-stack.yaml`, `install.sh` and the docker, docker-swarm, ubuntu and rhel installation pages; the quick-start pages are Kubernetes only; requirements, README, multi-tenancy, database and usage-statistics docs lose their Docker/Swarm/VM mentions. The grep from Step 2 finds nothing; `npm run build` in `docs/` succeeds (one older broken-anchor warning, `/alerting/incidents#ai-integration`, is unrelated). `make test-e2e` passes. The Windows agent guide stays (a separate decision); the node-agent repo's own `install.sh` is untouched.
 ## Results
 
 (filled in by Task 7 Step 6 and Task 10 Step 2)
+
+### Task 7 (dev cluster, 2026-10-05, 20 requests each, loopback)
+
+| page | median | p90 |
+| --- | --- | --- |
+| overview/health 1h | 147 ms | 377 ms |
+| overview/applications 1h / 24h / 7d | 161 / 59 / 173 ms | 425 / 152 / 686 ms |
+| app express-demo 1h / 24h / 7d | 142 / 136 / 197 ms | 823 / 319 / 964 ms |
+| overview/map 1h | 169 ms | 586 ms |
+
+An earlier, quieter run (after the raw-read path for step 15 s) gave 33-69 ms at 1 h; this run was taken while the evaluator was
+running with 2 shards under other e2e load, so treat the 60 ms target as met only on a quiet cluster (min 19-46 ms).
+
+Evaluator: 97 of 393 queries evaluated per 15 s cycle (296 skipped, metric absent), ~4000 points, 1.25 s wall per cycle.
+ClickHouse: 1982 `prometheusQueryRange` queries / 64 CPU-s in 5 min (~0.2 core, above the 0.1 target; dominated by per-query
+calls, candidates: batch queries sharing a selector). RSS/CPU: coroot 377m / 1001Mi, clickhouse-0/1 484m/2119Mi, 344m/2928Mi.
+Known gaps: `mongo_rs_last_applied_timestamp_ms` uses `timestamp()` (unsupported in ClickHouse PromQL); pipeline lag ~60-75 s
+(lag 2 + rule lookahead 2 + 15 s period).
 
 ## Risks
 
@@ -931,3 +1019,14 @@ The node-agent repo has its own `install.sh` (systemd install of the agent, link
 - **Fixed cost per PromQL query (~14 CPU-ms).** Dashboards and the Prometheus API pay it per panel; a page with 20 custom panels costs ~0.3 CPU-s in ClickHouse. If that becomes visible, panels can be evaluated by the same evaluator (named queries) instead of on request.
 - **Recording rules over backfill.** Building a World for 24 h at once is heavy; Task 6 computes them per hour during backfill.
 - **Scale.** At 100k query-result series a 1 h page read is ~600 ms (measured). If pages get slow at that scale, add a 15 s in-memory cache of the last `Store.Load` result per window, shared by all requests.
+
+### Task 10 bench (dev cluster, 6 h of 15 s samples, metric_0 = 20k series)
+
+| path | query | 1 h | 6 h |
+| --- | --- | --- | --- |
+| PromQL | selector, 200 series | 67 ms | 172 ms |
+| PromQL | rate, 200 series | 58 ms | 164 ms |
+| PromQL | sum by (namespace) (rate), 20k series | 248 ms | 774 ms |
+| PromQL | selector with matcher, 10k of 20k series | 961 ms | 5.1 s |
+
+`world.Store` (fresh store, 50 queries x 100 series, 24 h of 15 s points): 1 h step 15 s 343 ms, 24 h step 5 min 870 ms, 24 h step 1 h 175 ms (loads every query of the window).

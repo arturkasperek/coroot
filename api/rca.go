@@ -62,7 +62,7 @@ func (api *Api) RCA(w http.ResponseWriter, r *http.Request, u *db.User) {
 		rca.Error = err.Error()
 		return
 	}
-	cacheClient := api.cache.GetCacheClient(project.Id)
+	cacheClient := api.evaluator.Client(project.Id)
 	cacheTo, err := cacheClient.GetTo()
 	if err != nil {
 		klog.Errorln(err)
@@ -227,7 +227,7 @@ func (api *Api) IncidentRCA(ctx context.Context, project *db.Project, world *mod
 		return
 	}
 
-	cacheClient := api.cache.GetCacheClient(project.Id)
+	cacheClient := api.evaluator.Client(project.Id)
 	ctr := constructor.New(api.db, project, map[db.ProjectId]constructor.Cache{project.Id: cacheClient}, api.pricing)
 	if rcaRequest.Metrics, err = ctr.QueryCache(ctx, cacheClient, project, rcaRequest.Ctx.From, rcaRequest.Ctx.To, rcaRequest.Ctx.Step); err != nil {
 		klog.Errorln(err)

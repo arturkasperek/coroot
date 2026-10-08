@@ -13,10 +13,9 @@ import (
 )
 
 type RemoteCoroot struct {
-	Url              string        `yaml:"url"`
-	TlsSkipVerify    bool          `yaml:"tlsSkipVerify"`
-	ApiKey           string        `yaml:"apiKey"`
-	MetricResolution time.Duration `yaml:"metricResolution"`
+	Url           string `yaml:"url"`
+	TlsSkipVerify bool   `yaml:"tlsSkipVerify"`
+	ApiKey        string `yaml:"apiKey"`
 }
 
 func (rc *RemoteCoroot) Validate() error {
@@ -25,9 +24,6 @@ func (rc *RemoteCoroot) Validate() error {
 	}
 	if len(rc.ApiKey) == 0 {
 		return fmt.Errorf("missing api key")
-	}
-	if rc.MetricResolution < time.Second {
-		return fmt.Errorf("metric_resolution too short")
 	}
 	return nil
 }
@@ -53,16 +49,6 @@ func (rc *RemoteCoroot) ClickHouseConfig() *db.IntegrationClickhouse {
 		Database:      "default",
 		TlsEnable:     u.Scheme == "https",
 		TlsSkipVerify: rc.TlsSkipVerify,
-	}
-}
-
-func (rc *RemoteCoroot) PrometheusConfig() *db.IntegrationPrometheus {
-	return &db.IntegrationPrometheus{
-		Global:          true,
-		Url:             rc.Url,
-		RefreshInterval: timeseries.DurationFromStandard(rc.MetricResolution),
-		TlsSkipVerify:   rc.TlsSkipVerify,
-		CustomHeaders:   []utils.Header{{Key: "X-API-Key", Value: rc.ApiKey}},
 	}
 }
 

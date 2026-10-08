@@ -75,3 +75,21 @@ func TestConvertIntervalToSeconds(t *testing.T) {
 	assert.Equal(t, uint64(0), convertIntervalToSeconds(10, "INVALID"))
 	assert.Equal(t, uint64(0), convertIntervalToSeconds(0, "DAY"))
 }
+
+func TestAggregateTableStatsGroupsMetricsTables(t *testing.T) {
+	tables := []TableInfo{
+		{Table: "otel_logs", BytesOnDisk: 1},
+		{Table: "world_points", BytesOnDisk: 10},
+		{Table: "world_points_5m", BytesOnDisk: 20},
+		{Table: ".inner_id.samples.1bf59146", BytesOnDisk: 100},
+		{Table: ".inner_id.tags.1bf59146", BytesOnDisk: 1000},
+		{Table: "something_else", BytesOnDisk: 5},
+	}
+	got := map[string]int64{}
+	for _, ti := range aggregateTableStats(tables) {
+		got[ti.Table] = int64(ti.BytesOnDisk)
+	}
+	if got["metrics"] != 1130 || got["logs"] != 1 || len(got) != 2 {
+		t.Fatalf("unexpected aggregation: %v", got)
+	}
+}

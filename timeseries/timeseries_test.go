@@ -204,3 +204,11 @@ func TestIterFrom(t *testing.T) {
 	iter = ts.IterFrom(100)
 	assert.False(t, iter.Next())
 }
+
+func TestFillMax(t *testing.T) {
+	// 15 s points at t = 0, 15, 30, 45, 60, 75
+	data := []float32{1, 5, 2, NaN, 3, 4}
+	ts := New(0, 4, 30*Second) // points at 0, 30, 60, 90; each covers (t-30, t]
+	FillMax(ts, 0, 15*Second, data)
+	assert.Equal(t, "TimeSeries(0, 4, 30, [1 5 3 4])", ts.String())
+}

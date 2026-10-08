@@ -101,7 +101,7 @@ Coroot's eBPF-based instrumentation can capture requests without requiring any c
 
 ## Installation
 
-You can run Coroot as a Docker container or deploy it into any Kubernetes cluster.
+Coroot runs on Kubernetes.
 Check out the [Installation guide](https://docs.coroot.com/).
 
 ## Development on a remote k3s host

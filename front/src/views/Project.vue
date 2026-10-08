@@ -83,16 +83,6 @@
             </template>
         </template>
 
-        <template v-if="tab === 'prometheus'">
-            <h1 class="text-h5 my-5">
-                Prometheus integration
-                <a href="https://docs.coroot.com/configuration/prometheus" target="_blank">
-                    <v-icon>mdi-information-outline</v-icon>
-                </a>
-            </h1>
-            <IntegrationPrometheus />
-        </template>
-
         <template v-if="tab === 'clickhouse'">
             <h1 class="text-h5 my-5">
                 ClickHouse integration
@@ -209,7 +199,6 @@ import ProjectApiKeys from './ProjectApiKeys.vue';
 import ProjectDelete from './ProjectDelete.vue';
 import ApplicationCategories from './ApplicationCategories.vue';
 import Integrations from './Integrations.vue';
-import IntegrationPrometheus from './IntegrationPrometheus.vue';
 import IntegrationClickhouse from './IntegrationClickhouse.vue';
 import IntegrationAWS from './IntegrationAWS.vue';
 import CustomApplications from './CustomApplications.vue';
@@ -230,7 +219,6 @@ export default {
         ProjectStatus,
         IntegrationAI,
         CustomApplications,
-        IntegrationPrometheus,
         IntegrationClickhouse,
         IntegrationAWS,
         ProjectApiKeys,
@@ -280,7 +268,6 @@ export default {
             const disabled = !this.projectId;
             let tabs = [
                 { id: undefined, name: 'General' },
-                { id: 'prometheus', name: 'Prometheus', disabled: disabled || this.multicluster },
                 { id: 'clickhouse', name: 'Clickhouse', disabled: disabled || this.multicluster },
                 { id: 'ai', name: 'AI' },
                 { id: 'cloud', name: 'Coroot Cloud' },
@@ -335,7 +322,7 @@ export default {
                 }, 1000);
                 if (!this.projectId) {
                     const projectId = data.trim();
-                    this.$router.replace({ name: 'project_settings', params: { projectId, tab: 'prometheus' } }).catch((err) => err);
+                    this.$router.replace({ name: 'project_settings', params: { projectId, tab: 'clickhouse' } }).catch((err) => err);
                 }
             });
         },

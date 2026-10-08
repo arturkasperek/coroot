@@ -4,10 +4,10 @@ import (
 	"fmt"
 
 	"github.com/coroot/coroot/api/views/overview"
-	"github.com/coroot/coroot/cache"
 	"github.com/coroot/coroot/db"
 	"github.com/coroot/coroot/model"
 	"github.com/coroot/coroot/utils"
+	"github.com/coroot/coroot/world"
 )
 
 type DataWithContext struct {
@@ -34,12 +34,12 @@ type GitOpsStatus struct {
 type Status struct {
 	Status           model.Status      `json:"status"`
 	Error            string            `json:"error"`
-	Prometheus       Prometheus        `json:"prometheus"`
+	Metrics          Metrics           `json:"metrics"`
 	NodeAgent        NodeAgent         `json:"node_agent"`
 	KubeStateMetrics *KubeStateMetrics `json:"kube_state_metrics"`
 }
 
-type Prometheus struct {
+type Metrics struct {
 	Status  model.Status `json:"status"`
 	Message string       `json:"message"`
 	Error   string       `json:"error"`
@@ -78,7 +78,7 @@ type LicenseManager interface {
 	CheckLicense() *License
 }
 
-func (api *Api) WithContext(p *db.Project, cacheStatus *cache.Status, w *model.World, data any) DataWithContext {
+func (api *Api) WithContext(p *db.Project, cacheStatus *world.Status, w *model.World, data any) DataWithContext {
 	if p == nil {
 		return DataWithContext{}
 	}
@@ -88,7 +88,7 @@ func (api *Api) WithContext(p *db.Project, cacheStatus *cache.Status, w *model.W
 	}
 	res := DataWithContext{
 		Context: Context{
-			Status:         renderStatus(p, cacheStatus, w, api.globalPrometheus),
+			Status:         renderStatus(p, cacheStatus, w),
 			Search:         renderSearch(w),
 			Incidents:      renderIncidents(w),
 			Alerts:         alerts,
@@ -133,7 +133,7 @@ func gitOpsStatus(w *model.World, present bool, count func(*model.World) int) *G
 	return &GitOpsStatus{Issues: count(w)}
 }
 
-func renderStatus(p *db.Project, cacheStatus *cache.Status, w *model.World, globalPrometheus *db.IntegrationPrometheus) Status {
+func renderStatus(p *db.Project, cacheStatus *world.Status, w *model.World) Status {
 	res := Status{
 		Status: model.OK,
 	}
@@ -144,28 +144,21 @@ func renderStatus(p *db.Project, cacheStatus *cache.Status, w *model.World, glob
 		return res
 	}
 
-	res.Prometheus.Status = model.OK
-	res.Prometheus.Message = "ok"
-	promCfg := p.PrometheusConfig(globalPrometheus)
-	refreshInterval := cache.UpdaterStep(promCfg.RefreshInterval)
+	res.Metrics.Status = model.OK
+	res.Metrics.Message = "ok"
 	switch {
-	case promCfg.Url == "" && !promCfg.UseClickHouse && !p.Multicluster():
-		res.Prometheus.Status = model.WARNING
-		res.Prometheus.Message = "Prometheus is not configured."
-		res.Prometheus.Action = "configure"
 	case cacheStatus != nil && cacheStatus.Error != "":
-		res.Prometheus.Status = model.WARNING
-		res.Prometheus.Message = "An error has been occurred while querying Prometheus:"
-		res.Prometheus.Error = cacheStatus.Error
-		res.Prometheus.Action = "configure"
-	case cacheStatus != nil && cacheStatus.LagMax > 5*refreshInterval:
+		res.Metrics.Status = model.WARNING
+		res.Metrics.Message = "An error has occurred while evaluating metrics:"
+		res.Metrics.Error = cacheStatus.Error
+	case cacheStatus != nil && cacheStatus.LagMax > 5*world.Step:
 		lag := utils.FormatDuration(cacheStatus.LagAvg, 1)
-		res.Prometheus.Status = model.WARNING
-		res.Prometheus.Message = fmt.Sprintf("The Prometheus cache lag is %s, likely due to a restart or upgrade. Synchronization is in progress.", lag)
-		res.Prometheus.Action = "wait"
+		res.Metrics.Status = model.WARNING
+		res.Metrics.Message = fmt.Sprintf("The metrics lag is %s, likely due to a restart or upgrade. Synchronization is in progress.", lag)
+		res.Metrics.Action = "wait"
 	}
 
-	if res.Prometheus.Status >= model.WARNING {
+	if res.Metrics.Status >= model.WARNING {
 		res.Status = model.WARNING
 	}
 

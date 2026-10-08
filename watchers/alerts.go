@@ -18,9 +18,10 @@ import (
 	"github.com/coroot/coroot/db"
 	"github.com/coroot/coroot/model"
 	"github.com/coroot/coroot/notifications"
-	"github.com/coroot/coroot/prom"
+	"github.com/coroot/coroot/promql"
 	"github.com/coroot/coroot/timeseries"
 	"github.com/coroot/coroot/utils"
+	"github.com/coroot/coroot/world"
 	"github.com/coroot/logparser"
 	"k8s.io/klog"
 )
@@ -54,11 +55,11 @@ type Alerts struct {
 	initializedProjects      map[string]bool
 	logPatternEvaluator      LogPatternEvaluator
 	kubernetesEventEvaluator KubernetesEventEvaluator
-	globalPrometheus         *db.IntegrationPrometheus
+	evaluator                *world.Evaluator
 	globalClickHouse         *db.IntegrationClickhouse
 }
 
-func NewAlerts(database *db.DB, globalPrometheus *db.IntegrationPrometheus, globalClickHouse *db.IntegrationClickhouse, logPatternEvaluator LogPatternEvaluator, kubernetesEventEvaluator KubernetesEventEvaluator) *Alerts {
+func NewAlerts(database *db.DB, evaluator *world.Evaluator, globalClickHouse *db.IntegrationClickhouse, logPatternEvaluator LogPatternEvaluator, kubernetesEventEvaluator KubernetesEventEvaluator) *Alerts {
 	return &Alerts{
 		db:                       database,
 		notifier:                 notifications.NewAlertNotifier(database),
@@ -66,7 +67,7 @@ func NewAlerts(database *db.DB, globalPrometheus *db.IntegrationPrometheus, glob
 		initializedProjects:      make(map[string]bool),
 		logPatternEvaluator:      logPatternEvaluator,
 		kubernetesEventEvaluator: kubernetesEventEvaluator,
-		globalPrometheus:         globalPrometheus,
+		evaluator:                evaluator,
 		globalClickHouse:         globalClickHouse,
 	}
 }
@@ -418,17 +419,16 @@ func (w *Alerts) evaluateLogPatternAlerts(project *db.Project, rule *model.Alert
 }
 
 func (w *Alerts) evaluatePromQLAlerts(project *db.Project, rule *model.AlertingRule, from, to timeseries.Time, step timeseries.Duration, now timeseries.Time) {
-	client, err := prom.NewClient(project.PrometheusConfig(w.globalPrometheus), project.ClickHouseConfig(w.globalClickHouse))
+	client, err := w.evaluator.PromQL(project)
 	if err != nil {
 		klog.Errorf("failed to create prom client for PromQL rule %s: %v", rule.Id, err)
 		return
 	}
-	defer client.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	results, err := client.QueryRange(ctx, rule.Source.PromQL.Expression, prom.FilterLabelsKeepAll, from, to, step)
+	results, err := client.QueryRange(ctx, rule.Source.PromQL.Expression, promql.FilterLabelsKeepAll, from, to, step)
 	if err != nil {
 		klog.Errorf("failed to evaluate PromQL rule %s: %v", rule.Id, err)
 		return
@@ -482,7 +482,7 @@ func (w *Alerts) evaluatePromQLAlerts(project *db.Project, rule *model.AlertingR
 			}
 			sort.Strings(parts)
 			details = append(details, model.AlertDetail{Name: "Labels", Value: utils.Truncate(strings.Join(parts, "\n"), alertDetailValueMaxLen), Code: true})
-			if q, err := prom.AddExtraSelector(rule.Source.PromQL.Expression, "{"+strings.Join(parts, ",")+"}"); err == nil {
+			if q, err := promql.AddExtraSelector(rule.Source.PromQL.Expression, "{"+strings.Join(parts, ",")+"}"); err == nil {
 				scopedQuery = q
 			}
 		}

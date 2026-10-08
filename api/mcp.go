@@ -15,7 +15,7 @@ import (
 	"github.com/coroot/coroot/clickhouse"
 	"github.com/coroot/coroot/db"
 	"github.com/coroot/coroot/model"
-	"github.com/coroot/coroot/prom"
+	"github.com/coroot/coroot/promql"
 	"github.com/coroot/coroot/rbac"
 	"github.com/coroot/coroot/timeseries"
 	"github.com/coroot/coroot/utils"
@@ -1142,12 +1142,10 @@ func (h *MCPHandler) toolQueryMetrics(ctx context.Context, req mcp.CallToolReque
 		limit = mcpMetricsDefaultLimit
 	}
 
-	client, err := prom.NewClient(project.PrometheusConfig(h.Api.globalPrometheus), project.ClickHouseConfig(h.Api.globalClickHouse))
-
+	client, err := h.Api.evaluator.PromQL(project)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	defer client.Close()
 
 	from, to, _, _ := h.Api.getTimeContext(project.Id, req.GetString("from", ""), req.GetString("to", ""), "", "")
 	if to.Sub(from) > mcpMetricsMaxRange {
@@ -1162,7 +1160,7 @@ func (h *MCPHandler) toolQueryMetrics(ctx context.Context, req mcp.CallToolReque
 		step = mcpMetricsMinStep
 	}
 
-	series, err := client.QueryRange(ctx, query, prom.FilterLabelsKeepAll, from, to, step)
+	series, err := client.QueryRange(ctx, query, promql.FilterLabelsKeepAll, from, to, step)
 	if err != nil {
 		return mcp.NewToolResultError("query failed: " + err.Error()), nil
 	}
@@ -1376,18 +1374,17 @@ func (h *MCPHandler) toolListMetricNames(ctx context.Context, req mcp.CallToolRe
 		limit = mcpMetricsNamesLimit
 	}
 
-	client, err := prom.NewClient(project.PrometheusConfig(h.Api.globalPrometheus), project.ClickHouseConfig(h.Api.globalClickHouse))
+	client, err := h.Api.evaluator.PromQL(project)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	defer client.Close()
 
 	now := timeseries.Now()
 	from := now.Add(-5 * timeseries.Minute)
 	step := timeseries.Minute
 
 	query := fmt.Sprintf("group by (__name__) ({__name__=~%q})", match)
-	series, err := client.QueryRange(ctx, query, prom.FilterLabelsKeepAll, from, now, step)
+	series, err := client.QueryRange(ctx, query, promql.FilterLabelsKeepAll, from, now, step)
 	if err != nil {
 		return mcp.NewToolResultError("query failed: " + err.Error()), nil
 	}

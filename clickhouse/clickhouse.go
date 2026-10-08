@@ -154,7 +154,7 @@ func (c *Client) GetTableSizes(ctx context.Context) ([]TableInfo, error) {
 		  	AND p.min_time > 0
 			AND p.database = currentDatabase()
 			AND p.engine NOT LIKE '%Distributed%'
-			AND (p.table LIKE 'otel_%' OR p.table LIKE 'profiling_%' OR p.table LIKE 'metrics%')
+			AND (p.table LIKE 'otel_%' OR p.table LIKE 'profiling_%' OR p.table LIKE 'world_%' OR p.table LIKE '.inner_id.%')
 		GROUP BY p.database, p.table, t.create_table_query
 		ORDER BY p.table`
 
@@ -391,10 +391,11 @@ func executeOnAllServers(ctx context.Context, config *db.IntegrationClickhouse, 
 		go func(addr string) {
 			defer wg.Done()
 
-			clientConfig := config
+			// a copy: config is a pointer shared by all the goroutines (and owned by the caller)
+			clientConfig := *config
 			clientConfig.Addr = addr
 
-			client, err := NewClient(clientConfig, project)
+			client, err := NewClient(&clientConfig, project)
 			if err != nil {
 				resultsChan <- serverExecResult{addr: addr, err: err}
 				return
@@ -488,7 +489,7 @@ func aggregateTableStats(tables []TableInfo) []TableInfo {
 			key = "traces"
 		case strings.HasPrefix(table.Table, "profiling_"):
 			key = "profiling"
-		case strings.HasPrefix(table.Table, "metrics"):
+		case strings.HasPrefix(table.Table, "world_"), strings.HasPrefix(table.Table, ".inner_id."):
 			key = "metrics"
 		default:
 			continue

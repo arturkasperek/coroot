@@ -236,12 +236,12 @@ var QUERIES = []Query{
 	Q("container_info", `container_info`, "image", "systemd_triggered_by", "systemd_type"),
 	Q("container_application_type", `container_application_type`, "application_type"),
 	Q("container_cpu_limit", `container_resources_cpu_limit_cores`),
-	Q("container_cpu_usage", `rate(container_resources_cpu_usage_seconds_total[$RANGE])`),
+	Q("container_cpu_usage", `rate(container_resources_cpu_usage_seconds_total[$RANGE])`).WithFillFunc(timeseries.FillMax),
 	Q("container_cpu_delay", `rate(container_resources_cpu_delay_seconds_total[$RANGE])`),
 	Q("container_throttled_time", `rate(container_resources_cpu_throttled_seconds_total[$RANGE])`),
 	Q("container_memory_limit", `container_resources_memory_limit_bytes`),
-	Q("container_memory_rss", `container_resources_memory_rss_bytes`),
-	Q("container_memory_cache", `container_resources_memory_cache_bytes`),
+	Q("container_memory_rss", `container_resources_memory_rss_bytes`).WithFillFunc(timeseries.FillMax),
+	Q("container_memory_cache", `container_resources_memory_cache_bytes`).WithFillFunc(timeseries.FillMax),
 	Q("container_memory_pressure", `rate(container_resources_memory_pressure_waiting_seconds_total[$RANGE])`, "kind"),
 	Q("container_oom_kills_total", `container_oom_kills_total % 10000000`, "job", "instance"),
 	Q("container_restarts", `container_restarts_total % 10000000`, "job", "instance"),
@@ -1062,4 +1062,21 @@ func parseThreshold(s string) (float32, error) {
 	}
 	v := model.RoundUpToDefaultBucket(float32(d.Seconds()))
 	return v, err
+}
+
+// EvaluatedQueries are the queries whose results the world store keeps: the
+// constructor's own and the custom SLI queries of the applications that have one.
+func EvaluatedQueries(project *db.Project, checkConfigs model.CheckConfigs) []Query {
+	queries := slices.Clone(QUERIES)
+	for appId := range checkConfigs {
+		availabilityCfg, _ := checkConfigs.GetAvailability(appId)
+		if availabilityCfg.Custom {
+			queries = append(queries, Q("", availabilityCfg.Total()), Q("", availabilityCfg.Failed()))
+		}
+		latencyCfg, _ := checkConfigs.GetLatency(appId, project.CalcApplicationCategory(appId))
+		if latencyCfg.Custom {
+			queries = append(queries, Q("", latencyCfg.Histogram(), "le"))
+		}
+	}
+	return queries
 }

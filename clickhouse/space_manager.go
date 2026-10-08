@@ -153,7 +153,7 @@ func (sm *SpaceManager) getPartitionsFromDiskOnServer(ctx context.Context, clien
 			AND p.min_time > 0
 			AND p.disk_name = ?
 			AND p.database IN ?
-			AND (p.table LIKE 'otel_%' OR p.table LIKE 'profiling_%')
+			AND (p.table LIKE 'otel_%' OR p.table LIKE 'profiling_%' OR p.table LIKE 'world_%')
 		ORDER BY p.min_time ASC`
 
 	rows, err := client.conn.Query(ctx, query, diskName, sm.databases)

@@ -22,13 +22,6 @@ CREATE DATABASE coroot WITH OWNER = coroot;
 
 You can configure Coroot to use Postgres by setting the `--pg-connection-string` command line argument or the `PG_CONNECTION_STRING` environment variable:
 
-```bash
-docker run -d --name coroot \
-  -p 8080:8080 \
-  -e PG_CONNECTION_STRING="postgres://coroot:password@127.0.0.1:5432/coroot?sslmode=disable" \
-  ghcr.io/coroot/coroot
-``` 
-
 Here is an example of how to format the `PG_CONNECTION_STRING` variable using a Kubernetes secret:
 
 ```yaml

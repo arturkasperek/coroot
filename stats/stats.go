@@ -14,13 +14,13 @@ import (
 	"time"
 
 	"github.com/coroot/coroot/auditor"
-	"github.com/coroot/coroot/cache"
 	cloud_pricing "github.com/coroot/coroot/cloud-pricing"
 	"github.com/coroot/coroot/constructor"
 	"github.com/coroot/coroot/db"
 	"github.com/coroot/coroot/model"
 	"github.com/coroot/coroot/timeseries"
 	"github.com/coroot/coroot/utils"
+	"github.com/coroot/coroot/world"
 	"github.com/gorilla/mux"
 	"github.com/grafana/pyroscope-go/godeltaprof"
 	"k8s.io/klog"
@@ -42,22 +42,20 @@ type Stats struct {
 		InstallationType string `json:"installation_type,omitempty"`
 	} `json:"instance"`
 	Integration struct {
-		Prometheus                bool                                 `json:"prometheus"`
-		PrometheusRefreshInterval int                                  `json:"prometheus_refresh_interval"`
-		NodeAgent                 bool                                 `json:"node_agent"`
-		NodeAgentVersions         *utils.StringSet                     `json:"node_agent_versions"`
-		KubeStateMetrics          *bool                                `json:"kube_state_metrics"`
-		InspectionOverrides       map[model.CheckId]InspectionOverride `json:"inspection_overrides"`
-		ApplicationCategories     int                                  `json:"application_categories"`
-		AlertingIntegrations      *utils.StringSet                     `json:"alerting_integrations"`
-		CloudCosts                bool                                 `json:"cloud_costs"`
-		Clickhouse                bool                                 `json:"clickhouse"`
-		Tracing                   bool                                 `json:"tracing"`
-		Logs                      bool                                 `json:"logs"`
-		Profiles                  bool                                 `json:"profiles"`
-		JavaAsyncProfiler         bool                                 `json:"java_async_profiler"`
-		FluxCD                    bool                                 `json:"fluxcd"`
-		ArgoCD                    bool                                 `json:"argocd"`
+		NodeAgent             bool                                 `json:"node_agent"`
+		NodeAgentVersions     *utils.StringSet                     `json:"node_agent_versions"`
+		KubeStateMetrics      *bool                                `json:"kube_state_metrics"`
+		InspectionOverrides   map[model.CheckId]InspectionOverride `json:"inspection_overrides"`
+		ApplicationCategories int                                  `json:"application_categories"`
+		AlertingIntegrations  *utils.StringSet                     `json:"alerting_integrations"`
+		CloudCosts            bool                                 `json:"cloud_costs"`
+		Clickhouse            bool                                 `json:"clickhouse"`
+		Tracing               bool                                 `json:"tracing"`
+		Logs                  bool                                 `json:"logs"`
+		Profiles              bool                                 `json:"profiles"`
+		JavaAsyncProfiler     bool                                 `json:"java_async_profiler"`
+		FluxCD                bool                                 `json:"fluxcd"`
+		ArgoCD                bool                                 `json:"argocd"`
 	} `json:"integration"`
 	Stack struct {
 		Clouds               *utils.StringSet `json:"clouds"`
@@ -146,10 +144,10 @@ type InspectionOverride struct {
 }
 
 type Collector struct {
-	db      *db.DB
-	cache   *cache.Cache
-	pricing *cloud_pricing.Manager
-	client  *http.Client
+	db        *db.DB
+	evaluator *world.Evaluator
+	pricing   *cloud_pricing.Manager
+	client    *http.Client
 
 	disabled bool
 
@@ -170,11 +168,11 @@ type Collector struct {
 	globalClickHouse *db.IntegrationClickhouse
 }
 
-func NewCollector(disabled bool, instanceUuid, version string, edition string, db *db.DB, cache *cache.Cache, pricing *cloud_pricing.Manager, globalClickHouse *db.IntegrationClickhouse) *Collector {
+func NewCollector(disabled bool, instanceUuid, version string, edition string, db *db.DB, evaluator *world.Evaluator, pricing *cloud_pricing.Manager, globalClickHouse *db.IntegrationClickhouse) *Collector {
 	c := &Collector{
-		db:      db,
-		cache:   cache,
-		pricing: pricing,
+		db:        db,
+		evaluator: evaluator,
+		pricing:   pricing,
 
 		client: &http.Client{Timeout: sendTimeout},
 
@@ -386,12 +384,6 @@ func (c *Collector) collect() Stats {
 		if p.Multicluster() {
 			continue
 		}
-		if p.Prometheus.Url != "" {
-			stats.Integration.Prometheus = true
-		}
-		if stats.Integration.PrometheusRefreshInterval == 0 || int(p.Prometheus.RefreshInterval) < stats.Integration.PrometheusRefreshInterval {
-			stats.Integration.PrometheusRefreshInterval = int(p.Prometheus.RefreshInterval)
-		}
 		if cfg := p.ClickHouseConfig(c.globalClickHouse); cfg != nil && cfg.Addr != "" {
 			stats.Integration.Clickhouse = true
 			stats.Integration.Tracing = true
@@ -426,7 +418,7 @@ func (c *Collector) collect() Stats {
 			}
 		}
 
-		cacheClient := c.cache.GetCacheClient(p.Id)
+		cacheClient := c.evaluator.Client(p.Id)
 		cacheTo, err := cacheClient.GetTo()
 		if err != nil {
 			klog.Errorln(err)

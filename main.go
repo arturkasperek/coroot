@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"embed"
 	"fmt"
 	"net/http"
@@ -13,7 +14,6 @@ import (
 	"time"
 
 	"github.com/coroot/coroot/api"
-	"github.com/coroot/coroot/cache"
 	"github.com/coroot/coroot/cloud"
 	cloud_pricing "github.com/coroot/coroot/cloud-pricing"
 	"github.com/coroot/coroot/collector"
@@ -24,6 +24,7 @@ import (
 	"github.com/coroot/coroot/stats"
 	"github.com/coroot/coroot/utils"
 	"github.com/coroot/coroot/watchers"
+	"github.com/coroot/coroot/world"
 	"github.com/gorilla/mux"
 	"golang.org/x/term"
 	"gopkg.in/alecthomas/kingpin.v2"
@@ -93,20 +94,10 @@ func main() {
 	}
 
 	globalClickhouse := cfg.GetGlobalClickhouse()
-	globalPrometheus := cfg.GetGlobalPrometheus()
 
-	cacheConfig := cache.Config{
-		Path: path.Join(cfg.DataDir, "cache"),
-		GC: &cache.GcConfig{
-			TTL:      cfg.Cache.TTL,
-			Interval: cfg.Cache.GCInterval,
-		},
-		BackfillInterval: cfg.Cache.BackfillInterval,
-	}
-	promCache, err := cache.NewCache(cacheConfig, database, globalPrometheus, globalClickhouse)
-	if err != nil {
-		klog.Exitln(err)
-	}
+	// the results of the constructor's queries, in ClickHouse: pages read them, nothing evaluates PromQL for a page
+	evaluator := world.NewEvaluator(database, globalClickhouse, world.Period, world.Backfill)
+	go evaluator.Run(context.Background())
 
 	grpcServer, err := grpc.NewServer(cfg.GRPC, cfg.TLS)
 	if err != nil {
@@ -119,7 +110,7 @@ func main() {
 		ProfilesTTL: cfg.Profiles.TTL,
 		MetricsTTL:  cfg.Metrics.TTL,
 	}
-	coll := collector.New(collConfig, database, promCache, globalClickhouse, globalPrometheus, grpcServer)
+	coll := collector.New(collConfig, database, evaluator, globalClickhouse, grpcServer)
 
 	go func() {
 		ch := make(chan os.Signal, 1)
@@ -135,9 +126,9 @@ func main() {
 		klog.Exitln(err)
 	}
 
-	statsCollector := stats.NewCollector(cfg.DisableUsageStatistics, instanceUuid, version, Edition, database, promCache, pricing, globalClickhouse)
+	statsCollector := stats.NewCollector(cfg.DisableUsageStatistics, instanceUuid, version, Edition, database, evaluator, pricing, globalClickhouse)
 
-	a := api.NewApi(cfg, promCache, database, coll, statsCollector, pricing, rbac.NewStaticRoleManager(), nil, globalClickhouse, globalPrometheus, deploymentUuid, instanceUuid, nil)
+	a := api.NewApi(cfg, evaluator, database, coll, statsCollector, pricing, rbac.NewStaticRoleManager(), nil, globalClickhouse, deploymentUuid, instanceUuid, nil)
 	err = a.AuthInit(cfg.Auth.AnonymousRole, cfg.Auth.BootstrapAdminPassword)
 	if err != nil {
 		klog.Exitln(err)
@@ -145,7 +136,7 @@ func main() {
 
 	incidents := watchers.NewIncidents(database, a.IncidentRCA)
 
-	watchers.Start(database, promCache, pricing, incidents, !cfg.DoNotCheckForDeployments, globalClickhouse, globalPrometheus, cfg.ClickHouseSpaceManager, nil, nil)
+	watchers.Start(database, evaluator, pricing, incidents, !cfg.DoNotCheckForDeployments, globalClickhouse, cfg.ClickHouseSpaceManager, nil, nil)
 
 	router := mux.NewRouter()
 	router.Use(statsCollector.MiddleWare)

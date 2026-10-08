@@ -1,7 +1,6 @@
 package config
 
 import (
-	"github.com/coroot/coroot/db"
 	"github.com/coroot/coroot/timeseries"
 	"gopkg.in/alecthomas/kingpin.v2"
 )
@@ -17,9 +16,6 @@ var (
 	tlsKeyFile                                  = kingpin.Flag("tls-key-file", "Path to the TLS private key file").Envar("TLS_KEY_FILE").String()
 	urlBasePath                                 = kingpin.Flag("url-base-path", "The base URL to run Coroot at a sub-path, e.g. /coroot/").Envar("URL_BASE_PATH").String()
 	dataDir                                     = kingpin.Flag("data-dir", `Path to the data directory`).Envar("DATA_DIR").String()
-	cacheTTL                                    = timeseries.DurationFlag(kingpin.Flag("cache-ttl", "Cache TTL (e.g. 8h, 2d, 1w; default 30d)").Envar("CACHE_TTL"))
-	cacheGcInterval                             = timeseries.DurationFlag(kingpin.Flag("cache-gc-interval", "Cache GC interval").Envar("CACHE_GC_INTERVAL"))
-	cacheBackfillInterval                       = timeseries.DurationFlag(kingpin.Flag("cache-backfill-interval", "How far back to fetch metrics on first cache fill (e.g. 15m, 4h; default 4h)").Envar("CACHE_BACKFILL_INTERVAL"))
 	tracesTTL                                   = timeseries.DurationFlag(kingpin.Flag("traces-ttl", "Traces TTL (e.g. 8h, 3d, 2w; default 7d)").Envar("TRACES_TTL"))
 	logsTTL                                     = timeseries.DurationFlag(kingpin.Flag("logs-ttl", "Logs TTL (e.g. 8h, 3d, 2w; default 7d)").Envar("LOGS_TTL"))
 	profilesTTL                                 = timeseries.DurationFlag(kingpin.Flag("profiles-ttl", "Profiles TTL (e.g. 8h, 3d, 2w; default 7d)").Envar("PROFILES_TTL"))
@@ -43,21 +39,6 @@ var (
 	globalClickhouseTlsEnabled      = kingpin.Flag("global-clickhouse-tls-enabled", "").Envar("GLOBAL_CLICKHOUSE_TLS_ENABLED").Bool()
 	globalClickhouseTlsSkipVerify   = kingpin.Flag("global-clickhouse-tls-skip-verify", "").Envar("GLOBAL_CLICKHOUSE_TLS_SKIP_VERIFY").Bool()
 	globalClickhouseTlsCAFile       = kingpin.Flag("global-clickhouse-tls-ca-file", "Path to the CA certificate file for ClickHouse TLS verification").Envar("GLOBAL_CLICKHOUSE_TLS_CA_FILE").String()
-
-	globalPrometheusUrl            = kingpin.Flag("global-prometheus-url", "").Envar("GLOBAL_PROMETHEUS_URL").String()
-	globalPrometheusTlsSkipVerify  = kingpin.Flag("global-prometheus-tls-skip-verify", "").Envar("GLOBAL_PROMETHEUS_TLS_SKIP_VERIFY").Bool()
-	globalRefreshInterval          = timeseries.DurationFlag(kingpin.Flag("global-refresh-interval", "").Envar("GLOBAL_REFRESH_INTERVAL"))
-	globalPrometheusUser           = kingpin.Flag("global-prometheus-user", "").Envar("GLOBAL_PROMETHEUS_USER").String()
-	globalPrometheusPassword       = kingpin.Flag("global-prometheus-password", "").Envar("GLOBAL_PROMETHEUS_PASSWORD").String()
-	globalPrometheusCustomHeaders  = kingpin.Flag("global-prometheus-custom-headers", "").Envar("GLOBAL_PROMETHEUS_CUSTOM_HEADERS").StringMap()
-	globalPrometheusRemoteWriteUrl = kingpin.Flag("global-prometheus-remote-write-url", "").Envar("GLOBAL_PROMETHEUS_REMOTE_WRITE_URL").String()
-	globalPrometheusUseClickHouse  = kingpin.Flag("global-prometheus-use-clickhouse", "Use ClickHouse instead of Prometheus for metrics storage").Envar("GLOBAL_PROMETHEUS_USE_CLICKHOUSE").Bool()
-
-	bootstrapPrometheusUrl            = kingpin.Flag("bootstrap-prometheus-url", "").Envar("BOOTSTRAP_PROMETHEUS_URL").String()
-	bootstrapRefreshInterval          = timeseries.DurationFlag(kingpin.Flag("bootstrap-refresh-interval", "").Envar("BOOTSTRAP_REFRESH_INTERVAL"))
-	bootstrapPrometheusExtraSelector  = kingpin.Flag("bootstrap-prometheus-extra-selector", "").Envar("BOOTSTRAP_PROMETHEUS_EXTRA_SELECTOR").String()
-	bootstrapPrometheusRemoteWriteUrl = kingpin.Flag("bootstrap-prometheus-remote-write-url", "").Envar("BOOTSTRAP_PROMETHEUS_REMOTE_WRITE_URL").String()
-	bootstrapPrometheusUseClickHouse  = kingpin.Flag("bootstrap-prometheus-use-clickhouse", "Use ClickHouse instead of Prometheus for metrics storage").Envar("BOOTSTRAP_PROMETHEUS_USE_CLICKHOUSE").Bool()
 
 	bootstrapClickhouseAddress  = kingpin.Flag("bootstrap-clickhouse-address", "").Envar("BOOTSTRAP_CLICKHOUSE_ADDRESS").String()
 	bootstrapClickhouseUser     = kingpin.Flag("bootstrap-clickhouse-user", "").Envar("BOOTSTRAP_CLICKHOUSE_USER").String()
@@ -91,15 +72,6 @@ func (cfg *Config) ApplyFlags() {
 	}
 	if *dataDir != "" {
 		cfg.DataDir = *dataDir
-	}
-	if *cacheTTL > 0 {
-		cfg.Cache.TTL = *cacheTTL
-	}
-	if *cacheGcInterval > 0 {
-		cfg.Cache.GCInterval = *cacheGcInterval
-	}
-	if *cacheBackfillInterval > 0 {
-		cfg.Cache.BackfillInterval = *cacheBackfillInterval
 	}
 	if *tracesTTL > 0 {
 		cfg.Traces.TTL = *tracesTTL
@@ -176,52 +148,6 @@ func (cfg *Config) ApplyFlags() {
 		cfg.GlobalClickhouse = nil
 	}
 
-	keep = cfg.GlobalPrometheus != nil || *globalPrometheusUrl != "" || *globalPrometheusUseClickHouse
-	if cfg.GlobalPrometheus == nil {
-		cfg.GlobalPrometheus = &Prometheus{
-			CustomHeaders: map[string]string{},
-		}
-	}
-	if *globalPrometheusUrl != "" {
-		cfg.GlobalPrometheus.Url = *globalPrometheusUrl
-	}
-	if *globalPrometheusTlsSkipVerify {
-		cfg.GlobalPrometheus.TlsSkipVerify = *globalPrometheusTlsSkipVerify
-	}
-	if *globalRefreshInterval > 0 {
-		cfg.GlobalPrometheus.RefreshInterval = *globalRefreshInterval
-	}
-	if *globalPrometheusUser != "" {
-		cfg.GlobalPrometheus.User = *globalPrometheusUser
-	}
-	if *globalPrometheusPassword != "" {
-		cfg.GlobalPrometheus.Password = *globalPrometheusPassword
-	}
-	if *globalPrometheusRemoteWriteUrl != "" {
-		cfg.GlobalPrometheus.RemoteWriteUrl = *globalPrometheusRemoteWriteUrl
-	}
-	if *globalPrometheusUseClickHouse {
-		cfg.GlobalPrometheus.UseClickHouse = *globalPrometheusUseClickHouse
-	}
-	for name, value := range *globalPrometheusCustomHeaders {
-		cfg.GlobalPrometheus.CustomHeaders[name] = value
-	}
-	if !keep {
-		cfg.GlobalPrometheus = nil
-	}
-
-	if *bootstrapPrometheusUrl != "" {
-		cfg.BootstrapPrometheus = &Prometheus{
-			Url:             *bootstrapPrometheusUrl,
-			RefreshInterval: *bootstrapRefreshInterval,
-			ExtraSelector:   *bootstrapPrometheusExtraSelector,
-			RemoteWriteUrl:  *bootstrapPrometheusRemoteWriteUrl,
-			UseClickHouse:   *bootstrapPrometheusUseClickHouse,
-		}
-		if cfg.BootstrapPrometheus.RefreshInterval <= 0 {
-			cfg.BootstrapPrometheus.RefreshInterval = db.DefaultRefreshInterval
-		}
-	}
 	if *bootstrapClickhouseAddress != "" {
 		cfg.BootstrapClickhouse = &Clickhouse{
 			Address:  *bootstrapClickhouseAddress,
