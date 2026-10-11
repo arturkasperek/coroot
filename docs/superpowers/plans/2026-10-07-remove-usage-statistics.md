@@ -1,6 +1,6 @@
 # Remove the usage-statistics reporter (future work)
 
-Status: not scheduled. Nothing here is implemented. Reason: in a new, independent product Coroot Inc's anonymous-usage reporter is not needed, and it sends data to a third party (`https://coroot.com/ce/usage-statistics`) by default.
+> **Status: ❌ NOT IMPLEMENTED** (verified against the code and git history on 2026-10-11). `stats/stats.go`, the `/stats` routes and `RegisterMCPCall` are still there. Original note: not scheduled. Reason: in a new, independent product Coroot Inc's anonymous-usage reporter is not needed, and it sends data to a third party (`https://coroot.com/ce/usage-statistics`) by default.
 
 ## What it is today
 

@@ -1,5 +1,7 @@
 # Rename bare `New()` constructors to `New<Type>()` Implementation Plan
 
+> **Status: ❌ NOT IMPLEMENTED** (verified against the code and git history on 2026-10-11). 0 of the 5 constructors is renamed.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Every constructor named `New` becomes `New<StructName>`, always, even where the Go idiom (`ring.New`) would keep `New`. This is a deliberate project preference.

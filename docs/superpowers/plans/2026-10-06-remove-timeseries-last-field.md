@@ -1,6 +1,6 @@
 # Remove the cached `TimeSeries.last` field (future work)
 
-Status: not scheduled, low priority. Nothing here is implemented.
+> **Status: ❌ NOT IMPLEMENTED** (verified against the code and git history on 2026-10-11). `TimeSeries.last` is still in `timeseries/timeseries.go`. Original note: not scheduled, low priority.
 
 ## Problem
 

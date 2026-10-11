@@ -1,6 +1,6 @@
 # Postgres required, SQLite removed (future work)
 
-Status: not scheduled. Nothing here is implemented. This is a product decision as much as a code change: it was discussed as a consequence of "new product, no compatibility to keep, Kubernetes only".
+> **Status: ❌ NOT IMPLEMENTED** (verified against the code and git history on 2026-10-11). SQLite is still supported (`db/db.go`, `main.go`, `go.mod`). Original note: not scheduled. This is a product decision as much as a code change: it was discussed as a consequence of "new product, no compatibility to keep, Kubernetes only".
 
 ## Why
 

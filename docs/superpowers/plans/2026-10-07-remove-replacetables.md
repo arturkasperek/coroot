@@ -1,6 +1,6 @@
 # Remove `ReplaceTables` and the `@@table_X@@` placeholders (future work)
 
-Status: not scheduled, low priority. Nothing here is implemented.
+> **Status: ❌ NOT IMPLEMENTED** (verified against the code and git history on 2026-10-11). `ch.ReplaceTables` and the `@@table_X@@` placeholders are still used. Original note: not scheduled, low priority.
 
 ## Problem
 

@@ -1,6 +1,6 @@
 # Sharded metrics after ClickHouse PromQL-over-Distributed (future work)
 
-Status: not scheduled, **blocked on an upstream ClickHouse change that is not released**. Nothing here is implemented.
+> **Status: ❌ NOT IMPLEMENTED** (verified against the code and git history on 2026-10-11). Original note: not scheduled, **blocked on an upstream ClickHouse change that is not released**.
 
 ## Why this plan exists
 

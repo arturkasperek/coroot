@@ -1,5 +1,7 @@
 # Log Facet Counts Implementation Plan
 
+> **Status: ✅ IMPLEMENTED** (verified against the code and git history on 2026-10-11). Landed in `5fa4213`, refined in `e45a403`, `919a6f7`, `5d05594`, `21a6986`. Later drift: the `service.name` facet became `Application` (see `2026-09-09-log-namespace-application-facets.md`) and a `Source` facet was added.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Overview Logs sidebar shows exact ClickHouse `count()` for Severity, Cluster, Application, and Host over the full selected time range, with Groundcover-style cross-filters.

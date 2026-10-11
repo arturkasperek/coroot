@@ -1,5 +1,7 @@
 # ClickHouse 26.3 Performance Implementation Plan
 
+> **Status: ✅ IMPLEMENTED** (verified against the code and git history on 2026-10-11). Landed in `21a6986`. ClickHouse is now 26.9 (`deploy/kind/clickhouse.yaml`). Task 2: the rollup logic is `rollupFilters` in `clickhouse/logs.go`, not a new `logs_rollup.go`. Task 3 (`metrics_samples`, `metrics_series`, `prom/`) was later replaced and deleted by `2026-10-05-clickhouse-promql-metrics.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** keep log search, log histograms/facets and metrics dashboards fast as data grows, by moving to ClickHouse 26.3 and changing the three places where a measured change gives an order-of-magnitude speedup.

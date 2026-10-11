@@ -1,5 +1,7 @@
 # ClickHouse Trace Body Columns Implementation Plan
 
+> **Status: ✅ IMPLEMENTED** (verified against the code and git history on 2026-10-11). Landed in `21a6986`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** store HTTP request and response bodies sent as span attributes in dedicated `otel_traces` columns instead of inside the `SpanAttributes` map, read them only where a single trace is shown, and make them searchable by token.

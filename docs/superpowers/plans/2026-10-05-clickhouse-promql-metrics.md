@@ -1,5 +1,7 @@
 # Metrics on ClickHouse PromQL Implementation Plan
 
+> **Status: ✅ IMPLEMENTED** (verified against the code and git history on 2026-10-11). Landed in `c51aad7` and `9d4905f` (the checkboxes were not ticked). Done differently: the query list comes from `constructor.EvaluatedQueries`, not `world/queries.go`; `LoadWorld` still calls `GetStep` (it always returns `world.Step`); `watchers.Start` takes `*world.Evaluator`. **Missing:** `log_comment = 'coroot-evaluator'` on the evaluator's queries (Task 7, step 6). Targets not met (see Results): evaluator ~0.2 core vs ≤0.1; page latency under load ~147 ms median vs 60 ms; `timestamp()` unsupported. Follow-ups: `2026-10-05-metrics-followups.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Store and query all metrics with ClickHouse's own TimeSeries engine and PromQL, delete Coroot's metrics cache, its embedded Prometheus engine and the external Prometheus integration, and keep pages fast with a precomputed "world" table.

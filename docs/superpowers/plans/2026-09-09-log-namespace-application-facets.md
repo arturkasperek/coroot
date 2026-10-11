@@ -1,5 +1,7 @@
 # Namespace and Application Log Facets Implementation Plan
 
+> **Status: ✅ IMPLEMENTED** (verified against the code and git history on 2026-10-11). Landed in `5d05594`. Done differently: there is no `logNamespaceExpr()` / `logApplicationExpr()`; the expressions became the MATERIALIZED columns `Namespace` and `Application` of `otel_logs` (`3ad479e`).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Overview Logs sidebar gains a Kubernetes **Namespace** facet (plus **Not applicable**) and **Application** shows short names (`express-demo`), with ClickHouse-accurate counts and filters.

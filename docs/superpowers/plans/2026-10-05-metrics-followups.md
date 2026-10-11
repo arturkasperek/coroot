@@ -1,6 +1,6 @@
 # Metrics follow-ups (future work)
 
-Status: not scheduled. Nothing here is implemented.
+> **Status: ❌ NOT IMPLEMENTED** (verified against the code and git history on 2026-10-11). None of the items is done. Original note: not scheduled.
 
 These are the gaps left after `2026-10-05-clickhouse-promql-metrics.md` (all 12 tasks done). Each item says what is wrong, the evidence, and the first thing to try. Numbers are from the dev cluster (2 shards, 2026-10-05).
 

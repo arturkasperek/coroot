@@ -1,6 +1,6 @@
 # Rename `constructor.Cache` and its plumbing (future work)
 
-Status: not scheduled, cosmetic. Nothing here is implemented.
+> **Status: ❌ NOT IMPLEMENTED** (verified against the code and git history on 2026-10-11). `constructor.Cache`, `QueryCache` and `GetStep` are still there. Original note: not scheduled, cosmetic.
 
 ## Problem
 

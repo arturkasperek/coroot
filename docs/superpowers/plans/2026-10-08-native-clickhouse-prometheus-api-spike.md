@@ -1,6 +1,6 @@
 # Spike: serve the Prometheus metadata API with ClickHouse's native endpoints (future work)
 
-Status: not scheduled, a spike to run when ClickHouse's PromQL leaves preview. Nothing here is implemented.
+> **Status: ❌ NOT IMPLEMENTED** (verified against the code and git history on 2026-10-11). `promql/http.go` still builds its own SQL. Original note: not scheduled, a spike to run when ClickHouse's PromQL leaves preview.
 
 ## Why look at it
 
