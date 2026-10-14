@@ -202,6 +202,18 @@ test('QueryBuilder does not emit input while copying parent value into filters',
     assert.match(qb, /this\.\$emit\('input', this\.filters\)/);
 });
 
+test('the traces query builder labels Source values as trace sources, not log sources', async () => {
+    const [traces, panel, qb] = await Promise.all([
+        readFile(path.resolve(__dirname, '../../src/views/Traces.vue'), 'utf8'),
+        readFile(path.resolve(__dirname, '../../src/components/QueryPanel.vue'), 'utf8'),
+        readFile(path.resolve(__dirname, '../../src/components/QueryBuilder.vue'), 'utf8'),
+    ]);
+    assert.match(traces, /<QueryPanel[^>]*:source-label="displayTraceSourceName"/);
+    assert.match(panel, /<QueryBuilder[\s\S]*?:source-label="sourceLabel"/);
+    assert.match(qb, /formatLogFilter\(filter, this\.sourceLabel\)/);
+    assert.match(qb, /return this\.sourceLabel\(item\)/);
+});
+
 test('Logs uses applyBuilderFilters and shouldReloadQuery to break the sort refetch loop', async () => {
     const logs = await readFile(path.resolve(__dirname, '../../src/components/Logs.vue'), 'utf8');
     assert.match(logs, /applyBuilderFilters\(this\.query, filters\)/);

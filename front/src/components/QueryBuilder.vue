@@ -79,6 +79,10 @@ export default {
             type: Boolean,
             default: true,
         },
+        sourceLabel: {
+            type: Function,
+            default: displaySourceName,
+        },
     },
 
     data() {
@@ -250,11 +254,11 @@ export default {
             this.mode = 'name';
         },
         formatFilter(filter) {
-            return formatLogFilter(filter);
+            return formatLogFilter(filter, this.sourceLabel);
         },
         formatItem(item) {
             if (this.mode === 'value' && this.filter.name === 'Source') {
-                return displaySourceName(item);
+                return this.sourceLabel(item);
             }
             if (this.mode === 'value' && this.filter.name === 'Namespace') {
                 return displayNamespaceName(item);

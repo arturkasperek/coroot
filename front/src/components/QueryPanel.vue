@@ -10,6 +10,7 @@
                 :disabled="disabled"
                 :hidden-attributes="hiddenAttributes"
                 :allow-free-text="allowFreeText"
+                :source-label="sourceLabel"
                 @input="$emit('input', $event)"
                 @get="get"
                 class="flex-grow-1"
@@ -48,6 +49,8 @@ export default {
             type: Boolean,
             default: true,
         },
+        // Labels Source values; QueryBuilder's default is the log sources.
+        sourceLabel: Function,
     },
 
     methods: {

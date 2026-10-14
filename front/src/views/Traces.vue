@@ -6,7 +6,15 @@
         </v-alert>
 
         <template v-else>
-            <QueryPanel v-model="queryBuilderFilters" :items="qb.items" :allow-free-text="false" :loading="loading" @get="qbGet" class="query mb-4">
+            <QueryPanel
+                v-model="queryBuilderFilters"
+                :items="qb.items"
+                :allow-free-text="false"
+                :source-label="displayTraceSourceName"
+                :loading="loading"
+                @get="qbGet"
+                class="query mb-4"
+            >
                 <template #actions>
                     <v-btn @click="get" color="primary" height="40" depressed>Show traces</v-btn>
                 </template>
@@ -349,7 +357,7 @@ import QuickFilters from '@/components/QuickFilters.vue';
 import ObservabilityTable from '@/components/ObservabilityTable.vue';
 import { TRACE_QUERY_FIELDS, fromQueryBuilderFilters, toQueryBuilderFilters } from '@/utils/traceQuery';
 import { TRACE_SORT_VALUES, appendSortChip, effectiveSort, extractSort, toggleSort } from '@/utils/observabilitySort';
-import { buildTraceQuickFilters, toTraceQuickFilters } from '@/utils/traceQuickFilters';
+import { buildTraceQuickFilters, displayTraceSourceName, toTraceQuickFilters } from '@/utils/traceQuickFilters';
 import { TRACE_NAME_SAME_MARK, traceApiRoute, traceColumnValue, traceDisplayName, traceDuration } from '@/utils/traceColumns';
 
 export default {
@@ -572,6 +580,7 @@ export default {
         traceDisplayName,
         traceColumnValue,
         traceDuration,
+        displayTraceSourceName,
         scheduleTracesBodyResize() {
             cancelAnimationFrame(this._tracesBodyResizeFrame);
             this._tracesBodyResizeFrame = requestAnimationFrame(() => {

@@ -142,19 +142,23 @@ func (sm *SpaceManager) dropPartition(ctx context.Context, client *Client, part 
 	return client.conn.Exec(ctx, query)
 }
 
+// getPartitionsFromDiskOnServer returns one row per partition, oldest first.
+// system.parts has a row per part, and a partition is made of many parts until
+// ClickHouse merges them, so they are grouped: MinPartitions counts partitions.
 func (sm *SpaceManager) getPartitionsFromDiskOnServer(ctx context.Context, client *Client, diskName string) ([]PartitionInfo, error) {
 	query := `
-		SELECT 
+		SELECT
 			p.database,
 			p.table,
 			p.partition_id
 		FROM system.parts p
-		WHERE p.active = 1 
+		WHERE p.active = 1
 			AND p.min_time > 0
 			AND p.disk_name = ?
 			AND p.database IN ?
 			AND (p.table LIKE 'otel_%' OR p.table LIKE 'profiling_%' OR p.table LIKE 'world_%')
-		ORDER BY p.min_time ASC`
+		GROUP BY p.database, p.table, p.partition_id
+		ORDER BY min(p.min_time) ASC`
 
 	rows, err := client.conn.Query(ctx, query, diskName, sm.databases)
 	if err != nil {

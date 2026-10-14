@@ -87,14 +87,17 @@ function k8sParts(svc) {
     return parts;
 }
 
-export function formatLogFilter(filter = {}) {
+// displaySource labels Source values: the same value names a different source in
+// logs ("agent" is container logs) and in traces ("agent" is eBPF).
+export function formatLogFilter(filter = {}, displaySource = displaySourceName) {
     let op = filter.op || '';
     if (filter.op === 'contains') {
         op = '🔍';
     } else if (filter.op === 'not contains') {
         op = '!🔍';
     }
-    return `${filter.name || ''} ${op} ${facetLabel(filter.name, filter.value)}`.trim();
+    const value = filter.name === 'Source' ? displaySource(filter.value) : facetLabel(filter.name, filter.value);
+    return `${filter.name || ''} ${op} ${value}`.trim();
 }
 
 export function messageFilterFromFreeText(str) {

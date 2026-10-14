@@ -177,6 +177,13 @@ test('formats Source query chips with display labels', async () => {
     assert.equal(formatLogFilter({ name: 'Message', op: 'contains', value: 'boom' }), 'Message 🔍 boom');
 });
 
+test('formats Source query chips with the display labels of the caller', async () => {
+    const { formatLogFilter } = await loadLogQuickFilters();
+    const traceSource = (value) => (value === 'agent' ? 'eBPF (node-agent)' : value);
+    assert.equal(formatLogFilter({ name: 'Source', op: '=', value: 'agent' }, traceSource), 'Source = eBPF (node-agent)');
+    assert.equal(formatLogFilter({ name: 'Namespace', op: '=', value: 'n/a' }, traceSource), 'Namespace = Not applicable');
+});
+
 test('puts Source before Severity in filter groups', async () => {
     const { buildLogQuickFilters } = await loadLogQuickFilters();
     const groups = buildLogQuickFilters(pageEntries, {
