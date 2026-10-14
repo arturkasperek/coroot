@@ -87,3 +87,19 @@ export function traceColumnValue(item, header) {
     }
     return item ? item[key] : undefined;
 }
+
+// Durations of a second and longer are shown in seconds, keeping three significant
+// digits: 1.23 s, 12.3 s, 123 s.
+export function traceDuration(milliseconds) {
+    if (milliseconds < 1000) {
+        return { value: milliseconds.toFixed(milliseconds < 10 ? 1 : 0), unit: 'ms' };
+    }
+    const seconds = milliseconds / 1000;
+    let decimals = 0;
+    if (seconds < 10) {
+        decimals = 2;
+    } else if (seconds < 100) {
+        decimals = 1;
+    }
+    return { value: seconds.toFixed(decimals), unit: 's' };
+}

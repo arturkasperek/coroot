@@ -47,3 +47,14 @@ test('traces list shows API Route before Name', async () => {
     assert.ok(nameIdx > routeIdx, 'API Route must come before Name');
     assert.match(source, /traceApiRoute|traceDisplayName/);
 });
+
+test('trace duration stays in milliseconds below one second and switches to seconds from it', async () => {
+    const { traceDuration } = await loadTraceColumns();
+
+    assert.deepEqual(traceDuration(4.56), { value: '4.6', unit: 'ms' });
+    assert.deepEqual(traceDuration(999.4), { value: '999', unit: 'ms' });
+    assert.deepEqual(traceDuration(1000), { value: '1.00', unit: 's' });
+    assert.deepEqual(traceDuration(1234), { value: '1.23', unit: 's' });
+    assert.deepEqual(traceDuration(12345), { value: '12.3', unit: 's' });
+    assert.deepEqual(traceDuration(123456), { value: '123', unit: 's' });
+});

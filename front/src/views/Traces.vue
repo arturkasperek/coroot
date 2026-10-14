@@ -212,8 +212,8 @@
                             </template>
                             <template #item.status="{ item }">{{ item.status.message }}</template>
                             <template #item.duration="{ item }">
-                                {{ format(item.duration, 'ms') }}
-                                <span class="caption grey--text"> ms</span>
+                                {{ traceDuration(item.duration).value }}
+                                <span class="caption grey--text"> {{ traceDuration(item.duration).unit }}</span>
                             </template>
                         </ObservabilityTable>
                         <div v-if="!loading && view.traces && view.traces.length && view.limit" class="text-right caption grey--text">
@@ -350,7 +350,7 @@ import ObservabilityTable from '@/components/ObservabilityTable.vue';
 import { TRACE_QUERY_FIELDS, fromQueryBuilderFilters, toQueryBuilderFilters } from '@/utils/traceQuery';
 import { TRACE_SORT_VALUES, appendSortChip, effectiveSort, extractSort, toggleSort } from '@/utils/observabilitySort';
 import { buildTraceQuickFilters, toTraceQuickFilters } from '@/utils/traceQuickFilters';
-import { TRACE_NAME_SAME_MARK, traceApiRoute, traceColumnValue, traceDisplayName } from '@/utils/traceColumns';
+import { TRACE_NAME_SAME_MARK, traceApiRoute, traceColumnValue, traceDisplayName, traceDuration } from '@/utils/traceColumns';
 
 export default {
     components: { Views, FlameGraph, TracingTrace, Heatmap, QueryPanel, QuickFilters, ObservabilityTable },
@@ -571,6 +571,7 @@ export default {
         traceApiRoute,
         traceDisplayName,
         traceColumnValue,
+        traceDuration,
         scheduleTracesBodyResize() {
             cancelAnimationFrame(this._tracesBodyResizeFrame);
             this._tracesBodyResizeFrame = requestAnimationFrame(() => {
