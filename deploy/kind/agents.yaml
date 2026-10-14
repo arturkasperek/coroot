@@ -45,7 +45,9 @@ spec:
               memory: 50Mi
             limits:
               cpu: "1"
-              memory: 1Gi
+              # Loading the eBPF programs peaks at about 1 GB; at 1Gi the agent
+              # was OOM-killed on start every few restarts.
+              memory: 2Gi
           volumeMounts:
             - name: cgroupfs
               mountPath: /host/sys/fs/cgroup
