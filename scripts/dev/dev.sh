@@ -63,6 +63,7 @@ if AGENT_SRC="$(bash "$DIR/node-agent-local-dir.sh")"; then
 else
   echo "    Node agent:    ghcr.io/coroot/coroot-node-agent:latest"
 fi
+echo "                   metrics: http://localhost:18300/metrics"
 echo
 
 export KUBERNETES_CONTEXT_NAME

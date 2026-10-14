@@ -153,6 +153,9 @@ k8s_resource(
 )
 k8s_resource(
     'coroot-node-agent',
+    # With --collector-endpoint the agent ignores --listen and serves /metrics on
+    # 127.0.0.1:10300 only (flags/flags.go), which a port forward still reaches.
+    port_forwards=[port_forward(18300, 10300, name='metrics', link_path='/metrics')],
     resource_deps=['coroot'],
 )
 k8s_resource(
