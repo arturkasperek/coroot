@@ -200,3 +200,30 @@ func TestRootSpansFilterKeepsAgentSpans(t *testing.T) {
 		assert.NotContains(t, strings.Join(filter, " AND "), "startsWith(ServiceName", "fromMV=%v", fromMV)
 	}
 }
+
+// As on Logs: the values a field may have (=, ~) are alternatives, the values
+// it must not have (!=, !~) all apply, and the fields apply together.
+func TestSpanQueryFilterAlternativesOfOneField(t *testing.T) {
+	q := SpanQuery{}
+	q.AddFilter("ServiceName", "=", "clickhouse")
+	q.AddFilter("SpanName", "!=", "ping")
+	q.AddFilter("ServiceName", "=", "coroot")
+	q.AddFilter("ServiceName", "~", "^express")
+	q.AddFilter("SpanName", "!~", "^GET /health")
+	q.AddFilter("ServiceName", "!=", "flask")
+
+	filter, args := q.filter("", false)
+	assert.Equal(t, []string{
+		"ServiceName != @filter_5",
+		"(ServiceName = @filter_0 OR ServiceName = @filter_2 OR match(ServiceName, @filter_3))",
+		"SpanName != @filter_1",
+		"NOT match(SpanName, @filter_4)",
+	}, filter)
+	assert.Len(t, args, 6)
+
+	q = SpanQuery{}
+	q.AddFilter("Status", "=", "4xx")
+	q.AddFilter("Status", "=", "5xx")
+	filter, _ = q.filter("", true)
+	assert.Equal(t, []string{"((StatusClass) = @filter_0 OR (StatusClass) = @filter_1)"}, filter)
+}

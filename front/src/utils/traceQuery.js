@@ -111,17 +111,17 @@ export function removeSelection(query, key) {
     return result;
 }
 
-// The filters narrowed to a status class, in place of another status class
-// they are narrowed to, or no longer narrowed when they already are.
+// The filters with a status class added to the classes shown (the values of
+// one field are alternatives), or removed when it is already there.
 export function toggleStatusFilter(filters = [], status) {
     if (!TRACE_STATUS_CLASSES.includes(status)) {
         return filters;
     }
-    const isStatus = (filter) => filter.field === 'Status' && filter.op === '=';
-    if (filters.some((filter) => isStatus(filter) && filter.value === status)) {
-        return filters.filter((filter) => !(isStatus(filter) && filter.value === status));
+    const isThisStatus = (filter) => filter.field === 'Status' && filter.op === '=' && filter.value === status;
+    if (filters.some(isThisStatus)) {
+        return filters.filter((filter) => !isThisStatus(filter));
     }
-    return [...filters.filter((filter) => !isStatus(filter)), { field: 'Status', op: '=', value: status }];
+    return [...filters, { field: 'Status', op: '=', value: status }];
 }
 
 // The query narrowed to the requests slower than seconds (the p95 of the view),

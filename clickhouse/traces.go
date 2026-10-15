@@ -938,42 +938,64 @@ func (q *SpanQuery) Filter(fromMV bool) ([]string, []any) {
 	return q.filter("", fromMV)
 }
 
+// filter makes the conditions of the filters, one or more per field, as on
+// Logs: the values a field may have (=, ~) are alternatives, the values it must
+// not have (!=, !~) all apply, and the fields apply together.
 func (q *SpanQuery) filter(skipField string, fromMV bool) ([]string, []any) {
-	var filter []string
+	var fields []string
+	alternatives := map[string][]string{}
+	exclusions := map[string][]string{}
 	var args []any
 	for i, f := range q.Filters {
 		if skipField != "" && f.Field == skipField {
 			continue
 		}
 		name := fmt.Sprintf("filter_%d", i)
+		var expr string
 		if base, ok := traceDerivedFieldExpr(f.Field, fromMV); ok {
-			pred, ok := derivedFieldPredicate(base, f.Op, name)
-			if !ok {
+			if expr, ok = derivedFieldPredicate(base, f.Op, name); !ok {
 				continue
 			}
-			filter = append(filter, pred)
-			args = append(args, clickhouse.Named(name, f.Value))
-			continue
+		} else {
+			if strings.ContainsFunc(f.Field, func(r rune) bool { return !unicode.IsLetter(r) }) {
+				continue
+			}
+			switch f.Op {
+			case "=":
+				expr = "%s = @%s"
+			case "!=":
+				expr = "%s != @%s"
+			case "~":
+				expr = "match(%s, @%s)"
+			case "!~":
+				expr = "NOT match(%s, @%s)"
+			default:
+				continue
+			}
+			expr = fmt.Sprintf(expr, f.Field, name)
 		}
-		if strings.ContainsFunc(f.Field, func(r rune) bool { return !unicode.IsLetter(r) }) {
-			continue
+		if _, seen := alternatives[f.Field]; !seen {
+			if _, seen = exclusions[f.Field]; !seen {
+				fields = append(fields, f.Field)
+			}
 		}
-		var expr string
-		switch f.Op {
-		case "=":
-			expr = "%s = @%s"
-		case "!=":
-			expr = "%s != @%s"
-		case "~":
-			expr = "match(%s, @%s)"
-		case "!~":
-			expr = "NOT match(%s, @%s)"
-		default:
-			continue
+		if f.Op == "=" || f.Op == "~" {
+			alternatives[f.Field] = append(alternatives[f.Field], expr)
+		} else {
+			exclusions[f.Field] = append(exclusions[f.Field], expr)
 		}
-		expr = fmt.Sprintf(expr, f.Field, name)
-		filter = append(filter, expr)
 		args = append(args, clickhouse.Named(name, f.Value))
+	}
+	var filter []string
+	for _, field := range fields {
+		filter = append(filter, exclusions[field]...)
+		switch fieldAlternatives := alternatives[field]; len(fieldAlternatives) {
+		case 0:
+		case 1:
+			filter = append(filter, fieldAlternatives[0])
+		default:
+			filter = append(filter, "("+strings.Join(fieldAlternatives, " OR ")+")")
+		}
 	}
 	return filter, args
 }

@@ -109,6 +109,23 @@ func TestOverviewTraceStatusCharts(t *testing.T) {
 			map[string]uint64{"2xx": 20, "4xx": 5, "5xx": 3, "error": 2, "other": 4})
 	})
 
+	t.Run("values of one field add up", func(t *testing.T) {
+		got := fetchOverviewTraces(t, projectID, queryWithFilters(base,
+			map[string]string{"field": "Status", "op": "=", "value": "4xx"},
+			map[string]string{"field": "Status", "op": "=", "value": "5xx"}))
+		assertTraceListSpanNames(t, got, map[string]int{spanNotFound: 5, spanUnavailable: 3})
+		assertChartTotals(t, got.RequestsChart, []string{"4xx", "5xx"}, map[string]float64{"4xx": 5, "5xx": 3})
+
+		// a second application, which has no spans, takes nothing away
+		got = fetchOverviewTraces(t, projectID, queryWithFilters(base,
+			map[string]string{"field": "ServiceName", "op": "=", "value": "e2echarts-absent-" + token}))
+		if n := len(got.Traces); n != 34 {
+			t.Fatalf("trace list has %d spans, want 34", n)
+		}
+		assertChartTotals(t, got.RequestsChart, []string{"2xx", "4xx", "5xx", "error", "other"},
+			map[string]float64{"2xx": 20, "4xx": 5, "5xx": 3, "error": 2, "other": 4})
+	})
+
 	t.Run("Status exclusion", func(t *testing.T) {
 		got := fetchOverviewTraces(t, projectID, queryWithFilters(base, map[string]string{"field": "Status", "op": "!=", "value": "other"}))
 		assertChartTotals(t, got.RequestsChart, []string{"2xx", "4xx", "5xx", "error"},

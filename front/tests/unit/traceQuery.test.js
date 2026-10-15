@@ -240,15 +240,16 @@ test('removing a chip removes its part of the selection only', async () => {
     assert.equal(query.dur_from, '0.48', 'the query itself is not changed');
 });
 
-test('a click on a status class adds a Status filter, a second click removes it', async () => {
+test('a click on a status class adds it to the Status filters, a second click removes it', async () => {
     const { toggleStatusFilter, toQueryBuilderFilters } = await loadTraceQuery();
     const service = { field: 'ServiceName', op: '=', value: 'flask-demo' };
 
     assert.deepEqual(toggleStatusFilter(undefined, '5xx'), [{ field: 'Status', op: '=', value: '5xx' }]);
     assert.deepEqual(toggleStatusFilter([service], '5xx'), [service, { field: 'Status', op: '=', value: '5xx' }]);
-    // one status class at a time; an exclusion typed in the query stays
+    // classes add up: the values of one field are alternatives
     const excluded = { field: 'Status', op: '!=', value: 'other' };
     assert.deepEqual(toggleStatusFilter([{ field: 'Status', op: '=', value: '4xx' }, excluded], '5xx'), [
+        { field: 'Status', op: '=', value: '4xx' },
         excluded,
         { field: 'Status', op: '=', value: '5xx' },
     ]);
