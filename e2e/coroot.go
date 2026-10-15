@@ -359,6 +359,9 @@ type overviewTraceSpan struct {
 	Name      string  `json:"name"`
 	Timestamp int64   `json:"timestamp"`
 	Duration  float64 `json:"duration"`
+	Status    struct {
+		Error bool `json:"error"`
+	} `json:"status"`
 }
 
 type overviewTraces struct {

@@ -297,7 +297,7 @@ CREATE TABLE IF NOT EXISTS otel_traces @on_cluster (
      RequestBody String CODEC(ZSTD(1)),
      ResponseBody String CODEC(ZSTD(1)),
      Namespace LowCardinality(String) MATERIALIZED (if(ResourceAttributes['k8s.namespace.name'] != '', ResourceAttributes['k8s.namespace.name'], 'n/a')) CODEC(ZSTD(1)),
-     ApiRoute LowCardinality(String) MATERIALIZED (if((if(SpanAttributes['http.route'] != '', substringIndex(SpanAttributes['http.route'], char(63), 1), if(SpanAttributes['http.target'] != '', substringIndex(SpanAttributes['http.target'], char(63), 1), SpanAttributes['url.path']))) = '', '', if((if(SpanAttributes['http.method'] != '', SpanAttributes['http.method'], SpanAttributes['http.request.method'])) = '', if(SpanAttributes['http.route'] != '', substringIndex(SpanAttributes['http.route'], char(63), 1), if(SpanAttributes['http.target'] != '', substringIndex(SpanAttributes['http.target'], char(63), 1), SpanAttributes['url.path'])), concat(if(SpanAttributes['http.method'] != '', SpanAttributes['http.method'], SpanAttributes['http.request.method']), ' ', if(SpanAttributes['http.route'] != '', substringIndex(SpanAttributes['http.route'], char(63), 1), if(SpanAttributes['http.target'] != '', substringIndex(SpanAttributes['http.target'], char(63), 1), SpanAttributes['url.path'])))))) CODEC(ZSTD(1)),
+     ApiRoute LowCardinality(String) MATERIALIZED (` + traceApiRouteExpression + `) CODEC(ZSTD(1)),
      Events Nested (
          Timestamp DateTime64(9),
          Name LowCardinality(String),
