@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/coroot/coroot/ch"
 )
 
 const maxTraceFacetValues = 1000
@@ -15,12 +16,19 @@ const maxTraceFacetValues = 1000
 // instrumented with OpenTelemetry.
 const traceSourceExpr = "if(startsWith(ServiceName, '/'), 'agent', 'otel')"
 
-func traceDerivedFieldExpr(field string) (string, bool) {
+// traceDerivedFieldExpr is the expression of a field that is not a column of
+// otel_traces, or of otel_traces_histogram when fromMV.
+func traceDerivedFieldExpr(field string, fromMV bool) (string, bool) {
 	switch field {
 	case "Namespace", "ApiRoute":
 		return field, true
 	case "Source":
 		return traceSourceExpr, true
+	case "Status":
+		if fromMV {
+			return "StatusClass", true
+		}
+		return ch.TraceStatusClassExpression, true
 	default:
 		return "", false
 	}
@@ -42,7 +50,7 @@ func derivedFieldPredicate(base, op, name string) (string, bool) {
 }
 
 func traceFacetSelectSQL(field string, fromMV bool) (string, bool) {
-	if expr, ok := traceDerivedFieldExpr(field); ok {
+	if expr, ok := traceDerivedFieldExpr(field, false); ok {
 		if fromMV {
 			return "", false
 		}
@@ -78,7 +86,7 @@ func buildTraceFacetQuery(q SpanQuery, field string, fromMV bool) (string, []any
 		filter = append(filter, "Timestamp >= @tsFrom AND Timestamp < @tsTo")
 	} else {
 		filter = append(filter, "Timestamp BETWEEN @tsFrom AND @tsTo")
-		durFilter, durArgs := q.DurationFilter()
+		durFilter, durArgs := q.SelectionFilter()
 		if durFilter != "" {
 			filter = append(filter, durFilter)
 			args = append(args, durArgs...)

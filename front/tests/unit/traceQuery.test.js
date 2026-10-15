@@ -19,7 +19,7 @@ async function loadSortFromTraceQuery() {
 test('shows trace fields with user-facing names in the query builder', async () => {
     const { TRACE_QUERY_FIELDS } = await loadTraceQuery();
 
-    assert.deepEqual(TRACE_QUERY_FIELDS, ['Source', 'Namespace', 'Application', 'API Route', 'Root Span Name', 'Trace ID', 'Sort']);
+    assert.deepEqual(TRACE_QUERY_FIELDS, ['Source', 'Status', 'Namespace', 'Application', 'API Route', 'Root Span Name', 'Trace ID', 'Sort']);
 });
 
 test('maps existing trace filters to query-builder filters', async () => {
@@ -72,18 +72,10 @@ test('maps Sort chip to query.sort and does not send it as a ClickHouse filter',
     const { fromQueryBuilderFilters } = await loadTraceQuery();
     const { appendSortChip } = await loadSortFromTraceQuery();
 
-    assert.deepEqual(
-        appendSortChip(
-            [
-                { name: 'Application', op: '=', value: 'express-demo' },
-            ],
-            { by: 'duration', dir: 'desc' },
-        ),
-        [
-            { name: 'Application', op: '=', value: 'express-demo' },
-            { name: 'Sort', op: '=', value: 'Duration desc' },
-        ],
-    );
+    assert.deepEqual(appendSortChip([{ name: 'Application', op: '=', value: 'express-demo' }], { by: 'duration', dir: 'desc' }), [
+        { name: 'Application', op: '=', value: 'express-demo' },
+        { name: 'Sort', op: '=', value: 'Duration desc' },
+    ]);
     assert.deepEqual(
         fromQueryBuilderFilters([
             { name: 'Application', op: '=', value: 'express-demo' },
@@ -153,10 +145,11 @@ test('trace details show correlated logs below the trace with a link to the full
     assert.match(traces, /empty-text="No correlated logs found"/);
 });
 
-test('traces puts Query above the heatmap and hides unsupported controls', async () => {
+test('traces puts Query above the charts and hides unsupported controls', async () => {
     const traces = await readFile(path.resolve(__dirname, '../../src/views/Traces.vue'), 'utf8');
 
-    assert.ok(traces.indexOf('<QueryPanel') < traces.indexOf('<Heatmap'));
+    assert.ok(traces.indexOf('<QueryPanel') < traces.indexOf('<Chart'));
+    assert.doesNotMatch(traces, /<Heatmap/);
     assert.doesNotMatch(traces, /Integrate OpenTelemetry/);
     assert.doesNotMatch(traces, /Exclude auxiliary requests/);
     assert.doesNotMatch(traces, /excludeAux/);
@@ -218,4 +211,77 @@ test('Logs uses applyBuilderFilters and shouldReloadQuery to break the sort refe
     const logs = await readFile(path.resolve(__dirname, '../../src/components/Logs.vue'), 'utf8');
     assert.match(logs, /applyBuilderFilters\(this\.query, filters\)/);
     assert.match(logs, /shouldReloadQuery\(this\.querySerialized, curr\)/);
+});
+
+test('a chip for each part of the chart selection', async () => {
+    const { selectionChips } = await loadTraceQuery();
+    const formatTime = (ms) => `t${ms}`;
+
+    assert.deepEqual(selectionChips({}, formatTime), []);
+    assert.deepEqual(
+        selectionChips({ ts_from: 1000, ts_to: 2000, dur_from: '0.48', filters: [{ field: 'Status', op: '=', value: '5xx' }] }, formatTime),
+        [
+            { key: 'time', label: 'Time t1000–t2000' },
+            { key: 'duration', label: 'Duration ≥ 480 ms' },
+        ],
+    );
+    assert.deepEqual(selectionChips({ dur_from: '0.25', dur_to: '2.5' }, formatTime), [{ key: 'duration', label: 'Duration 250 ms–2.5 s' }]);
+    assert.deepEqual(selectionChips({ dur_to: '1' }, formatTime), [{ key: 'duration', label: 'Duration ≤ 1 s' }]);
+    // a link made with the former heatmap's errors row
+    assert.deepEqual(selectionChips({ dur_from: 'inf', dur_to: 'err' }, formatTime), [{ key: 'duration', label: 'Errors' }]);
+});
+
+test('removing a chip removes its part of the selection only', async () => {
+    const { removeSelection } = await loadTraceQuery();
+    const query = { view: 'traces', ts_from: 1000, ts_to: 2000, dur_from: '0.48', dur_to: '1' };
+
+    assert.deepEqual(removeSelection(query, 'time'), { ...query, ts_from: undefined, ts_to: undefined });
+    assert.deepEqual(removeSelection(query, 'duration'), { ...query, dur_from: undefined, dur_to: undefined });
+    assert.equal(query.dur_from, '0.48', 'the query itself is not changed');
+});
+
+test('a click on a status class adds a Status filter, a second click removes it', async () => {
+    const { toggleStatusFilter, toQueryBuilderFilters } = await loadTraceQuery();
+    const service = { field: 'ServiceName', op: '=', value: 'flask-demo' };
+
+    assert.deepEqual(toggleStatusFilter(undefined, '5xx'), [{ field: 'Status', op: '=', value: '5xx' }]);
+    assert.deepEqual(toggleStatusFilter([service], '5xx'), [service, { field: 'Status', op: '=', value: '5xx' }]);
+    // one status class at a time; an exclusion typed in the query stays
+    const excluded = { field: 'Status', op: '!=', value: 'other' };
+    assert.deepEqual(toggleStatusFilter([{ field: 'Status', op: '=', value: '4xx' }, excluded], '5xx'), [
+        excluded,
+        { field: 'Status', op: '=', value: '5xx' },
+    ]);
+    assert.deepEqual(toggleStatusFilter([service, { field: 'Status', op: '=', value: '5xx' }], '5xx'), [service]);
+    assert.deepEqual(toggleStatusFilter([service], 'p50'), [service], 'not a status class');
+    // the filter is a chip of the Query bar
+    assert.deepEqual(toQueryBuilderFilters(toggleStatusFilter([], '5xx')), [{ name: 'Status', op: '=', value: '5xx' }]);
+});
+
+test('a click on p95 selects the slower requests, a second click removes it', async () => {
+    const { toggleSlowerThanSelection } = await loadTraceQuery();
+
+    assert.deepEqual(toggleSlowerThanSelection({ dur_to: '1' }, 0.48230001), { dur_from: '0.482', dur_to: undefined });
+    assert.deepEqual(toggleSlowerThanSelection({ dur_from: '0.482' }, 0.48230001), { dur_from: undefined });
+});
+
+test('the frontend colors the series of the traces charts by name', async () => {
+    const { TRACE_STATUS_COLORS, withSeriesColors } = await loadTraceQuery();
+    const chart = {
+        title: 'Requests',
+        series: [
+            { name: '2xx', data: [1] },
+            { name: 'unknown', data: [2], color: 'black' },
+        ],
+    };
+
+    assert.deepEqual(withSeriesColors(chart, TRACE_STATUS_COLORS), {
+        title: 'Requests',
+        series: [
+            { name: '2xx', data: [1], color: 'green-lighten1' },
+            { name: 'unknown', data: [2], color: 'black' },
+        ],
+    });
+    assert.equal(chart.series[0].color, undefined, 'the chart itself is not changed');
+    assert.equal(withSeriesColors(undefined, TRACE_STATUS_COLORS), undefined);
 });

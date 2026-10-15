@@ -162,6 +162,18 @@ func (ch *Chart) Column() *Chart {
 	return ch
 }
 
+// OverlaidColumns draws the series as columns on top of each other, not
+// stacked: each series in front of the ones before it, so the series with the
+// largest values should come first.
+func (ch *Chart) OverlaidColumns() *Chart {
+	if ch == nil {
+		return nil
+	}
+	ch.IsColumn = true
+	ch.IsStacked = false
+	return ch
+}
+
 func (ch *Chart) Legend(on bool) *Chart {
 	if ch == nil {
 		return nil

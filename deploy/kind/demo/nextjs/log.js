@@ -25,6 +25,7 @@ function emit(severityText, body, attributes, isError) {
 
 module.exports = {
   info: (body, attributes) => emit('INFO', body, attributes, false),
+  warn: (body, attributes) => emit('WARN', body, attributes, false),
   error: (body, attributes) => emit('ERROR', body, attributes, true),
 };
 module.exports.default = module.exports;

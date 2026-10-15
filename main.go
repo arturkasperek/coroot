@@ -233,7 +233,13 @@ func main() {
 	}).Methods(http.MethodGet)
 
 	if cfg.DeveloperMode {
-		r.PathPrefix("/static/").Handler(http.StripPrefix(cfg.UrlBasePath+"static/", http.FileServer(http.Dir(devStaticDir()))))
+		// the dev build names its files without a content hash (static/js/app.js),
+		// so the browser must revalidate them, or it keeps running an old build
+		devStatic := http.StripPrefix(cfg.UrlBasePath+"static/", http.FileServer(http.Dir(devStaticDir())))
+		r.PathPrefix("/static/").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Cache-Control", "no-cache")
+			devStatic.ServeHTTP(w, r)
+		})
 	} else {
 		r.PathPrefix("/static/").Handler(http.StripPrefix(cfg.UrlBasePath, http.FileServer(utils.NewStaticFSWrapper(static))))
 	}

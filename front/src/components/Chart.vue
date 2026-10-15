@@ -148,11 +148,15 @@ export default {
 
             if (c.threshold) {
                 c.threshold.stacked = false;
+                c.threshold.isThreshold = true;
                 c.series.push(c.threshold);
                 delete c.threshold;
             }
 
             c.ctx.data = Array.from({ length: (c.ctx.to - c.ctx.from) / c.ctx.step + 1 }, (_, i) => c.ctx.from + i * c.ctx.step);
+
+            // columns not stacked are drawn on top of each other (model.Chart.OverlaidColumns)
+            c.overlaid = c.column && !c.stacked;
 
             const colors = {};
             c.series
@@ -178,7 +182,8 @@ export default {
                 } else {
                     s.color = palette.get(s.color, i + (c.color_shift || 0));
                 }
-                s.fill = s.stacked || s.fill;
+                // overlaid columns are filled as well, but not a threshold line
+                s.fill = s.stacked || s.fill || (c.overlaid && !s.isThreshold);
             });
             delete c.stacked;
             return c;
@@ -226,7 +231,7 @@ export default {
                 label: s.name,
                 stroke: !s.stacked && s.color,
                 width: c.column ? 0 : 2,
-                fill: s.fill && s.color + (s.stacked ? 'ff' : '44'),
+                fill: s.fill && s.color + (s.stacked || (c.overlaid && !s.isThreshold) ? 'ff' : '44'),
                 points: { show: false },
                 paths: c.column && uPlot.paths.bars(),
             });
@@ -242,7 +247,9 @@ export default {
                 data.unshift(s.data.map((v, i) => (a[i] += v)));
             });
             ss.filter((s) => !s.stacked).forEach((s) => {
-                if (s.fill) {
+                // a filled area goes behind the lines; overlaid columns keep their
+                // order, each in front of the ones before it
+                if (s.fill && !(c.overlaid && !s.isThreshold)) {
                     series.unshift(f(s));
                     data.unshift(s.data);
                 } else {
@@ -298,7 +305,7 @@ export default {
                     },
                 },
                 legend: { show: false },
-                plugins: [this.selectionPlugin(), this.$refs.tooltip.plugin()],
+                plugins: [this.selectionPlugin(), this.seriesClickPlugin(), this.$refs.tooltip.plugin()],
             };
 
             if (this.ch) {
@@ -391,6 +398,49 @@ export default {
                 this.emitSelection({ from, to });
             };
             return { hooks: { init, ready, setCursor, setSelect } };
+        },
+        // seriesClickPlugin emits series-click with the name of the series under
+        // a click on a column (not the end of a drag).
+        seriesClickPlugin() {
+            if (!this.$listeners['series-click']) {
+                return {};
+            }
+            const init = (u) => {
+                let down = null;
+                u.over.addEventListener('mousedown', (event) => {
+                    down = { x: event.clientX, y: event.clientY };
+                });
+                u.over.addEventListener('click', (event) => {
+                    // the end of a drag that selects a time range is not a click
+                    const dragged = !down || Math.abs(event.clientX - down.x) > 3 || Math.abs(event.clientY - down.y) > 3;
+                    if (dragged || u.cursor.idx === null || u.cursor.idx === undefined) {
+                        return;
+                    }
+                    const name = this.seriesAt(u.cursor.idx, u.posToVal(u.cursor.top, 'y'));
+                    if (name) {
+                        this.$emit('series-click', { name });
+                    }
+                });
+            };
+            return { hooks: { init } };
+        },
+        // seriesAt finds the series drawn at the value y of the point index: the
+        // front one of overlaid columns, the segment of stacked ones.
+        seriesAt(index, y) {
+            const c = this.config;
+            const ss = c.series.filter(this.isActive);
+            let top = 0;
+            for (let i = ss.length - 1; i >= 0; i--) {
+                const value = ss[i].data[index];
+                if (value === null || isNaN(value)) {
+                    continue;
+                }
+                top = ss[i].stacked ? top + value : value;
+                if (y >= 0 && y <= top) {
+                    return ss[i].name;
+                }
+            }
+            return null;
         },
         toggleSeries(name) {
             const i = this.hiddenSeries.indexOf(name);
@@ -510,6 +560,9 @@ export default {
 }
 
 .legend {
+    /* above the x axis, which the negative bottom padding of the plot lets overflow onto it */
+    position: relative;
+    z-index: 1;
     margin: 0 10px 0 40px;
     display: flex;
     flex-wrap: wrap;

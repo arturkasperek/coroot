@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"slices"
 	"sort"
 	"sync"
 	"time"
 
+	"github.com/coroot/coroot/ch"
 	"github.com/coroot/coroot/clickhouse"
 	"github.com/coroot/coroot/model"
 	"github.com/coroot/coroot/timeseries"
@@ -23,17 +25,27 @@ const (
 )
 
 type Traces struct {
-	Message   string                     `json:"message"`
-	Error     string                     `json:"error"`
-	Heatmap   *model.Heatmap             `json:"heatmap"`
-	Traces    []Span                     `json:"traces"`
-	Limit     int                        `json:"limit"`
-	Trace     []Span                     `json:"trace"`
-	Summary   *model.TraceSpanSummary    `json:"summary"`
-	AttrStats []model.TraceSpanAttrStats `json:"attr_stats"`
-	Errors    []model.TraceErrorsStat    `json:"errors"`
-	Latency   *model.Profile             `json:"latency"`
-	Facets    []clickhouse.FacetGroup    `json:"facets"`
+	Message string `json:"message"`
+	Error   string `json:"error"`
+	// RequestsChart counts the requests by status class, LatencyChart shows
+	// their p95 and p50, LatencyQuantiles the p95 and p50 of the whole view.
+	RequestsChart    *model.Chart               `json:"requests_chart"`
+	LatencyChart     *model.Chart               `json:"latency_chart"`
+	LatencyQuantiles *LatencyQuantiles          `json:"latency_quantiles"`
+	Traces           []Span                     `json:"traces"`
+	Limit            int                        `json:"limit"`
+	Trace            []Span                     `json:"trace"`
+	Summary          *model.TraceSpanSummary    `json:"summary"`
+	AttrStats        []model.TraceSpanAttrStats `json:"attr_stats"`
+	Errors           []model.TraceErrorsStat    `json:"errors"`
+	Latency          *model.Profile             `json:"latency"`
+	Facets           []clickhouse.FacetGroup    `json:"facets"`
+}
+
+// LatencyQuantiles are in seconds.
+type LatencyQuantiles struct {
+	P50 float32 `json:"p50"`
+	P95 float32 `json:"p95"`
 }
 
 type Span struct {
@@ -110,40 +122,31 @@ func RenderTraces(ctx context.Context, chs clickhouse.Clients, w *model.World, q
 		sq.AddFilter("SpanName", "!~", "GET /(health[z]*|metrics|debug/.+|actuator/.+)")
 	}
 
-	byLe := map[float32]*timeseries.Aggregate{}
-
-	for _, ch := range chs.Clients {
-		histogram, err := ch.GetRootSpansHistogram(ctx, sq)
+	countsByStatusClass := map[string]*timeseries.Aggregate{}
+	countsByDurationBucket := map[float64]*timeseries.Aggregate{}
+	for _, client := range chs.Clients {
+		counts, err := client.GetRootSpansCounts(ctx, sq)
 		if err != nil {
 			klog.Errorln(err)
 			res.Error = fmt.Sprintf("Clickhouse error: %s", err)
 			return res
 		}
-		for _, h := range histogram {
-			agg := byLe[h.Le]
-			if agg == nil {
-				agg = timeseries.NewAggregate(timeseries.NanSum)
-				byLe[h.Le] = agg
-			}
-			agg.Add(h.TimeSeries)
-		}
+		addCounts(countsByStatusClass, counts.ByStatusClass)
+		addCounts(countsByDurationBucket, counts.ByDurationBucket)
 	}
-	if len(byLe) > 1 {
-		hist := make([]model.HistogramBucket, 0, len(byLe)-1)
-		var errors *timeseries.Aggregate
-		for le, agg := range byLe {
-			if le == 0 {
-				errors = agg
-			} else {
-				hist = append(hist, model.HistogramBucket{Le: le, TimeSeries: agg.Get()})
+	if len(countsByStatusClass) > 0 {
+		chartContext := clickhouse.TracesChartContext(w.Ctx)
+		res.RequestsChart = model.NewChart(chartContext, "Requests").Column().Sorted()
+		for _, class := range ch.TraceStatusClasses {
+			if counts := countsByStatusClass[class]; counts != nil {
+				res.RequestsChart.AddSeries(class, counts.Get())
 			}
 		}
-		sort.Slice(hist, func(i, j int) bool { return hist[i].Le < hist[j].Le })
-		res.Heatmap = model.NewHeatmap(w.Ctx, "Latency & Errors heatmap, requests per second")
-		for _, h := range model.HistogramSeries(hist, 0, 0) {
-			res.Heatmap.AddSeries(h.Name, h.Title, h.Data, h.Threshold, h.Value)
-		}
-		res.Heatmap.AddSeries("errors", "errors", errors, "", "err")
+		histogram := latencyHistogram(chartContext, countsByDurationBucket)
+		res.LatencyChart = model.NewChart(chartContext, "Latency").OverlaidColumns().Sorted()
+		res.LatencyChart.AddSeries("p95", model.Quantile(histogram, 0.95))
+		res.LatencyChart.AddSeries("p50", model.Quantile(histogram, 0.5))
+		res.LatencyQuantiles = latencyQuantilesOfWholeView(histogram)
 	} else {
 		services := utils.NewStringSet()
 		for _, ch := range chs.Clients {
@@ -213,6 +216,7 @@ func RenderTraces(ctx context.Context, chs clickhouse.Clients, w *model.World, q
 	for _, ch := range chs.Clients {
 		if q.TraceId == "" {
 			addFacet(ch, "Source")
+			addFacet(ch, "Status")
 			addFacet(ch, "Namespace")
 			addFacet(ch, "ServiceName")
 			addFacet(ch, "ApiRoute")
@@ -406,6 +410,60 @@ func sortTraceSpans(spans []*model.TraceSpan, s clickhouse.Sort) {
 			return a.Timestamp.After(b.Timestamp)
 		}
 	})
+}
+
+// addCounts adds the counts of one ClickHouse to the counts of all of them.
+func addCounts[K comparable](all map[K]*timeseries.Aggregate, counts map[K]*timeseries.TimeSeries) {
+	for key, series := range counts {
+		if all[key] == nil {
+			all[key] = timeseries.NewAggregate(timeseries.NanSum)
+		}
+		all[key].Add(series)
+	}
+}
+
+// latencyHistogram turns the number of requests per duration bucket (keyed by
+// the lower bound in milliseconds) into the cumulative histogram model.Quantile
+// reads: for each upper bound, in seconds, the number of requests that took at
+// most that long, zero at points with no requests in the bucket.
+func latencyHistogram(chartContext timeseries.Context, countsByDurationBucket map[float64]*timeseries.Aggregate) []model.HistogramBucket {
+	points := int(chartContext.To.Sub(chartContext.From)/chartContext.Step) + 1
+	cumulative := make([]float32, points)
+	var histogram []model.HistogramBucket
+	for index := 1; index < len(clickhouse.HistogramBuckets); index++ {
+		if counts := countsByDurationBucket[clickhouse.HistogramBuckets[index-1]]; counts != nil {
+			iterator := counts.Get().Iter()
+			for point := 0; point < points && iterator.Next(); point++ {
+				if _, count := iterator.Value(); !timeseries.IsNaN(count) {
+					cumulative[point] += count
+				}
+			}
+		}
+		histogram = append(histogram, model.HistogramBucket{
+			Le:         float32(clickhouse.HistogramBuckets[index] / 1000),
+			TimeSeries: timeseries.NewWithData(chartContext.From, chartContext.Step, slices.Clone(cumulative)),
+		})
+	}
+	return histogram
+}
+
+// latencyQuantilesOfWholeView sums the histogram over time and reads its p50 and
+// p95, nil when there are no requests.
+func latencyQuantilesOfWholeView(histogram []model.HistogramBucket) *LatencyQuantiles {
+	wholeView := make([]model.HistogramBucket, 0, len(histogram))
+	for _, bucket := range histogram {
+		total := bucket.TimeSeries.Reduce(timeseries.NanSum)
+		wholeView = append(wholeView, model.HistogramBucket{
+			Le:         bucket.Le,
+			TimeSeries: timeseries.NewWithData(0, timeseries.Minute, []float32{total}),
+		})
+	}
+	p50 := model.Quantile(wholeView, 0.5).Last()
+	p95 := model.Quantile(wholeView, 0.95).Last()
+	if timeseries.IsNaN(p50) || timeseries.IsNaN(p95) {
+		return nil
+	}
+	return &LatencyQuantiles{P50: p50, P95: p95}
 }
 
 func getMonitoringAndControlPlanePodIps(w *model.World) []string {

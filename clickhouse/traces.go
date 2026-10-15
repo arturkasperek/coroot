@@ -12,6 +12,7 @@ import (
 	"unicode"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/coroot/coroot/ch"
 	"github.com/coroot/coroot/db"
 	"github.com/coroot/coroot/model"
 	"github.com/coroot/coroot/timeseries"
@@ -51,10 +52,119 @@ func (c *Client) GetServicesFromTraces(ctx context.Context, from timeseries.Time
 	return res, nil
 }
 
-func (c *Client) GetRootSpansHistogram(ctx context.Context, q SpanQuery) ([]model.HistogramBucket, error) {
+// RootSpansCounts counts root spans per time bucket of the chart, by status
+// class and by duration bucket.
+type RootSpansCounts struct {
+	// ByStatusClass holds the number of spans of each status class.
+	ByStatusClass map[string]*timeseries.TimeSeries
+	// ByDurationBucket holds the number of spans keyed by the lower bound of the
+	// duration bucket in milliseconds, one of HistogramBuckets.
+	ByDurationBucket map[float64]*timeseries.TimeSeries
+}
+
+// GetRootSpansCounts reads the counts of the Traces page charts: the time range
+// and the filters of the query, not its selection.
+func (c *Client) GetRootSpansCounts(ctx context.Context, q SpanQuery) (*RootSpansCounts, error) {
 	fromMV := c.useTracesHistogram(ctx, q, q.Ctx.From)
-	filter, filterArgs := q.RootSpansFilter(fromMV)
-	return c.getSpansHistogram(ctx, q, filter, filterArgs, fromMV)
+	filters, filterArgs := q.RootSpansFilter(fromMV)
+
+	chartContext := TracesChartContext(q.Ctx)
+	from, step := chartContext.From, chartContext.Step
+	to := chartContext.To.Add(step)
+	points := int(to.Sub(from) / step)
+
+	filters = append(filters, "Timestamp >= @from AND Timestamp < @to")
+	filterArgs = append(filterArgs,
+		clickhouse.Named("step", int(step)),
+		clickhouse.DateNamed("from", from.ToStandard(), clickhouse.NanoSeconds),
+		clickhouse.DateNamed("to", to.ToStandard(), clickhouse.NanoSeconds),
+	)
+	var query string
+	if fromMV {
+		query = "SELECT toStartOfInterval(Timestamp, INTERVAL @step second), StatusClass, Bucket, sum(Total)"
+		query += " FROM @@table_otel_traces_histogram@@"
+	} else {
+		filterArgs = append(filterArgs, clickhouse.Named("buckets", HistogramBuckets[:len(HistogramBuckets)-1]))
+		query = "SELECT toStartOfInterval(Timestamp, INTERVAL @step second), " + ch.TraceStatusClassExpression + ", roundDown(Duration/1000000, @buckets), count(1)"
+		query += " FROM @@table_otel_traces@@"
+	}
+	query += " WHERE " + strings.Join(filters, " AND ")
+	query += " GROUP BY 1, 2, 3"
+
+	rows, err := c.Query(ctx, query, filterArgs...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	byStatusClass := map[string][]float32{}
+	byDurationBucket := map[float64][]float32{}
+	var timestamp time.Time
+	var statusClass string
+	var bucket float64
+	var total uint64
+	for rows.Next() {
+		if err = rows.Scan(&timestamp, &statusClass, &bucket, &total); err != nil {
+			return nil, err
+		}
+		index := int(timeseries.Time(timestamp.Unix()).Sub(from) / step)
+		if index < 0 || index >= points {
+			continue
+		}
+		addCount(byStatusClass, statusClass, points, index, total)
+		addCount(byDurationBucket, bucket, points, index, total)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	res := &RootSpansCounts{
+		ByStatusClass:    map[string]*timeseries.TimeSeries{},
+		ByDurationBucket: map[float64]*timeseries.TimeSeries{},
+	}
+	for class, data := range byStatusClass {
+		res.ByStatusClass[class] = timeseries.NewWithData(from, step, data)
+	}
+	for bucket, data := range byDurationBucket {
+		res.ByDurationBucket[bucket] = timeseries.NewWithData(from, step, data)
+	}
+	return res, nil
+}
+
+// addCount adds count to the point at index of counts[key], creating the
+// points of the key, NaN where nothing is counted, on its first count.
+func addCount[K comparable](counts map[K][]float32, key K, points, index int, count uint64) {
+	data := counts[key]
+	if data == nil {
+		data = make([]float32, points)
+		for i := range data {
+			data[i] = timeseries.NaN
+		}
+		counts[key] = data
+	}
+	if timeseries.IsNaN(data[index]) {
+		data[index] = 0
+	}
+	data[index] += float32(count)
+}
+
+// chartStep is the step of a chart read from the histogram table, whose rows
+// are per minute: the step of the view rounded up to whole minutes.
+func chartStep(step timeseries.Duration) timeseries.Duration {
+	if remainder := step % 60; remainder != 0 {
+		step += 60 - remainder
+	}
+	return step
+}
+
+// TracesChartContext is the time axis of the Traces page charts: the step of
+// the view rounded up to whole minutes, and the range aligned to it, so that
+// each point is one toStartOfInterval bucket of ClickHouse.
+func TracesChartContext(viewContext timeseries.Context) timeseries.Context {
+	chartContext := viewContext
+	chartContext.Step = chartStep(viewContext.Step)
+	chartContext.From = viewContext.From.Truncate(chartContext.Step)
+	chartContext.To = viewContext.To.Truncate(chartContext.Step)
+	return chartContext
 }
 
 func (c *Client) GetRootSpans(ctx context.Context, q SpanQuery) ([]*model.TraceSpan, error) {
@@ -222,10 +332,7 @@ func (c *Client) getTrace(ctx context.Context, sq SpanQuery) (*model.Trace, erro
 }
 
 func (c *Client) getSpansHistogram(ctx context.Context, q SpanQuery, filters []string, filterArgs []any, fromMV bool) ([]model.HistogramBucket, error) {
-	step := q.Ctx.Step
-	if r := step % 60; r != 0 {
-		step += 60 - r
-	}
+	step := chartStep(q.Ctx.Step)
 	from := q.Ctx.From
 	to := q.Ctx.To.Add(step)
 
@@ -321,7 +428,7 @@ func (c *Client) getTraceSpanStats(ctx context.Context, q SpanQuery, filters []s
 		query += " FROM @@table_otel_traces_histogram@@"
 	} else {
 		filterArgs = append(filterArgs, clickhouse.Named("buckets", HistogramBuckets[:len(HistogramBuckets)-1]))
-		durFilter, durFilterArgs := q.DurationFilter()
+		durFilter, durFilterArgs := q.SelectionFilter()
 		if durFilter != "" {
 			filters = append(filters, durFilter)
 			filterArgs = append(filterArgs, durFilterArgs...)
@@ -417,7 +524,7 @@ func (c *Client) querySpans(ctx context.Context, q SpanQuery, orderBy string, fi
 		filters = append(filters, tsFilter)
 		filterArgs = append(filterArgs, tsFilterArgs...)
 	}
-	durFilter, durFilterArgs := q.DurationFilter()
+	durFilter, durFilterArgs := q.SelectionFilter()
 	if durFilter != "" {
 		filters = append(filters, durFilter)
 		filterArgs = append(filterArgs, durFilterArgs...)
@@ -599,7 +706,7 @@ WHERE Timestamp BETWEEN @from AND @to AND TraceId IN @traceIds`
 func (c *Client) getTraceErrors(ctx context.Context, q SpanQuery) (map[model.TraceSpanKey]*model.TraceErrorsStat, error) {
 	filters, filterArgs := q.RootSpansFilter(false)
 	q.Errors = true
-	durFilter, durFilterArgs := q.DurationFilter()
+	durFilter, durFilterArgs := q.SelectionFilter()
 	if durFilter != "" {
 		filters = append(filters, durFilter)
 		filterArgs = append(filterArgs, durFilterArgs...)
@@ -663,7 +770,7 @@ func (c *Client) GetSelectionAndBaselineTraces(ctx context.Context, q SpanQuery)
 			clickhouse.DateNamed("tsFrom", q.TsFrom.ToStandard(), clickhouse.NanoSeconds),
 			clickhouse.DateNamed("tsTo", q.TsTo.ToStandard(), clickhouse.NanoSeconds),
 		)
-		durFilter, durFilterArgs := q.DurationFilter()
+		durFilter, durFilterArgs := q.SelectionFilter()
 		if durFilter != "" {
 			selectionFilter += " AND " + durFilter
 			filterArgs = append(filterArgs, durFilterArgs...)
@@ -722,7 +829,9 @@ func (q *SpanQuery) IsSelectionDefined() bool {
 	return q.TsFrom > q.Ctx.From || q.TsTo < q.Ctx.To || q.DurFrom > 0 || q.DurTo > 0 || q.Errors
 }
 
-func (q *SpanQuery) DurationFilter() (string, []any) {
+// SelectionFilter narrows raw spans to the selection made on the charts: a
+// duration range, or errors (links made with the former heatmap).
+func (q *SpanQuery) SelectionFilter() (string, []any) {
 	var filter string
 	switch {
 	case q.DurFrom > 0 && q.DurTo > 0 && q.Errors:
@@ -762,7 +871,7 @@ func (q *SpanQuery) RootSpansFilter(fromMV bool) ([]string, []any) {
 }
 
 func (q *SpanQuery) rootSpansFilter(fromMV bool, skipField string) ([]string, []any) {
-	filter, args := q.filter(skipField)
+	filter, args := q.filter(skipField, fromMV)
 	filter = append(filter, rootSpanCondition(fromMV))
 	if len(q.ExcludePeerAddrs) > 0 {
 		filter = append(filter, "NetSockPeerAddr NOT IN (@addrs)")
@@ -806,7 +915,8 @@ func (c *Client) useTracesHistogram(ctx context.Context, q SpanQuery, from times
 func (q *SpanQuery) filtersOnHistogramDimensions() bool {
 	for _, f := range q.Filters {
 		switch f.Field {
-		case "ServiceName", "SpanName", "SpanKind", "NetSockPeerAddr", "Source": // Source is derived from ServiceName
+		// Source is derived from ServiceName, Status is the StatusClass column
+		case "ServiceName", "SpanName", "SpanKind", "NetSockPeerAddr", "Source", "Status":
 		default:
 			return false
 		}
@@ -815,7 +925,7 @@ func (q *SpanQuery) filtersOnHistogramDimensions() bool {
 }
 
 func (q *SpanQuery) SpansByServiceNameFilter(fromMV bool) ([]string, []any) {
-	filter, args := q.Filter()
+	filter, args := q.Filter(fromMV)
 	filter = append(filter, fmt.Sprintf("(SpanKind = 'SPAN_KIND_SERVER' OR SpanKind = 'SPAN_KIND_CONSUMER' OR (SpanKind = 'SPAN_KIND_INTERNAL' AND %s))", rootSpanCondition(fromMV)))
 	if len(q.ExcludePeerAddrs) > 0 {
 		filter = append(filter, "NetSockPeerAddr NOT IN (@addrs)")
@@ -824,11 +934,11 @@ func (q *SpanQuery) SpansByServiceNameFilter(fromMV bool) ([]string, []any) {
 	return filter, args
 }
 
-func (q *SpanQuery) Filter() ([]string, []any) {
-	return q.filter("")
+func (q *SpanQuery) Filter(fromMV bool) ([]string, []any) {
+	return q.filter("", fromMV)
 }
 
-func (q *SpanQuery) filter(skipField string) ([]string, []any) {
+func (q *SpanQuery) filter(skipField string, fromMV bool) ([]string, []any) {
 	var filter []string
 	var args []any
 	for i, f := range q.Filters {
@@ -836,7 +946,7 @@ func (q *SpanQuery) filter(skipField string) ([]string, []any) {
 			continue
 		}
 		name := fmt.Sprintf("filter_%d", i)
-		if base, ok := traceDerivedFieldExpr(f.Field); ok {
+		if base, ok := traceDerivedFieldExpr(f.Field, fromMV); ok {
 			pred, ok := derivedFieldPredicate(base, f.Op, name)
 			if !ok {
 				continue

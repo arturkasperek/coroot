@@ -1,5 +1,6 @@
 const TRACE_FACETS = [
     { key: 'Source', label: 'Source' },
+    { key: 'Status', label: 'Status' },
     { key: 'Namespace', label: 'Namespace' },
     { key: 'ServiceName', label: 'Application' },
     { key: 'ApiRoute', label: 'API Route' },
@@ -27,7 +28,8 @@ function traceFacetLabel(key, value) {
     return value;
 }
 
-export function buildTraceQuickFilters(facets = []) {
+// options.statusColors maps a status class to the CSS color of its marker.
+export function buildTraceQuickFilters(facets = [], options = {}) {
     const backend = new Map((facets || []).map((group) => [group.key, group]));
     return TRACE_FACETS.map((def) => {
         const values = (backend.get(def.key)?.values || [])
@@ -36,7 +38,7 @@ export function buildTraceQuickFilters(facets = []) {
                 value: facet.value,
                 label: traceFacetLabel(def.key, facet.value),
                 count: facet.count || 0,
-                color: '',
+                color: def.key === 'Status' ? (options.statusColors || {})[facet.value] || '' : '',
             }));
         return { key: def.key, label: def.label, values };
     }).filter((group) => group.values.length > 0);

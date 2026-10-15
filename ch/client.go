@@ -338,11 +338,12 @@ CREATE TABLE IF NOT EXISTS otel_traces_histogram @on_cluster (
      Timestamp DateTime CODEC(Delta, ZSTD(1)),
      Bucket Float64 CODEC(ZSTD(1)),
      Total UInt64 CODEC(ZSTD(1)),
-     Failed UInt64 CODEC(ZSTD(1))
+     Failed UInt64 CODEC(ZSTD(1)),
+     StatusClass LowCardinality(String) CODEC(ZSTD(1))
 ) ENGINE @summing_merge_tree
 TTL Timestamp + toIntervalSecond(@ttl_traces)
 PARTITION BY toDate(Timestamp)
-ORDER BY (ServiceName, SpanName, SpanKind, Root, Timestamp, NetSockPeerAddr, NetPeerName, NetPeerPort, Bucket)
+ORDER BY (ServiceName, SpanName, SpanKind, Root, Timestamp, NetSockPeerAddr, NetPeerName, NetPeerPort, Bucket, StatusClass)
 SETTINGS index_granularity=8192, ttl_only_drop_parts = 1`,
 
 		`
@@ -356,9 +357,10 @@ SELECT
     toDateTime(toStartOfMinute(Timestamp)) AS Timestamp,
     roundDown(Duration/1000000, [0,5,10,25,50,100,250,500,1000,2500,5000,10000]) AS Bucket,
     count(1) AS Total,
-    countIf(StatusCode = 'STATUS_CODE_ERROR') AS Failed
+    countIf(StatusCode = 'STATUS_CODE_ERROR') AS Failed,
+    ` + TraceStatusClassExpression + ` AS StatusClass
 FROM otel_traces
-GROUP BY ServiceName, SpanName, SpanKind, Root, NetSockPeerAddr, NetPeerName, NetPeerPort, Timestamp, Bucket`,
+GROUP BY ServiceName, SpanName, SpanKind, Root, NetSockPeerAddr, NetPeerName, NetPeerPort, Timestamp, Bucket, StatusClass`,
 
 		`
 CREATE TABLE IF NOT EXISTS otel_traces_trace_id_ts @on_cluster (

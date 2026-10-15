@@ -14,12 +14,12 @@ func TestSpanQueryFilterSkipsNamedField(t *testing.T) {
 	q.AddFilter("ServiceName", "=", "express-demo")
 	q.AddFilter("SpanName", "=", "GET /api/hello")
 
-	filter, _ := q.filter("ServiceName")
+	filter, _ := q.filter("ServiceName", false)
 	joined := strings.Join(filter, " AND ")
 	assert.NotContains(t, joined, "ServiceName")
 	assert.Contains(t, joined, "SpanName")
 
-	filter, _ = q.filter("SpanName")
+	filter, _ = q.filter("SpanName", false)
 	joined = strings.Join(filter, " AND ")
 	assert.Contains(t, joined, "ServiceName")
 	assert.NotContains(t, joined, "SpanName")
@@ -30,20 +30,20 @@ func TestSpanQueryFilterNamespaceUsesColumn(t *testing.T) {
 	q.AddFilter("Namespace", "=", "coroot-dev")
 	q.AddFilter("ServiceName", "=", "express-demo")
 
-	filter, args := q.filter("")
+	filter, args := q.filter("", false)
 	joined := strings.Join(filter, " AND ")
 	assert.Contains(t, joined, "Namespace")
 	assert.NotContains(t, joined, "ResourceAttributes")
 	assert.Contains(t, joined, "ServiceName =")
 	assertArgsContain(t, args, "coroot-dev")
 
-	filter, _ = q.filter("Namespace")
+	filter, _ = q.filter("Namespace", false)
 	joined = strings.Join(filter, " AND ")
 	assert.NotContains(t, joined, "Namespace")
 	assert.Contains(t, joined, "ServiceName =")
 
 	q.Filters = []SpanFilter{{Field: "Namespace", Op: "!=", Value: "n/a"}}
-	filter, _ = q.filter("")
+	filter, _ = q.filter("", false)
 	assert.Contains(t, strings.Join(filter, " AND "), "NOT (")
 }
 
@@ -99,14 +99,14 @@ func TestSpanQueryFilterApiRouteUsesColumn(t *testing.T) {
 	q.AddFilter("ApiRoute", "=", "GET /health")
 	q.AddFilter("ServiceName", "=", "express-demo")
 
-	filter, args := q.filter("")
+	filter, args := q.filter("", false)
 	joined := strings.Join(filter, " AND ")
 	assert.Contains(t, joined, "ApiRoute")
 	assert.NotContains(t, joined, "SpanAttributes")
 	assert.Contains(t, joined, "ServiceName =")
 	assertArgsContain(t, args, "GET /health")
 
-	filter, _ = q.filter("ApiRoute")
+	filter, _ = q.filter("ApiRoute", false)
 	joined = strings.Join(filter, " AND ")
 	assert.NotContains(t, joined, "ApiRoute")
 	assert.Contains(t, joined, "ServiceName =")
@@ -178,7 +178,7 @@ func TestTraceSourceFacet(t *testing.T) {
 		} {
 			q := SpanQuery{}
 			q.AddFilter("Source", op, "agent")
-			filter, args := q.Filter()
+			filter, args := q.Filter(false)
 			require.Len(t, filter, 1, op)
 			assert.Equal(t, want, filter[0], op)
 			require.Len(t, args, 1)

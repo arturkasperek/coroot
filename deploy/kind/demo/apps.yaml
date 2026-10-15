@@ -220,6 +220,8 @@ spec:
               while true; do
                 curl -sf -m 5 http://nextjs-demo:3000/ || true
                 curl -sf -m 5 http://nextjs-demo:3000/chain || true
+                curl -sf -m 5 http://nextjs-demo:3000/products/1 || true
+                curl -sf -m 5 http://nextjs-demo:3000/products/42 || true
                 curl -sf -m 5 http://express-demo:3000/api/hello || true
                 curl -sf -m 5 http://express-demo:3000/api/slow || true
                 curl -sf -m 5 http://express-demo:3000/api/error || true

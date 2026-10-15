@@ -24,12 +24,39 @@
                 {{ view.error }}
             </v-alert>
 
-            <div v-if="view.heatmap" class="heatmap-section" :class="{ collapsed: heatmapCollapsed }">
-                <v-btn text small class="heatmap-toggle" :aria-expanded="String(!heatmapCollapsed)" @click="heatmapCollapsed = !heatmapCollapsed">
-                    <v-icon small class="mr-1">{{ heatmapCollapsed ? 'mdi-chevron-down' : 'mdi-chevron-up' }}</v-icon>
-                    {{ heatmapCollapsed ? 'Show heatmap' : 'Hide heatmap' }}
+            <div v-if="view.requests_chart" class="charts-section" :class="{ collapsed: chartsCollapsed }">
+                <v-btn text small class="charts-toggle" :aria-expanded="String(!chartsCollapsed)" @click="chartsCollapsed = !chartsCollapsed">
+                    <v-icon small class="mr-1">{{ chartsCollapsed ? 'mdi-chevron-down' : 'mdi-chevron-up' }}</v-icon>
+                    {{ chartsCollapsed ? 'Show charts' : 'Hide charts' }}
                 </v-btn>
-                <Heatmap v-if="!heatmapCollapsed" :heatmap="view.heatmap" :selection="selection" @select="setSelection" :loading="loading" />
+                <div v-if="!chartsCollapsed" class="charts">
+                    <Chart
+                        :chart="requestsChart"
+                        :selection="{}"
+                        :loading="loading"
+                        @select="zoom"
+                        @legend-click="selectStatus($event.label)"
+                        @series-click="selectStatus($event.name)"
+                        class="traces-chart"
+                    />
+                    <Chart
+                        v-if="latencyChart"
+                        :chart="latencyChart"
+                        :selection="{}"
+                        :loading="loading"
+                        @select="zoom"
+                        @legend-click="selectSlowerThanP95($event.label)"
+                        @series-click="selectSlowerThanP95($event.name)"
+                        class="traces-chart"
+                    />
+                </div>
+            </div>
+
+            <div v-if="selectionChips.length" class="selection-chips">
+                <span class="selection-chips-title">Selection:</span>
+                <v-chip v-for="chip in selectionChips" :key="chip.key" small close @click:close="removeSelectionChip(chip.key)">
+                    {{ chip.label }}
+                </v-chip>
             </div>
 
             <v-tabs height="32" show-arrows hide-slider>
@@ -349,19 +376,31 @@
 <script>
 import Views from '@/views/Views.vue';
 import { palette } from '../utils/colors';
-import Heatmap from '../components/Heatmap.vue';
+import Chart from '../components/Chart.vue';
 import TracingTrace from '../components/TracingTrace.vue';
 import FlameGraph from '../components/FlameGraph.vue';
 import QueryPanel from '@/components/QueryPanel.vue';
 import QuickFilters from '@/components/QuickFilters.vue';
 import ObservabilityTable from '@/components/ObservabilityTable.vue';
-import { TRACE_QUERY_FIELDS, fromQueryBuilderFilters, toQueryBuilderFilters } from '@/utils/traceQuery';
+import {
+    TRACE_QUERY_FIELDS,
+    fromQueryBuilderFilters,
+    removeSelection,
+    selectionChips,
+    toQueryBuilderFilters,
+    toggleSlowerThanSelection,
+    TRACE_STATUS_CLASSES,
+    TRACE_LATENCY_COLORS,
+    TRACE_STATUS_COLORS,
+    toggleStatusFilter,
+    withSeriesColors,
+} from '@/utils/traceQuery';
 import { TRACE_SORT_VALUES, appendSortChip, effectiveSort, extractSort, toggleSort } from '@/utils/observabilitySort';
 import { buildTraceQuickFilters, displayTraceSourceName, toTraceQuickFilters } from '@/utils/traceQuickFilters';
 import { TRACE_NAME_SAME_MARK, traceApiRoute, traceColumnValue, traceDisplayName, traceDuration } from '@/utils/traceColumns';
 
 export default {
-    components: { Views, FlameGraph, TracingTrace, Heatmap, QueryPanel, QuickFilters, ObservabilityTable },
+    components: { Views, FlameGraph, TracingTrace, Chart, QueryPanel, QuickFilters, ObservabilityTable },
 
     data() {
         return {
@@ -378,7 +417,7 @@ export default {
             traceLogsLoading: false,
             traceLogsError: '',
             tracesBodyHeight: 0,
-            heatmapCollapsed: false,
+            chartsCollapsed: false,
         };
     },
 
@@ -547,9 +586,15 @@ export default {
         traceSort() {
             return effectiveSort(this.query.sort);
         },
-        selection() {
-            const q = this.query;
-            return { x1: q.ts_from, x2: q.ts_to, y1: q.dur_from, y2: q.dur_to };
+        requestsChart() {
+            return withSeriesColors(this.view.requests_chart, TRACE_STATUS_COLORS);
+        },
+        latencyChart() {
+            const chart = withSeriesColors(this.view.latency_chart, TRACE_LATENCY_COLORS);
+            return chart && { ...chart, unit: 's' };
+        },
+        selectionChips() {
+            return selectionChips(this.query, (ms) => this.$format.date(ms, '{HH}:{mm}'));
         },
         selectionDefined() {
             const q = this.query;
@@ -568,7 +613,8 @@ export default {
             return { params: { view: 'logs' }, query: { query, ...this.$utils.contextQuery() } };
         },
         traceFilterGroups() {
-            return buildTraceQuickFilters(this.view.facets);
+            const statusColors = Object.fromEntries(Object.entries(TRACE_STATUS_COLORS).map(([status, color]) => [status, palette.get(color)]));
+            return buildTraceQuickFilters(this.view.facets, { statusColors });
         },
         traceQuickFilters() {
             return toTraceQuickFilters(this.query.filters);
@@ -722,6 +768,9 @@ export default {
                 case 'Source':
                     this.qb.items = ['agent', 'otel'];
                     break;
+                case 'Status':
+                    this.qb.items = TRACE_STATUS_CLASSES;
+                    break;
                 case 'Namespace':
                     this.qb.items = [
                         ...new Set(
@@ -758,18 +807,36 @@ export default {
             q.sort = toggleSort(this.query.sort, by);
             this.push(this.setQuery(q, from, to));
         },
-        setSelection(s) {
-            const { from, to } = this.view.heatmap.ctx;
-            const q = { ...this.query };
-            q.ts_from = s.x1;
-            q.ts_to = s.x2;
-            q.dur_from = s.y1;
-            q.dur_to = s.y2;
-            q.trace_id = undefined;
+        // setSelection opens the traces narrowed by a selection made on the charts.
+        setSelection(q) {
+            const { from, to } = this.$route.query;
+            q = { ...q, trace_id: undefined };
             if (!q.view || q.view === 'overview') {
                 q.view = 'traces';
             }
             this.push(this.setQuery(q, from, to));
+        },
+        // a time range dragged on a chart becomes the time window, as on Logs
+        zoom(s) {
+            const { from, to } = s.selection;
+            if (from && to) {
+                this.push({ query: { ...this.$route.query, from, to } });
+            }
+        },
+        // a status class clicked on the requests chart becomes a Status filter of the query
+        selectStatus(status) {
+            const filters = toggleStatusFilter(this.query.filters, status);
+            this.setSelection({ ...this.query, filters: filters.length ? filters : undefined });
+        },
+        // a click on p50 selects nothing: the slower half is not worth a look
+        selectSlowerThanP95(series) {
+            if (series === 'p95' && this.view.latency_quantiles) {
+                this.setSelection(toggleSlowerThanSelection(this.query, this.view.latency_quantiles.p95));
+            }
+        },
+        removeSelectionChip(key) {
+            const { from, to } = this.$route.query;
+            this.push(this.setQuery(removeSelection(this.query, key), from, to));
         },
         setDiffMode(m) {
             const { from, to } = this.$route.query;
@@ -860,21 +927,41 @@ export default {
     border-bottom: 2px solid var(--text-color);
 }
 
-.heatmap-section {
+.charts-section {
     position: relative;
 }
-.heatmap-section.collapsed {
+.charts-section.collapsed {
     height: 32px;
 }
-.heatmap-toggle {
+.charts-toggle {
     position: absolute;
     top: -6px;
     left: 0;
     z-index: 2;
     color: var(--text-color-dimmed);
 }
-.heatmap-section.collapsed .heatmap-toggle {
+.charts-section.collapsed .charts-toggle {
     top: 0;
+}
+.charts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+}
+.traces-chart {
+    flex: 1 1 400px;
+    min-width: 0;
+}
+.selection-chips {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+    margin: 8px 0;
+}
+.selection-chips-title {
+    color: var(--text-color-dimmed);
+    margin-right: 4px;
 }
 
 .traces-body {

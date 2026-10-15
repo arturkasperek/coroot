@@ -53,3 +53,18 @@ func TestTraceFacetGroupsFromMergedPutsSourceFirst(t *testing.T) {
 	assert.Equal(t, []string{"Source", "Namespace", "ServiceName", "SpanName"}, []string{groups[0].Key, groups[1].Key, groups[2].Key, groups[3].Key})
 	assert.Equal(t, []clickhouse.FacetValue{{Value: "agent", Count: 40}, {Value: "otel", Count: 12}}, groups[0].Values)
 }
+
+func TestTraceFacetGroupsFromMergedOrdersStatusLikeTheChart(t *testing.T) {
+	groups := traceFacetGroupsFromMerged(map[string]map[string]uint64{
+		"ServiceName": {"flask-demo": 40},
+		"Status":      {"other": 900, "5xx": 3, "2xx": 50, "error": 1},
+		"Source":      {"otel": 10},
+	})
+	assert.Equal(t, []string{"Source", "Status", "ServiceName"}, []string{groups[0].Key, groups[1].Key, groups[2].Key})
+	assert.Equal(t, []clickhouse.FacetValue{
+		{Value: "2xx", Count: 50},
+		{Value: "5xx", Count: 3},
+		{Value: "error", Count: 1},
+		{Value: "other", Count: 900},
+	}, groups[1].Values)
+}

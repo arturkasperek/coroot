@@ -115,3 +115,34 @@ test('buildTraceQuickFilters puts the Source facet first and names its values', 
     assert.equal(groups[0].label, 'Source');
     assert.equal(displayTraceSourceName('other'), 'other');
 });
+
+test('buildTraceQuickFilters shows the status classes after Source, with the colors of the chart', async () => {
+    const { buildTraceQuickFilters } = await loadTraceQuickFilters();
+    const groups = buildTraceQuickFilters(
+        [
+            { key: 'ServiceName', values: [{ value: 'flask-demo', count: 40 }] },
+            {
+                key: 'Status',
+                values: [
+                    { value: '2xx', count: 30 },
+                    { value: '5xx', count: 8 },
+                ],
+            },
+            { key: 'Source', values: [{ value: 'otel', count: 40 }] },
+        ],
+        { statusColors: { '2xx': '#66bb6a', '5xx': '#ef5350' } },
+    );
+    assert.deepEqual(
+        groups.map((group) => group.key),
+        ['Source', 'Status', 'ServiceName'],
+    );
+    assert.deepEqual(groups[1], {
+        key: 'Status',
+        label: 'Status',
+        values: [
+            { value: '2xx', label: '2xx', count: 30, color: '#66bb6a' },
+            { value: '5xx', label: '5xx', count: 8, color: '#ef5350' },
+        ],
+    });
+    assert.equal(groups[2].values[0].color, '', 'other facets have no color');
+});
