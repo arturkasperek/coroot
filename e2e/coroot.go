@@ -362,11 +362,26 @@ type overviewTraceSpan struct {
 }
 
 type overviewTraces struct {
-	Error   string              `json:"error"`
-	Message string              `json:"message"`
-	Facets  apiFacetGroups      `json:"facets"`
-	Trace   []overviewTraceSpan `json:"trace"`
-	Traces  []overviewTraceSpan `json:"traces"`
+	Error            string              `json:"error"`
+	Message          string              `json:"message"`
+	Facets           apiFacetGroups      `json:"facets"`
+	Trace            []overviewTraceSpan `json:"trace"`
+	Traces           []overviewTraceSpan `json:"traces"`
+	RequestsChart    *overviewChart      `json:"requests_chart"`
+	LatencyChart     *overviewChart      `json:"latency_chart"`
+	LatencyQuantiles *struct {
+		P50 float64 `json:"p50"`
+		P95 float64 `json:"p95"`
+	} `json:"latency_quantiles"`
+}
+
+// overviewChart is a model.Chart: a value per point, null where there is none.
+type overviewChart struct {
+	Series []struct {
+		Name  string     `json:"name"`
+		Color string     `json:"color"`
+		Data  []*float64 `json:"data"`
+	} `json:"series"`
 }
 
 func fetchOverviewTraces(t *testing.T, projectID string, query map[string]any) overviewTraces {

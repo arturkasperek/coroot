@@ -240,6 +240,8 @@ type traceFixtureRow struct {
 	SpanAttributes     map[string]string
 	Timestamp          time.Time
 	DurationNs         int64
+	// StatusCode is the span status, STATUS_CODE_UNSET when empty.
+	StatusCode string
 }
 
 func insertTraceFixture(t *testing.T, rows []traceFixtureRow) {
@@ -258,6 +260,10 @@ func insertTraceFixture(t *testing.T, rows []traceFixtureRow) {
 		dur := s.DurationNs
 		if dur == 0 {
 			dur = 5_000_000
+		}
+		statusCode := s.StatusCode
+		if statusCode == "" {
+			statusCode = "STATUS_CODE_UNSET"
 		}
 		for i := 0; i < s.Count; i++ {
 			n++
@@ -281,7 +287,7 @@ func insertTraceFixture(t *testing.T, rows []traceFixtureRow) {
 				"ResourceAttributes": attrs,
 				"SpanAttributes":     spanAttrs,
 				"Duration":           dur,
-				"StatusCode":         "STATUS_CODE_UNSET",
+				"StatusCode":         statusCode,
 				"StatusMessage":      "",
 			})
 			if err != nil {
