@@ -82,6 +82,7 @@ func TestTraceStatusClasses(t *testing.T) {
 	})
 
 	viewContext := timeseries.NewContext(timeseries.Time(now.Add(5*time.Second).Unix()), timeseries.Time(now.Add(time.Hour).Unix()), 60)
+	window := clickhouse.NewTracesWindow(viewContext.From, viewContext.To, false, viewContext.Step)
 	expected := map[string]float32{"2xx": 1, "3xx": 1, "4xx": 1, "5xx": 1, "error": 2, "other": 3}
 	for _, fromMV := range []bool{true, false} {
 		query := clickhouse.SpanQuery{Ctx: viewContext}
@@ -89,7 +90,7 @@ func TestTraceStatusClasses(t *testing.T) {
 			query.AddFilter("Namespace", "!=", "none") // a filter the histogram table cannot serve
 		}
 		t.Run(fmt.Sprintf("the chart counts, from the histogram table: %v", fromMV), func(t *testing.T) {
-			counts, err := client.GetRootSpansCounts(ctx, query)
+			counts, err := client.GetRootSpansCounts(ctx, query, window)
 			require.NoError(t, err)
 			actual := map[string]float32{}
 			for class, series := range counts.ByStatusClass {
@@ -105,7 +106,7 @@ func TestTraceStatusClasses(t *testing.T) {
 		t.Run(fmt.Sprintf("a status filter narrows the charts, from the histogram table: %v", fromMV), func(t *testing.T) {
 			query := query
 			query.Filters = append(append([]clickhouse.SpanFilter{}, query.Filters...), clickhouse.SpanFilter{Field: "Status", Op: "=", Value: "5xx"})
-			counts, err := client.GetRootSpansCounts(ctx, query)
+			counts, err := client.GetRootSpansCounts(ctx, query, window)
 			require.NoError(t, err)
 			require.Len(t, counts.ByStatusClass, 1)
 			assert.Equal(t, float32(1), sumOf(counts.ByStatusClass["5xx"]))
@@ -125,4 +126,63 @@ func TestTraceStatusClasses(t *testing.T) {
 		}
 		assert.ElementsMatch(t, []string{"failed query", "out of range, failed"}, names)
 	})
+}
+
+// The charts, the facets and the list of the Traces page count one window: a
+// view in the past that ends inside a bucket counts that whole bucket in all
+// of them, so that the numbers add up. A view of the last 15 seconds counts
+// those 15 seconds, at a step of a second.
+func TestTracesWindowCountsAddUp(t *testing.T) {
+	e := chtest.New(t)
+	ctx := context.Background()
+	client, err := clickhouse.NewClient(e.Config, &db.Project{Name: "test"})
+	require.NoError(t, err)
+	defer client.Close()
+
+	base := time.Now().Add(-3 * time.Hour).Truncate(time.Minute)
+	insert := func(name string, at time.Time) {
+		e.Exec(t, fmt.Sprintf("INSERT INTO otel_traces (Timestamp, TraceId, SpanId, ParentSpanId, SpanName, SpanKind, ServiceName, SpanAttributes, Duration, StatusCode) VALUES "+
+			"(toDateTime64(%f, 9), '%s', '%s', '', '%s', 'SPAN_KIND_SERVER', 'service', map('http.status_code', '200'), 1000000, 'STATUS_CODE_UNSET')",
+			float64(at.UnixNano())/1e9, name, name, name))
+	}
+	insert("before the view, in its first bucket", base.Add(10*time.Second))
+	insert("in the view", base.Add(90*time.Second))
+	insert("after the view, in its last bucket", base.Add(61*time.Minute+40*time.Second))
+	insert("after the last bucket", base.Add(62*time.Minute+5*time.Second))
+
+	count := func(window clickhouse.TracesWindow) (chart float32, facet uint64, list int) {
+		query := clickhouse.SpanQuery{Ctx: window.ChartContext(), TsFrom: window.From, TsTo: window.To, Limit: 100}
+		query.AddFilter("Namespace", "!=", "none") // otel_traces, not the histogram table, which lags its inserts
+		counts, err := client.GetRootSpansCounts(ctx, query, window)
+		require.NoError(t, err)
+		for _, series := range counts.ByStatusClass {
+			chart += sumOf(series)
+		}
+		values, err := client.GetTraceFacetCounts(ctx, query, "Status")
+		require.NoError(t, err)
+		for _, value := range values {
+			facet += value.Count
+		}
+		spans, err := client.GetRootSpans(ctx, query)
+		require.NoError(t, err)
+		return chart, facet, len(spans)
+	}
+
+	// over an hour: buckets of a minute
+	from := timeseries.TimeFromStandard(base.Add(30 * time.Second))
+	to := timeseries.TimeFromStandard(base.Add(61*time.Minute + 20*time.Second))
+	window := clickhouse.NewTracesWindow(from, to, false, 15)
+	assert.Equal(t, timeseries.Duration(60), window.Step)
+	chart, facet, list := count(window)
+	assert.Equal(t, float32(3), chart, "the whole first and last buckets")
+	assert.Equal(t, uint64(3), facet, "the facets count what the chart counts")
+	assert.Equal(t, 3, list, "and so does the list")
+
+	now := timeseries.TimeFromStandard(base.Add(61*time.Minute + 50*time.Second))
+	window = clickhouse.NewTracesWindow(now.Add(-15), now, true, 15)
+	assert.Equal(t, timeseries.Duration(1), window.Step)
+	chart, facet, list = count(window)
+	assert.Equal(t, float32(1), chart, "the last 15 seconds")
+	assert.Equal(t, uint64(1), facet)
+	assert.Equal(t, 1, list)
 }

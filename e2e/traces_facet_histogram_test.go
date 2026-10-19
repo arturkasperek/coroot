@@ -45,13 +45,13 @@ func TestOverviewTraceFacetsIgnoreHistogramInflation(t *testing.T) {
 		return traces.Error == "" && facetValueCount(traces.Facets, "ApiRoute", route) == 20
 	})
 
-	assertTraceFacet(t, traces, "ServiceName", svc, 20)
+	assertTraceFacet(t, traces, "Server", ns+"/"+svc, 20)
 	assertTraceFacet(t, traces, "SpanName", span, 20)
 	assertTraceFacet(t, traces, "Namespace", ns, 20)
 
 	withNS := queryWithFilters(base, map[string]string{"field": "Namespace", "op": "=", "value": ns})
 	filtered := fetchOverviewTraces(t, projectID, withNS)
-	assertTraceFacet(t, filtered, "ServiceName", svc, 20)
+	assertTraceFacet(t, filtered, "Server", ns+"/"+svc, 20)
 	assertTraceFacet(t, filtered, "SpanName", span, 20)
 	assertTraceFacet(t, filtered, "Namespace", ns, 20)
 	assertTraceFacet(t, filtered, "ApiRoute", route, 20)
@@ -62,6 +62,7 @@ func insertTraceHistogramInflation(t *testing.T, service, span string, extra uin
 	ts := time.Now().UTC().Add(-2 * time.Minute).Truncate(time.Minute).Format("2006-01-02 15:04:05")
 	line, err := json.Marshal(map[string]any{
 		"ServiceName":     service,
+		"Server":          service,
 		"SpanName":        span,
 		"SpanKind":        "SPAN_KIND_SERVER",
 		"Root":            1,
@@ -77,7 +78,7 @@ func insertTraceHistogramInflation(t *testing.T, service, span string, extra uin
 		t.Fatal(err)
 	}
 	chExec(t, `INSERT INTO otel_traces_histogram (
-		ServiceName, SpanName, SpanKind, Root, NetSockPeerAddr, NetPeerName, NetPeerPort,
+		ServiceName, Server, SpanName, SpanKind, Root, NetSockPeerAddr, NetPeerName, NetPeerPort,
 		Timestamp, Bucket, Total, Failed
 	) FORMAT JSONEachRow`, append(line, '\n'))
 }

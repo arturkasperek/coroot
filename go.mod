@@ -9,6 +9,7 @@ require (
 	github.com/PagerDuty/go-pagerduty v1.6.0
 	github.com/atc0005/go-teams-notify/v2 v2.13.0
 	github.com/buger/jsonparser v1.1.1
+	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/coroot/logparser v1.1.4
 	github.com/dustin/go-humanize v1.0.1
 	github.com/gogo/protobuf v1.3.2
@@ -55,7 +56,6 @@ require (
 	github.com/andybalholm/brotli v1.0.5 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
-	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/dennwc/varint v1.0.0 // indirect
 	github.com/dmarkham/enumer v1.5.9 // indirect

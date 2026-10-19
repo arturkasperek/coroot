@@ -1,8 +1,10 @@
 const TRACE_FACETS = [
     { key: 'Source', label: 'Source' },
     { key: 'Status', label: 'Status' },
+    // the namespace of the server, the part of Server before its slash
     { key: 'Namespace', label: 'Namespace' },
-    { key: 'ServiceName', label: 'Application' },
+    { key: 'Server', label: 'Server' },
+    { key: 'Client', label: 'Client' },
     { key: 'ApiRoute', label: 'API Route' },
     { key: 'SpanName', label: 'Root span name' },
 ];

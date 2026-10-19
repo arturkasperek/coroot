@@ -76,8 +76,29 @@ export function traceDisplayName(name, apiRoute) {
     return n;
 }
 
+// applicationShortName is the name of an application of the Client and Server
+// columns without its namespace: express-demo for coroot-dev/express-demo.
+function applicationShortName(application) {
+    const value = String(application || '');
+    return value.slice(value.indexOf('/') + 1);
+}
+
+// traceClientServer shows the two applications of a request, client → server;
+// the server alone for a span with no client (an internal one).
+export function traceClientServer(item) {
+    const server = applicationShortName(item && item.server);
+    const client = applicationShortName(item && item.client);
+    if (!server) {
+        return '—';
+    }
+    return client ? `${client} → ${server}` : server;
+}
+
 export function traceColumnValue(item, header) {
     const key = (header && (header.value || header.key)) || '';
+    if (key === 'client_server') {
+        return traceClientServer(item);
+    }
     if (key === 'api_route') {
         return traceApiRoute(item && item.attributes) || '—';
     }

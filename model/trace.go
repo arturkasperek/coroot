@@ -17,12 +17,16 @@ type Trace struct {
 }
 
 type TraceSpan struct {
-	Timestamp          time.Time
-	Name               string
-	TraceId            string
-	SpanId             string
-	ParentSpanId       string
-	ServiceName        string
+	Timestamp    time.Time
+	Name         string
+	TraceId      string
+	SpanId       string
+	ParentSpanId string
+	ServiceName  string
+	// Client and Server are the applications that sent and served the
+	// request of the span, as the collector names them (namespace/name).
+	Client             string
+	Server             string
 	Duration           time.Duration
 	StatusCode         string
 	StatusMessage      string
@@ -31,7 +35,15 @@ type TraceSpan struct {
 	Events             []TraceSpanEvent
 	ClusterName        string
 
-	// The HTTP bodies; loaded only for the single-trace view (SpanQuery.WithBodies).
+	// The HTTP bodies, loaded by their hashes (0 for none) from trace_bodies
+	// only for the single-trace view (SpanQuery.WithBodies).
+	RequestBodyHash  uint64
+	ResponseBodyHash uint64
+	// SpanKind and RequestKey (the key the node agent gives a request at its
+	// client and server spans) are loaded with the bodies too: a server span
+	// whose server skipped the bodies shows those of its client span.
+	SpanKind     string
+	RequestKey   uint64
 	RequestBody  string
 	ResponseBody string
 }

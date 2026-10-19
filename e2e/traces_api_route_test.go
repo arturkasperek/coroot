@@ -49,16 +49,16 @@ func TestOverviewTraceApiRouteFilters(t *testing.T) {
 	}
 	assertTraceFacet(t, traces, "ApiRoute", hello, 20)
 	assertTraceFacet(t, traces, "ApiRoute", metrics, 8)
-	assertTraceFacet(t, traces, "ServiceName", svcA, 20)
-	assertTraceFacet(t, traces, "ServiceName", svcB, 8)
+	assertTraceFacet(t, traces, "Server", svcA, 20)
+	assertTraceFacet(t, traces, "Server", svcB, 8)
 
 	withRoute := copyQuery(base)
 	withRoute["filters"] = []map[string]string{{"field": "ApiRoute", "op": "=", "value": hello}}
 	traces = fetchOverviewTraces(t, projectID, withRoute)
 	assertTraceFacet(t, traces, "ApiRoute", hello, 20)
 	assertTraceFacet(t, traces, "ApiRoute", metrics, 8)
-	assertTraceFacet(t, traces, "ServiceName", svcA, 20)
-	assertTraceFacet(t, traces, "ServiceName", svcB, 0)
+	assertTraceFacet(t, traces, "Server", svcA, 20)
+	assertTraceFacet(t, traces, "Server", svcB, 0)
 	for _, s := range traces.Traces {
 		if s.Service == svcB {
 			t.Fatalf("ApiRoute=%s still listed %s", hello, svcB)

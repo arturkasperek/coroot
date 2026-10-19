@@ -34,6 +34,7 @@ spec:
             - --collector-endpoint=http://coroot:8080
             - --wal-dir=/tmp
             - --scrape-interval=15s
+            - --http-body-capture
           securityContext:
             privileged: true
           ports:

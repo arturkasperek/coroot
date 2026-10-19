@@ -77,7 +77,7 @@ func TestOverviewTraceFacetFiltersUpdateOtherGroups(t *testing.T) {
 	}
 
 	t.Run("baseline", func(t *testing.T) {
-		assertTracePopulations(t, traces, a, b, "Namespace", "ServiceName", "ApiRoute", "SpanName")
+		assertTracePopulations(t, traces, a, b, "Namespace", "Server", "ApiRoute", "SpanName")
 		assertTraceFacet(t, traces, "SpanName", child, 0)
 	})
 
@@ -88,10 +88,10 @@ func TestOverviewTraceFacetFiltersUpdateOtherGroups(t *testing.T) {
 		assertTraceListHasNoService(t, got, svcB)
 	})
 
-	t.Run("ServiceName=A", func(t *testing.T) {
-		q := queryWithFilters(base, map[string]string{"field": "ServiceName", "op": "=", "value": svcA})
+	t.Run("Server=A", func(t *testing.T) {
+		q := queryWithFilters(base, map[string]string{"field": "Server", "op": "=", "value": nsA + "/" + svcA})
 		got := fetchOverviewTraces(t, projectID, q)
-		assertTracePopulations(t, got, a, b, "ServiceName")
+		assertTracePopulations(t, got, a, b, "Server")
 		assertTraceListHasNoService(t, got, svcB)
 	})
 
@@ -109,10 +109,10 @@ func TestOverviewTraceFacetFiltersUpdateOtherGroups(t *testing.T) {
 		assertTraceListHasNoService(t, got, svcB)
 	})
 
-	t.Run("ApiRoute=A and ServiceName=A", func(t *testing.T) {
+	t.Run("ApiRoute=A and Server=A", func(t *testing.T) {
 		q := queryWithFilters(base,
 			map[string]string{"field": "ApiRoute", "op": "=", "value": routeA},
-			map[string]string{"field": "ServiceName", "op": "=", "value": svcA},
+			map[string]string{"field": "Server", "op": "=", "value": nsA + "/" + svcA},
 		)
 		got := fetchOverviewTraces(t, projectID, q)
 		// Each skipped field still applies the other filter, so B drops everywhere.
@@ -137,8 +137,8 @@ func (p facetPop) value(field string) string {
 	switch field {
 	case "Namespace":
 		return p.ns
-	case "ServiceName":
-		return p.svc
+	case "Server":
+		return p.ns + "/" + p.svc
 	case "ApiRoute":
 		return p.route
 	case "SpanName":
@@ -157,7 +157,7 @@ func assertTracePopulations(t *testing.T, traces overviewTraces, keep, drop face
 	for _, field := range skipSelf {
 		skip[field] = true
 	}
-	for _, field := range []string{"Namespace", "ServiceName", "ApiRoute", "SpanName"} {
+	for _, field := range []string{"Namespace", "Server", "ApiRoute", "SpanName"} {
 		assertTraceFacet(t, traces, field, keep.value(field), keep.n)
 		wantDrop := uint64(0)
 		if skip[field] {

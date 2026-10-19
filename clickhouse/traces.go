@@ -62,16 +62,14 @@ type RootSpansCounts struct {
 	ByDurationBucket map[float64]*timeseries.TimeSeries
 }
 
-// GetRootSpansCounts reads the counts of the Traces page charts: the time range
+// GetRootSpansCounts reads the counts of the Traces page charts: the window
 // and the filters of the query, not its selection.
-func (c *Client) GetRootSpansCounts(ctx context.Context, q SpanQuery) (*RootSpansCounts, error) {
-	fromMV := c.useTracesHistogram(ctx, q, q.Ctx.From)
+func (c *Client) GetRootSpansCounts(ctx context.Context, q SpanQuery, window TracesWindow) (*RootSpansCounts, error) {
+	fromMV := window.minuteAligned() && c.useTracesHistogram(ctx, q, window.From)
 	filters, filterArgs := q.RootSpansFilter(fromMV)
 
-	chartContext := TracesChartContext(q.Ctx)
-	from, step := chartContext.From, chartContext.Step
-	to := chartContext.To.Add(step)
-	points := int(to.Sub(from) / step)
+	from, step, to := window.From, window.Step, window.To
+	points := window.Points()
 
 	filters = append(filters, "Timestamp >= @from AND Timestamp < @to")
 	filterArgs = append(filterArgs,
@@ -156,15 +154,65 @@ func chartStep(step timeseries.Duration) timeseries.Duration {
 	return step
 }
 
-// TracesChartContext is the time axis of the Traces page charts: the step of
-// the view rounded up to whole minutes, and the range aligned to it, so that
-// each point is one toStartOfInterval bucket of ClickHouse.
-func TracesChartContext(viewContext timeseries.Context) timeseries.Context {
-	chartContext := viewContext
-	chartContext.Step = chartStep(viewContext.Step)
-	chartContext.From = viewContext.From.Truncate(chartContext.Step)
-	chartContext.To = viewContext.To.Truncate(chartContext.Step)
-	return chartContext
+// tracesWindowFineSteps are the steps of a view of up to an hour, read from
+// otel_traces: the smallest that gives at most tracesWindowMaxPoints buckets.
+var tracesWindowFineSteps = []timeseries.Duration{1, 2, 5, 10, 15, 30, 60}
+
+const tracesWindowMaxPoints = 60
+
+// TracesWindow is the time range of the Traces page, which its charts, facets
+// and list all count, so that their numbers add up: from the start of the
+// bucket of the view's start, to now for a live view (its last bucket is the
+// one in progress) or to the end of the bucket of the view's end for a view
+// in the past (every bucket is whole). To is exclusive.
+type TracesWindow struct {
+	From timeseries.Time
+	To   timeseries.Time
+	Step timeseries.Duration
+}
+
+// NewTracesWindow makes the window of a view from from to to, live when to is
+// now. A view of up to an hour gets a step of seconds, so that its last 15
+// seconds are its last 15 seconds; a longer one the step of the view
+// (viewStep) rounded up to whole minutes, the rows of the histogram table.
+func NewTracesWindow(from, to timeseries.Time, live bool, viewStep timeseries.Duration) TracesWindow {
+	duration := to.Sub(from)
+	step := chartStep(viewStep)
+	if duration <= timeseries.Hour {
+		for _, fine := range tracesWindowFineSteps {
+			step = fine
+			if duration <= fine*tracesWindowMaxPoints {
+				break
+			}
+		}
+	}
+	w := TracesWindow{From: from.Truncate(step), To: to, Step: step}
+	if !live {
+		if aligned := to.Truncate(step); aligned != to {
+			w.To = aligned.Add(step)
+		}
+	}
+	return w
+}
+
+// Points is the number of buckets of the window, the last one in progress for
+// a live view.
+func (w TracesWindow) Points() int {
+	return int((w.To.Sub(w.From) + w.Step - 1) / w.Step)
+}
+
+// ChartContext is the time axis of the charts of the window: a point per
+// bucket, at its start.
+func (w TracesWindow) ChartContext() timeseries.Context {
+	return timeseries.Context{From: w.From, To: w.From.Add(timeseries.Duration(w.Points()-1) * w.Step), Step: w.Step}
+}
+
+// minuteAligned tells whether the window can be read from the histogram
+// table, whose rows are per minute: its step and its start are whole minutes.
+// Its end may be any time: the rows of the minute in progress hold its spans
+// up to now.
+func (w TracesWindow) minuteAligned() bool {
+	return w.Step%60 == 0 && w.From%60 == 0
 }
 
 func (c *Client) GetRootSpans(ctx context.Context, q SpanQuery) ([]*model.TraceSpan, error) {
@@ -504,14 +552,138 @@ func (c *Client) getSpans(ctx context.Context, q SpanQuery, orderBy string, filt
 	return append(res, spans...), nil
 }
 
-// spanColumns is the SELECT list of every span query. The bodies are separate
-// columns so that the lists, which are most of the queries, do not read them.
+// spanColumns is the SELECT list of every span query. The bodies are in
+// trace_bodies, which only the single-trace view reads (loadBodies).
 func spanColumns(withBodies bool) string {
-	cols := "Timestamp, TraceId, SpanId, ParentSpanId, SpanName, ServiceName, Duration, StatusCode, StatusMessage, ResourceAttributes, SpanAttributes, Events.Timestamp, Events.Name, Events.Attributes"
+	cols := "Timestamp, TraceId, SpanId, ParentSpanId, SpanName, ServiceName, Client, Server, Duration, StatusCode, StatusMessage, ResourceAttributes, SpanAttributes, Events.Timestamp, Events.Name, Events.Attributes"
 	if withBodies {
-		cols += ", RequestBody, ResponseBody"
+		cols += ", RequestBodyHash, ResponseBodyHash, SpanKind, RequestKey"
 	}
 	return cols
+}
+
+// clientSpanWindow is how far in time from a server span its client span is
+// looked for: the clocks of two nodes, and the spans of the one request. A
+// 4-tuple, and so a key, is not used again for a minute (TIME_WAIT).
+const clientSpanWindow = 5 * time.Second
+
+// borrowClientBodies gives the server spans whose server skipped the bodies
+// (the client's agent captured them) the body hashes of their client spans,
+// found by RequestKey. A client span counts only with the same method and
+// target, within clientSpanWindow: no body rather than another request's.
+func (c *Client) borrowClientBodies(ctx context.Context, spans []*model.TraceSpan) error {
+	var servers []*model.TraceSpan
+	keys := map[uint64]bool{}
+	var from, to time.Time
+	for _, s := range spans {
+		if s.SpanKind != "SPAN_KIND_SERVER" || s.RequestKey == 0 || s.RequestBodyHash != 0 || s.ResponseBodyHash != 0 {
+			continue
+		}
+		servers = append(servers, s)
+		keys[s.RequestKey] = true
+		if from.IsZero() || s.Timestamp.Before(from) {
+			from = s.Timestamp
+		}
+		if s.Timestamp.After(to) {
+			to = s.Timestamp
+		}
+	}
+	if len(servers) == 0 {
+		return nil
+	}
+	rows, err := c.Query(ctx, `
+SELECT RequestKey, Timestamp, SpanAttributes['http.method'], SpanAttributes['http.target'], RequestBodyHash, ResponseBodyHash
+FROM @@table_otel_traces@@
+WHERE RequestKey IN (@keys) AND SpanKind = 'SPAN_KIND_CLIENT' AND Timestamp BETWEEN @from AND @to`,
+		clickhouse.Named("keys", maps.Keys(keys)),
+		clickhouse.DateNamed("from", from.Add(-clientSpanWindow), clickhouse.NanoSeconds),
+		clickhouse.DateNamed("to", to.Add(clientSpanWindow), clickhouse.NanoSeconds),
+	)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	type clientSpan struct {
+		timestamp                         time.Time
+		method, target                    string
+		requestBodyHash, responseBodyHash uint64
+	}
+	clients := map[uint64][]clientSpan{}
+	for rows.Next() {
+		var key uint64
+		var span clientSpan
+		if err = rows.Scan(&key, &span.timestamp, &span.method, &span.target, &span.requestBodyHash, &span.responseBodyHash); err != nil {
+			return err
+		}
+		clients[key] = append(clients[key], span)
+	}
+	if err = rows.Err(); err != nil {
+		return err
+	}
+	for _, server := range servers {
+		var best *clientSpan
+		var bestDistance time.Duration
+		for index, client := range clients[server.RequestKey] {
+			if client.method != server.SpanAttributes["http.method"] || client.target != server.SpanAttributes["http.target"] {
+				continue
+			}
+			distance := client.timestamp.Sub(server.Timestamp)
+			if distance < 0 {
+				distance = -distance
+			}
+			if distance > clientSpanWindow {
+				continue
+			}
+			if best == nil || distance < bestDistance {
+				best, bestDistance = &clients[server.RequestKey][index], distance
+			}
+		}
+		if best != nil {
+			server.RequestBodyHash, server.ResponseBodyHash = best.requestBodyHash, best.responseBodyHash
+		}
+	}
+	return nil
+}
+
+// loadBodies fills the bodies of the spans from trace_bodies by their hashes.
+// A body may be in several rows (one a day it was written), all the same.
+func (c *Client) loadBodies(ctx context.Context, spans []*model.TraceSpan) error {
+	hashes := map[uint64]bool{}
+	for _, s := range spans {
+		for _, hash := range []uint64{s.RequestBodyHash, s.ResponseBodyHash} {
+			if hash != 0 {
+				hashes[hash] = true
+			}
+		}
+	}
+	if len(hashes) == 0 {
+		return nil
+	}
+	rows, err := c.Query(ctx,
+		"SELECT Hash, any(Body) FROM @@table_trace_bodies@@ WHERE Hash IN (@hashes) GROUP BY Hash",
+		clickhouse.Named("hashes", maps.Keys(hashes)),
+	)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	bodies := map[uint64]string{}
+	var hash uint64
+	var body string
+	for rows.Next() {
+		if err = rows.Scan(&hash, &body); err != nil {
+			return err
+		}
+		bodies[hash] = body
+	}
+	if err = rows.Err(); err != nil {
+		return err
+	}
+	for _, s := range spans {
+		s.RequestBody = bodies[s.RequestBodyHash]
+		s.ResponseBody = bodies[s.ResponseBodyHash]
+	}
+	return nil
 }
 
 func (c *Client) querySpans(ctx context.Context, q SpanQuery, orderBy string, filters []string, filterArgs []any) ([]*model.TraceSpan, error) {
@@ -562,13 +734,13 @@ func (c *Client) querySpans(ctx context.Context, q SpanQuery, orderBy string, fi
 		var eventsName []string
 		var eventsAttributes []map[string]string
 		dest := []any{
-			&s.Timestamp, &s.TraceId, &s.SpanId, &s.ParentSpanId, &s.Name, &s.ServiceName,
+			&s.Timestamp, &s.TraceId, &s.SpanId, &s.ParentSpanId, &s.Name, &s.ServiceName, &s.Client, &s.Server,
 			&s.Duration, &s.StatusCode, &s.StatusMessage,
 			&s.ResourceAttributes, &s.SpanAttributes,
 			&eventsTimestamp, &eventsName, &eventsAttributes,
 		}
 		if q.WithBodies {
-			dest = append(dest, &s.RequestBody, &s.ResponseBody)
+			dest = append(dest, &s.RequestBodyHash, &s.ResponseBodyHash, &s.SpanKind, &s.RequestKey)
 		}
 		if err = rows.Scan(dest...); err != nil {
 			return nil, err
@@ -584,6 +756,17 @@ func (c *Client) querySpans(ctx context.Context, q SpanQuery, orderBy string, fi
 		}
 		s.ClusterName = c.Project().Name
 		res = append(res, &s)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	if q.WithBodies {
+		if err = c.borrowClientBodies(ctx, res); err != nil {
+			return nil, err
+		}
+		if err = c.loadBodies(ctx, res); err != nil {
+			return nil, err
+		}
 	}
 	return res, nil
 }
@@ -680,7 +863,7 @@ WHERE Timestamp BETWEEN @from AND @to AND TraceId IN @traceIds`
 	for rows.Next() {
 		var s model.TraceSpan
 		err = rows.Scan(
-			&s.Timestamp, &s.TraceId, &s.SpanId, &s.ParentSpanId, &s.Name, &s.ServiceName, &s.Duration,
+			&s.Timestamp, &s.TraceId, &s.SpanId, &s.ParentSpanId, &s.Name, &s.ServiceName, &s.Client, &s.Server, &s.Duration,
 			&s.StatusCode, &s.StatusMessage, &s.ResourceAttributes, &s.SpanAttributes,
 			&eventsTimestamp, &eventsName, &eventsAttributes)
 		if err != nil {
@@ -870,9 +1053,11 @@ func (q *SpanQuery) RootSpansFilter(fromMV bool) ([]string, []any) {
 	return q.rootSpansFilter(fromMV, "")
 }
 
+// rootSpansFilter selects the root spans of the Traces page: one per request,
+// the one the collector marked as counted when the two sides recorded it.
 func (q *SpanQuery) rootSpansFilter(fromMV bool, skipField string) ([]string, []any) {
 	filter, args := q.filter(skipField, fromMV)
-	filter = append(filter, rootSpanCondition(fromMV))
+	filter = append(filter, rootSpanCondition(fromMV), "Counted = 1")
 	if len(q.ExcludePeerAddrs) > 0 {
 		filter = append(filter, "NetSockPeerAddr NOT IN (@addrs)")
 		args = append(args, clickhouse.Named("addrs", q.ExcludePeerAddrs))
@@ -915,8 +1100,9 @@ func (c *Client) useTracesHistogram(ctx context.Context, q SpanQuery, from times
 func (q *SpanQuery) filtersOnHistogramDimensions() bool {
 	for _, f := range q.Filters {
 		switch f.Field {
-		// Source is derived from ServiceName, Status is the StatusClass column
-		case "ServiceName", "SpanName", "SpanKind", "NetSockPeerAddr", "Source", "Status":
+		// Source is derived from ServiceName, Status is the StatusClass column,
+		// Namespace is derived from Server
+		case "ServiceName", "SpanName", "SpanKind", "NetSockPeerAddr", "Source", "Status", "Client", "Server", "Namespace":
 		default:
 			return false
 		}
@@ -952,7 +1138,12 @@ func (q *SpanQuery) filter(skipField string, fromMV bool) ([]string, []any) {
 		}
 		name := fmt.Sprintf("filter_%d", i)
 		var expr string
-		if base, ok := traceDerivedFieldExpr(f.Field, fromMV); ok {
+		if f.Field == "Namespace" {
+			var ok bool
+			if expr, ok = traceNamespacePredicate(f.Op, name, f.Value); !ok {
+				continue
+			}
+		} else if base, ok := traceDerivedFieldExpr(f.Field, fromMV); ok {
 			if expr, ok = derivedFieldPredicate(base, f.Op, name); !ok {
 				continue
 			}

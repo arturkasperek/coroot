@@ -50,6 +50,8 @@ type LatencyQuantiles struct {
 
 type Span struct {
 	Service    string                 `json:"service"`
+	Client     string                 `json:"client"`
+	Server     string                 `json:"server"`
 	TraceId    string                 `json:"trace_id"`
 	Id         string                 `json:"id"`
 	ParentId   string                 `json:"parent_id"`
@@ -96,7 +98,16 @@ type Filter struct {
 	Value string `json:"value"`
 }
 
-func RenderTraces(ctx context.Context, chs clickhouse.Clients, w *model.World, query string) *Traces {
+// TimeRange is the time range a view was asked for, live when it ends now. The
+// world of the view may end sooner, at the last point of the metrics cache;
+// the spans are in ClickHouse up to now.
+type TimeRange struct {
+	From timeseries.Time
+	To   timeseries.Time
+	Live bool
+}
+
+func RenderTraces(ctx context.Context, chs clickhouse.Clients, w *model.World, query string, requested TimeRange) *Traces {
 	res := &Traces{}
 
 	if chs.Error != nil {
@@ -111,6 +122,11 @@ func RenderTraces(ctx context.Context, chs clickhouse.Clients, w *model.World, q
 
 	q := parseQuery(query, w.Ctx)
 
+	if requested.From.IsZero() || requested.To.IsZero() {
+		requested = TimeRange{From: w.Ctx.From, To: w.Ctx.To}
+	}
+	// the charts, the facets and the list count the same window
+	window := clickhouse.NewTracesWindow(requested.From, requested.To, requested.Live, w.Ctx.Step)
 	sq := clickhouse.SpanQuery{Ctx: w.Ctx, Sort: q.Sort}
 
 	for _, f := range q.Filters {
@@ -125,7 +141,7 @@ func RenderTraces(ctx context.Context, chs clickhouse.Clients, w *model.World, q
 	countsByStatusClass := map[string]*timeseries.Aggregate{}
 	countsByDurationBucket := map[float64]*timeseries.Aggregate{}
 	for _, client := range chs.Clients {
-		counts, err := client.GetRootSpansCounts(ctx, sq)
+		counts, err := client.GetRootSpansCounts(ctx, sq, window)
 		if err != nil {
 			klog.Errorln(err)
 			res.Error = fmt.Sprintf("Clickhouse error: %s", err)
@@ -135,7 +151,7 @@ func RenderTraces(ctx context.Context, chs clickhouse.Clients, w *model.World, q
 		addCounts(countsByDurationBucket, counts.ByDurationBucket)
 	}
 	if len(countsByStatusClass) > 0 {
-		chartContext := clickhouse.TracesChartContext(w.Ctx)
+		chartContext := window.ChartContext()
 		res.RequestsChart = model.NewChart(chartContext, "Requests").Column().Sorted()
 		for _, class := range ch.TraceStatusClasses {
 			if counts := countsByStatusClass[class]; counts != nil {
@@ -167,11 +183,11 @@ func RenderTraces(ctx context.Context, chs clickhouse.Clients, w *model.World, q
 
 	sq.TsFrom = q.TsFrom
 	if sq.TsFrom == 0 {
-		sq.TsFrom = sq.Ctx.From
+		sq.TsFrom = window.From
 	}
 	sq.TsTo = q.TsTo
 	if sq.TsTo == 0 {
-		sq.TsTo = sq.Ctx.To
+		sq.TsTo = window.To
 	}
 	sq.DurFrom = q.durFrom
 	sq.DurTo = q.durTo
@@ -217,8 +233,9 @@ func RenderTraces(ctx context.Context, chs clickhouse.Clients, w *model.World, q
 		if q.TraceId == "" {
 			addFacet(ch, "Source")
 			addFacet(ch, "Status")
+			addFacet(ch, "Server")
+			addFacet(ch, "Client")
 			addFacet(ch, "Namespace")
-			addFacet(ch, "ServiceName")
 			addFacet(ch, "ApiRoute")
 			addFacet(ch, "SpanName")
 		}
@@ -353,6 +370,8 @@ func RenderTraces(ctx context.Context, chs clickhouse.Clients, w *model.World, q
 	for _, s := range overallSpans {
 		ss := Span{
 			Service:    s.ServiceName,
+			Client:     s.Client,
+			Server:     s.Server,
 			TraceId:    s.TraceId,
 			Id:         s.SpanId,
 			ParentId:   s.ParentSpanId,

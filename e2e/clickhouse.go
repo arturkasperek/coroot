@@ -242,6 +242,25 @@ type traceFixtureRow struct {
 	DurationNs         int64
 	// StatusCode is the span status, STATUS_CODE_UNSET when empty.
 	StatusCode string
+	// Client and Server are the applications of the request, which the
+	// collector would fill. Server defaults to the span's own application,
+	// as for a server span: namespace/service, or the service alone.
+	Client string
+	Server string
+	// Kind is the span kind, SPAN_KIND_SERVER when empty; NotCounted marks a
+	// second record of a request another span counts (the Counted column).
+	Kind       string
+	NotCounted bool
+}
+
+func (s traceFixtureRow) server() string {
+	if s.Server != "" {
+		return s.Server
+	}
+	if namespace := s.ResourceAttributes["k8s.namespace.name"]; namespace != "" {
+		return namespace + "/" + s.ServiceName
+	}
+	return s.ServiceName
 }
 
 func insertTraceFixture(t *testing.T, rows []traceFixtureRow) {
@@ -265,6 +284,14 @@ func insertTraceFixture(t *testing.T, rows []traceFixtureRow) {
 		if statusCode == "" {
 			statusCode = "STATUS_CODE_UNSET"
 		}
+		kind := s.Kind
+		if kind == "" {
+			kind = "SPAN_KIND_SERVER"
+		}
+		counted := 1
+		if s.NotCounted {
+			counted = 0
+		}
 		for i := 0; i < s.Count; i++ {
 			n++
 			attrs := map[string]string{"service.name": s.ServiceName}
@@ -282,8 +309,11 @@ func insertTraceFixture(t *testing.T, rows []traceFixtureRow) {
 				"ParentSpanId":       parent,
 				"TraceState":         "",
 				"SpanName":           s.SpanName,
-				"SpanKind":           "SPAN_KIND_SERVER",
+				"SpanKind":           kind,
+				"Counted":            counted,
 				"ServiceName":        s.ServiceName,
+				"Client":             s.Client,
+				"Server":             s.server(),
 				"ResourceAttributes": attrs,
 				"SpanAttributes":     spanAttrs,
 				"Duration":           dur,
@@ -299,7 +329,7 @@ func insertTraceFixture(t *testing.T, rows []traceFixtureRow) {
 	}
 	chExec(t, `INSERT INTO otel_traces (
 		Timestamp, TraceId, SpanId, ParentSpanId, TraceState,
-		SpanName, SpanKind, ServiceName,
+		SpanName, SpanKind, ServiceName, Client, Server, Counted,
 		ResourceAttributes, SpanAttributes, Duration, StatusCode, StatusMessage
 	) FORMAT JSONEachRow`, buf.Bytes())
 }

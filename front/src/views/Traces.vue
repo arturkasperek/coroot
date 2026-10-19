@@ -110,7 +110,7 @@
                 <QuickFilters
                     :groups="traceFilterGroups"
                     :filters="traceQuickFilters"
-                    :local-search-keys="['Namespace', 'ServiceName', 'ApiRoute', 'SpanName']"
+                    :local-search-keys="['Namespace', 'Server', 'Client', 'ApiRoute', 'SpanName']"
                     aria-label="Trace filters"
                     @toggle="toggleQuickFilter"
                     @clear="clearQuickFilters"
@@ -240,6 +240,11 @@
                             <template #item.trace_id="{ item }">
                                 <v-icon small style="vertical-align: baseline">mdi-chart-timeline</v-icon>
                                 {{ item.trace_id.substring(0, 8) }}
+                            </template>
+                            <template #item.client_server="{ item }">
+                                <span :title="`${item.client || '—'} → ${item.server || '—'} (recorded by ${item.service})`">{{
+                                    traceClientServer(item)
+                                }}</span>
                             </template>
                             <template #item.api_route="{ item }">{{ traceApiRoute(item.attributes) || '—' }}</template>
                             <template #item.name="{ item }">
@@ -397,7 +402,7 @@ import {
 } from '@/utils/traceQuery';
 import { TRACE_SORT_VALUES, appendSortChip, effectiveSort, extractSort, toggleSort } from '@/utils/observabilitySort';
 import { buildTraceQuickFilters, displayTraceSourceName, toTraceQuickFilters } from '@/utils/traceQuickFilters';
-import { TRACE_NAME_SAME_MARK, traceApiRoute, traceColumnValue, traceDisplayName, traceDuration } from '@/utils/traceColumns';
+import { TRACE_NAME_SAME_MARK, traceApiRoute, traceClientServer, traceColumnValue, traceDisplayName, traceDuration } from '@/utils/traceColumns';
 
 export default {
     components: { Views, FlameGraph, TracingTrace, Chart, QueryPanel, QuickFilters, ObservabilityTable },
@@ -469,7 +474,7 @@ export default {
                 { value: 'date', text: 'Date', sortable: true },
                 { value: 'trace_id', text: 'Trace ID', cellClass: 'blue--text text--lighten-2 font-weight-medium' },
                 { value: 'cluster', text: 'Cluster' },
-                { value: 'service', text: 'Root Service' },
+                { value: 'client_server', text: 'Client → Server' },
                 { value: 'api_route', text: 'API Route' },
                 {
                     value: 'name',
@@ -625,6 +630,7 @@ export default {
         traceApiRoute,
         traceDisplayName,
         traceColumnValue,
+        traceClientServer,
         traceDuration,
         displayTraceSourceName,
         scheduleTracesBodyResize() {
@@ -770,6 +776,14 @@ export default {
                     break;
                 case 'Status':
                     this.qb.items = TRACE_STATUS_CLASSES;
+                    break;
+                case 'Server':
+                case 'Client':
+                    this.qb.items = (
+                        (this.view.facets || []).find((group) => group.key === name) || {
+                            values: [],
+                        }
+                    ).values.map((item) => item.value);
                     break;
                 case 'Namespace':
                     this.qb.items = [

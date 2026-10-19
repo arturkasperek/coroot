@@ -23,7 +23,7 @@ type Overview struct {
 	Categories   []model.ApplicationCategory `json:"categories"`
 }
 
-func Render(ctx context.Context, chs clickhouse.Clients, project *db.Project, w *model.World, view, query string) *Overview {
+func Render(ctx context.Context, chs clickhouse.Clients, project *db.Project, w *model.World, view, query string, requested TimeRange) *Overview {
 	v := &Overview{}
 	for name := range project.Settings.ApplicationCategorySettings {
 		if !name.Default() {
@@ -42,7 +42,7 @@ func Render(ctx context.Context, chs clickhouse.Clients, project *db.Project, w 
 	case "deployments":
 		v.Deployments = renderDeployments(w)
 	case "traces":
-		v.Traces = RenderTraces(ctx, chs, w, query)
+		v.Traces = RenderTraces(ctx, chs, w, query, requested)
 	case "logs":
 		v.Logs = renderLogs(ctx, chs, w, query)
 	case "costs":

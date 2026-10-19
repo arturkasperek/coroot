@@ -26,7 +26,7 @@ test('logs and traces share the QuickFilters panel', async () => {
     assert.match(traces, /<QuickFilters\b/);
 });
 
-test('buildTraceQuickFilters uses backend counts for root service and span names', async () => {
+test('buildTraceQuickFilters uses backend counts for servers and span names', async () => {
     const { buildTraceQuickFilters } = await loadTraceQuickFilters();
     const groups = buildTraceQuickFilters([
         {
@@ -37,10 +37,10 @@ test('buildTraceQuickFilters uses backend counts for root service and span names
             ],
         },
         {
-            key: 'ServiceName',
+            key: 'Server',
             values: [
-                { value: 'flask-demo', count: 40 },
-                { value: 'express-demo', count: 12 },
+                { value: 'coroot-dev/flask-demo', count: 40 },
+                { value: 'coroot-dev/express-demo', count: 12 },
             ],
         },
         {
@@ -61,15 +61,15 @@ test('buildTraceQuickFilters uses backend counts for root service and span names
 
     assert.deepEqual(
         groups.map((g) => g.key),
-        ['Namespace', 'ServiceName', 'ApiRoute', 'SpanName'],
+        ['Namespace', 'Server', 'ApiRoute', 'SpanName'],
     );
     assert.equal(groups[0].label, 'Namespace');
-    assert.equal(groups[1].label, 'Application');
+    assert.equal(groups[1].label, 'Server');
     assert.equal(groups[2].label, 'API Route');
     assert.equal(groups[3].label, 'Root span name');
     assert.equal(groups[0].values.find((v) => v.value === 'coroot-dev').count, 40);
     assert.equal(groups[0].values.find((v) => v.value === 'n/a').label, 'Not applicable');
-    assert.equal(groups[1].values.find((v) => v.value === 'flask-demo').count, 40);
+    assert.equal(groups[1].values.find((v) => v.value === 'coroot-dev/flask-demo').count, 40);
     assert.equal(groups[2].values.find((v) => v.value === 'GET /health').count, 22);
     assert.equal(groups[3].values.find((v) => v.value === 'GET /api/hello').count, 30);
 });
@@ -77,21 +77,21 @@ test('buildTraceQuickFilters uses backend counts for root service and span names
 test('buildTraceQuickFilters hides empty groups and ignores unknown keys', async () => {
     const { buildTraceQuickFilters } = await loadTraceQuickFilters();
     const groups = buildTraceQuickFilters([
-        { key: 'ServiceName', values: [{ value: 'flask-demo', count: 3 }] },
+        { key: 'Server', values: [{ value: 'flask-demo', count: 3 }] },
         { key: 'SpanName', values: [] },
         { key: 'TraceId', values: [{ value: 'abc', count: 1 }] },
     ]);
 
     assert.deepEqual(
         groups.map((g) => g.key),
-        ['ServiceName'],
+        ['Server'],
     );
 });
 
 test('buildTraceQuickFilters puts the Source facet first and names its values', async () => {
     const { buildTraceQuickFilters, displayTraceSourceName } = await loadTraceQuickFilters();
     const groups = buildTraceQuickFilters([
-        { key: 'ServiceName', values: [{ value: 'checkout', count: 3 }] },
+        { key: 'Server', values: [{ value: 'checkout', count: 3 }] },
         {
             key: 'Source',
             values: [
@@ -103,7 +103,7 @@ test('buildTraceQuickFilters puts the Source facet first and names its values', 
 
     assert.deepEqual(
         groups.map((g) => g.key),
-        ['Source', 'ServiceName'],
+        ['Source', 'Server'],
     );
     assert.deepEqual(
         groups[0].values.map((v) => [v.value, v.label, v.count]),
@@ -120,7 +120,7 @@ test('buildTraceQuickFilters shows the status classes after Source, with the col
     const { buildTraceQuickFilters } = await loadTraceQuickFilters();
     const groups = buildTraceQuickFilters(
         [
-            { key: 'ServiceName', values: [{ value: 'flask-demo', count: 40 }] },
+            { key: 'Server', values: [{ value: 'flask-demo', count: 40 }] },
             {
                 key: 'Status',
                 values: [
@@ -134,7 +134,7 @@ test('buildTraceQuickFilters shows the status classes after Source, with the col
     );
     assert.deepEqual(
         groups.map((group) => group.key),
-        ['Source', 'Status', 'ServiceName'],
+        ['Source', 'Status', 'Server'],
     );
     assert.deepEqual(groups[1], {
         key: 'Status',
@@ -145,4 +145,34 @@ test('buildTraceQuickFilters shows the status classes after Source, with the col
         ],
     });
     assert.equal(groups[2].values[0].color, '', 'other facets have no color');
+});
+
+test('buildTraceQuickFilters shows Server and Client after Status, as the collector names them', async () => {
+    const { buildTraceQuickFilters } = await loadTraceQuickFilters();
+    const groups = buildTraceQuickFilters([
+        { key: 'Client', values: [{ value: 'coroot-dev/demo-traffic', count: 30 }] },
+        {
+            key: 'Server',
+            values: [
+                { value: 'coroot-dev/express-demo', count: 20 },
+                { value: '10.99.0.1:5432', count: 2 },
+            ],
+        },
+        { key: 'ServiceName', values: [{ value: 'express-demo', count: 20 }] }, // not a facet of the Traces page
+    ]);
+    assert.deepEqual(
+        groups.map((group) => [group.key, group.label]),
+        [
+            ['Server', 'Server'],
+            ['Client', 'Client'],
+        ],
+        'no Application (ServiceName) group',
+    );
+    assert.deepEqual(
+        groups[0].values.map((value) => [value.value, value.label]),
+        [
+            ['coroot-dev/express-demo', 'coroot-dev/express-demo'],
+            ['10.99.0.1:5432', '10.99.0.1:5432'],
+        ],
+    );
 });

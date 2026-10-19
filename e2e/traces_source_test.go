@@ -82,7 +82,7 @@ func TestOverviewTraceListIncludesAgentSpans(t *testing.T) {
 		q := query()
 		q["view"] = "overview"
 		traces := fetchOverviewTraces(t, projectID, q)
-		assertTraceFacet(t, traces, "ServiceName", agentSvc, 4)
-		assertTraceFacet(t, traces, "ServiceName", otelSvc, 7)
+		assertTraceFacet(t, traces, "Server", agentSvc, 4) // the fixture has no namespace: Server is the service
+		assertTraceFacet(t, traces, "Server", otelSvc, 7)
 	})
 }

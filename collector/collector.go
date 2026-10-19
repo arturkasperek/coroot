@@ -10,6 +10,7 @@ import (
 
 	chgo "github.com/ClickHouse/ch-go"
 	"github.com/coroot/coroot/ch"
+	"github.com/coroot/coroot/clickhouse"
 	"github.com/coroot/coroot/config"
 	"github.com/coroot/coroot/db"
 	"github.com/coroot/coroot/grpc"
@@ -44,6 +45,10 @@ type Collector struct {
 
 	clickhouseClients     map[db.ProjectId]*ch.LowLevelClient
 	clickhouseClientsLock sync.RWMutex
+	// clickhouseReaders read what the collector needs back (the server span
+	// sources): the client the rest of Coroot reads with.
+	clickhouseReaders     map[db.ProjectId]*clickhouse.Client
+	clickhouseReadersLock sync.Mutex
 
 	traceBatches       map[db.ProjectId]*TracesBatch
 	traceBatchesLock   sync.Mutex
@@ -53,6 +58,9 @@ type Collector struct {
 	profileBatchesLock sync.Mutex
 	metricsBatches     map[db.ProjectId]*MetricsBatch
 	metricsBatchesLock sync.Mutex
+
+	applicationDirectories     map[db.ProjectId]*projectApplicationDirectory
+	applicationDirectoriesLock sync.Mutex
 }
 
 func New(cfg config.CollectorConfig, database *db.DB, evaluator *world.Evaluator, globalClickHouse *db.IntegrationClickhouse, grpcServer *grpc.Server) *Collector {
@@ -63,10 +71,13 @@ func New(cfg config.CollectorConfig, database *db.DB, evaluator *world.Evaluator
 		globalClickHouse:  globalClickHouse,
 		migrationDone:     map[db.ProjectId]bool{},
 		clickhouseClients: map[db.ProjectId]*ch.LowLevelClient{},
+		clickhouseReaders: map[db.ProjectId]*clickhouse.Client{},
 		traceBatches:      map[db.ProjectId]*TracesBatch{},
 		profileBatches:    map[db.ProjectId]*ProfilesBatch{},
 		logBatches:        map[db.ProjectId]*LogsBatch{},
 		metricsBatches:    map[db.ProjectId]*MetricsBatch{},
+
+		applicationDirectories: map[db.ProjectId]*projectApplicationDirectory{},
 	}
 
 	c.updateProjects()
@@ -168,6 +179,11 @@ func (c *Collector) Close() {
 	for _, cl := range c.clickhouseClients {
 		cl.Close()
 	}
+	c.clickhouseReadersLock.Lock()
+	defer c.clickhouseReadersLock.Unlock()
+	for _, reader := range c.clickhouseReaders {
+		_ = reader.Close()
+	}
 }
 
 func (c *Collector) MigrateClickhouseDatabase(ctx context.Context, project *db.Project) error {
@@ -190,6 +206,37 @@ func (c *Collector) deleteClickhouseClient(projectId db.ProjectId) {
 	client := c.clickhouseClients[projectId]
 	client.Close()
 	delete(c.clickhouseClients, projectId)
+
+	c.clickhouseReadersLock.Lock()
+	defer c.clickhouseReadersLock.Unlock()
+	_ = c.clickhouseReaders[projectId].Close()
+	delete(c.clickhouseReaders, projectId)
+}
+
+// getClickhouseReader returns the client that reads from the ClickHouse of a
+// project once its tables are ready.
+func (c *Collector) getClickhouseReader(project *db.Project) (*clickhouse.Client, error) {
+	c.migrationDoneLock.RLock()
+	done := c.migrationDone[project.Id]
+	c.migrationDoneLock.RUnlock()
+	if !done {
+		return nil, fmt.Errorf("clickhouse tables not ready for project %s", project.Id)
+	}
+	c.clickhouseReadersLock.Lock()
+	defer c.clickhouseReadersLock.Unlock()
+	if reader := c.clickhouseReaders[project.Id]; reader != nil {
+		return reader, nil
+	}
+	config := project.ClickHouseConfig(c.globalClickHouse)
+	if config == nil {
+		return nil, ErrClickhouseNotConfigured
+	}
+	reader, err := clickhouse.NewClient(config, project)
+	if err != nil {
+		return nil, err
+	}
+	c.clickhouseReaders[project.Id] = reader
+	return reader, nil
 }
 
 func (c *Collector) getClickhouseClient(project *db.Project) (*ch.LowLevelClient, error) {
@@ -242,6 +289,10 @@ func (c *Collector) getTracesBatch(project *db.Project) *TracesBatch {
 	if b == nil {
 		b = NewTracesBatch(batchLimit, batchTimeout, func(query chgo.Query) error {
 			return c.clickhouseDo(context.TODO(), project, query)
+		}, func() (*clickhouse.Client, error) {
+			return c.getClickhouseReader(project)
+		}, func() (*ApplicationDirectory, bool) {
+			return c.getApplicationDirectory(project)
 		})
 		c.traceBatches[project.Id] = b
 	}

@@ -39,23 +39,23 @@ func TestOverviewTraceFacetCounts(t *testing.T) {
 	var traces overviewTraces
 	waitUntil(t, 15*time.Second, "overview trace facet counts for fixture", func() bool {
 		traces = fetchOverviewTraces(t, projectID, base)
-		return traces.Error == "" && facetValueCount(traces.Facets, "ServiceName", svcA) == 40
+		return traces.Error == "" && facetValueCount(traces.Facets, "Server", svcA) == 40
 	})
 	if traces.Error != "" {
 		t.Fatalf("overview traces error: %s", traces.Error)
 	}
-	assertTraceFacet(t, traces, "ServiceName", svcA, 40)
-	assertTraceFacet(t, traces, "ServiceName", svcB, 10)
-	assertTraceFacet(t, traces, "ServiceName", agent, 5) // spans of the node-agent are listed too
+	assertTraceFacet(t, traces, "Server", svcA, 40)
+	assertTraceFacet(t, traces, "Server", svcB, 10)
+	assertTraceFacet(t, traces, "Server", agent, 5) // spans of the node-agent are listed too; the fixture has no namespace, so Server is the service
 	assertTraceFacet(t, traces, "SpanName", hello, 43)
 	assertTraceFacet(t, traces, "SpanName", errSpan, 12)
 	assertTraceFacet(t, traces, "SpanName", child, 0)
 
 	withSvc := copyQuery(base)
-	withSvc["filters"] = []map[string]string{{"field": "ServiceName", "op": "=", "value": svcA}}
+	withSvc["filters"] = []map[string]string{{"field": "Server", "op": "=", "value": svcA}}
 	traces = fetchOverviewTraces(t, projectID, withSvc)
-	assertTraceFacet(t, traces, "ServiceName", svcA, 40)
-	assertTraceFacet(t, traces, "ServiceName", svcB, 10)
+	assertTraceFacet(t, traces, "Server", svcA, 40)
+	assertTraceFacet(t, traces, "Server", svcB, 10)
 	assertTraceFacet(t, traces, "SpanName", hello, 30)
 	assertTraceFacet(t, traces, "SpanName", errSpan, 10)
 
@@ -64,9 +64,9 @@ func TestOverviewTraceFacetCounts(t *testing.T) {
 	traces = fetchOverviewTraces(t, projectID, withSpan)
 	assertTraceFacet(t, traces, "SpanName", hello, 43)
 	assertTraceFacet(t, traces, "SpanName", errSpan, 12)
-	assertTraceFacet(t, traces, "ServiceName", svcA, 30)
-	assertTraceFacet(t, traces, "ServiceName", svcB, 8)
-	assertTraceFacet(t, traces, "ServiceName", agent, 5)
+	assertTraceFacet(t, traces, "Server", svcA, 30)
+	assertTraceFacet(t, traces, "Server", svcB, 8)
+	assertTraceFacet(t, traces, "Server", agent, 5)
 
 	// The Source facet tells the spans of the node-agent (eBPF) from the spans of
 	// applications instrumented with OpenTelemetry. The span name is unique to
@@ -82,9 +82,9 @@ func TestOverviewTraceFacetCounts(t *testing.T) {
 			{"field": "Source", "op": "=", "value": "agent"},
 		}
 		traces = fetchOverviewTraces(t, projectID, onlyAgent)
-		assertTraceFacet(t, traces, "ServiceName", agent, 5)
-		assertTraceFacet(t, traces, "ServiceName", svcA, 0)
-		assertTraceFacet(t, traces, "ServiceName", svcB, 0)
+		assertTraceFacet(t, traces, "Server", agent, 5)
+		assertTraceFacet(t, traces, "Server", svcA, 0)
+		assertTraceFacet(t, traces, "Server", svcB, 0)
 		// the facet does not filter itself, so the other value stays visible
 		assertTraceFacet(t, traces, "Source", "agent", 5)
 		assertTraceFacet(t, traces, "Source", "otel", 38)
@@ -95,9 +95,9 @@ func TestOverviewTraceFacetCounts(t *testing.T) {
 			{"field": "Source", "op": "!=", "value": "agent"},
 		}
 		traces = fetchOverviewTraces(t, projectID, notAgent)
-		assertTraceFacet(t, traces, "ServiceName", agent, 0)
-		assertTraceFacet(t, traces, "ServiceName", svcA, 30)
-		assertTraceFacet(t, traces, "ServiceName", svcB, 8)
+		assertTraceFacet(t, traces, "Server", agent, 0)
+		assertTraceFacet(t, traces, "Server", svcA, 30)
+		assertTraceFacet(t, traces, "Server", svcB, 8)
 	})
 }
 

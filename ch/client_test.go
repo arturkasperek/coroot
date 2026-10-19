@@ -33,9 +33,12 @@ func TestMaterializedColumnsOnCreateTable(t *testing.T) {
 
 	traces := tableSQLContaining("CREATE TABLE IF NOT EXISTS otel_traces @on_cluster")
 	require.NotEmpty(t, traces)
-	assert.Contains(t, traces, "Namespace LowCardinality(String) MATERIALIZED")
+	// the namespace of a span is the one of its Server, derived when read
+	assert.NotContains(t, traces, "Namespace LowCardinality(String) MATERIALIZED")
+	assert.Contains(t, traces, "Client LowCardinality(String)")
+	assert.Contains(t, traces, "Server LowCardinality(String)")
+	assert.Contains(t, traces, "ORDER BY (Server, ServiceName,")
 	assert.Contains(t, traces, "ApiRoute LowCardinality(String) MATERIALIZED")
-	assert.Contains(t, traces, "ResourceAttributes['k8s.namespace.name']")
 	assert.NotContains(t, traces, "LogAttributes")
 	assert.Contains(t, traces, "substringIndex(")
 	assert.Contains(t, traces, "char(63)")
@@ -47,10 +50,16 @@ func TestMaterializedColumnsOnCreateTable(t *testing.T) {
 func TestTraceBodyColumns(t *testing.T) {
 	traces := tableSQLContaining("CREATE TABLE IF NOT EXISTS otel_traces @on_cluster")
 	require.NotEmpty(t, traces)
-	assert.Contains(t, traces, "RequestBody String CODEC(ZSTD(1))")
-	assert.Contains(t, traces, "ResponseBody String CODEC(ZSTD(1))")
-	assert.Contains(t, traces, "INDEX idx_request_body RequestBody TYPE text(tokenizer = 'splitByNonAlpha') GRANULARITY 1")
-	assert.Contains(t, traces, "INDEX idx_response_body ResponseBody TYPE text(tokenizer = 'splitByNonAlpha') GRANULARITY 1")
+	// the spans keep the hashes of their bodies, the bodies are in trace_bodies
+	assert.Contains(t, traces, "RequestBodyHash UInt64")
+	assert.Contains(t, traces, "ResponseBodyHash UInt64")
+	assert.NotContains(t, traces, "RequestBody String")
+	bodies := tableSQLContaining("CREATE TABLE IF NOT EXISTS trace_bodies @on_cluster")
+	require.NotEmpty(t, bodies)
+	assert.Contains(t, bodies, "INDEX idx_body Body TYPE text(tokenizer = 'splitByNonAlpha') GRANULARITY 1")
+	assert.Contains(t, bodies, "@replacing_merge_tree_by(LastSeen)")
+	assert.Contains(t, bodies, "TTL LastSeen + ")
+	assert.Contains(t, strings.Join(distributedTables, "\n"), "Distributed(@cluster, currentDatabase(), trace_bodies, Hash)")
 
 	// no migration statements for them, and never materialized out of the map:
 	// that would keep the body in SpanAttributes

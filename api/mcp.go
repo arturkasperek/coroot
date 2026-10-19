@@ -1294,8 +1294,8 @@ func (h *MCPHandler) runTracesQuery(ctx context.Context, req mcp.CallToolRequest
 	if !h.Api.IsAllowed(user, rbac.Actions.Project(string(project.Id)).Traces().View()) {
 		return nil, mcp.NewToolResultError("forbidden: no permission to view traces in this project")
 	}
-	from, to, _, _ := h.Api.getTimeContext(project.Id, req.GetString("from", ""), req.GetString("to", ""), "", "")
-	world, _, err := h.Api.LoadWorld(ctx, project, from, to)
+	requested := h.Api.requestedTimeRange(project.Id, req.GetString("from", ""), req.GetString("to", ""), "", "")
+	world, _, err := h.Api.LoadWorld(ctx, project, requested.From, requested.To)
 	if err != nil || world == nil {
 		klog.Errorln("mcp: traces:", err)
 		return nil, mcp.NewToolResultError("failed to load world")
@@ -1309,7 +1309,7 @@ func (h *MCPHandler) runTracesQuery(ctx context.Context, req mcp.CallToolRequest
 		q.Filters = append(q.Filters, overview.Filter{Field: "SpanName", Op: "=", Value: s})
 	}
 	queryJSON, _ := json.Marshal(q)
-	res := overview.RenderTraces(ctx, chs, world, string(queryJSON))
+	res := overview.RenderTraces(ctx, chs, world, string(queryJSON), requested)
 	if res.Error != "" {
 		return nil, mcp.NewToolResultError(res.Error)
 	}

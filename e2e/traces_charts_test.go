@@ -244,3 +244,37 @@ func assertTraceListSpanNames(t *testing.T, traces overviewTraces, want map[stri
 		t.Fatalf("trace list spans %v, want %v", got, want)
 	}
 }
+
+// The requests chart and the Status facet of the Traces page count the same
+// window: over a view in the past whose ends are not whole minutes, the bars
+// add up to the facet's values.
+func TestTracesChartAndFacetsCountTheSameRequests(t *testing.T) {
+	requireDevCluster(t)
+	httpGetOK(t, corootBase()+"/health")
+	projectID := defaultProjectID(t)
+
+	traces := fetchOverviewTracesBetween(t, projectID, map[string]any{"view": "traces"}, "now-50m", "now-20m")
+	if traces.Error != "" {
+		t.Fatalf("overview traces error: %s", traces.Error)
+	}
+	var chart float64
+	if traces.RequestsChart != nil {
+		for _, series := range traces.RequestsChart.Series {
+			chart += chartTotal(traces.RequestsChart, series.Name)
+		}
+	}
+	var facet uint64
+	for _, group := range traces.Facets {
+		if group.Key == "Status" {
+			for _, value := range group.Values {
+				facet += value.Count
+			}
+		}
+	}
+	if chart == 0 {
+		t.Fatalf("no requests in the chart")
+	}
+	if uint64(chart) != facet {
+		t.Fatalf("the chart counts %v requests, the Status facet %d", chart, facet)
+	}
+}

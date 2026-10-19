@@ -13,10 +13,7 @@ async function loadTraceColumns() {
 test('API route includes method and prefers http.route, then path without query', async () => {
     const { traceApiRoute } = await loadTraceColumns();
 
-    assert.equal(
-        traceApiRoute({ 'http.method': 'GET', 'http.route': '/api/hello', 'http.target': '/api/hello?token=1' }),
-        'GET /api/hello',
-    );
+    assert.equal(traceApiRoute({ 'http.method': 'GET', 'http.route': '/api/hello', 'http.target': '/api/hello?token=1' }), 'GET /api/hello');
     assert.equal(traceApiRoute({ 'http.method': 'GET', 'http.target': '/metrics' }), 'GET /metrics');
     assert.equal(traceApiRoute({ 'http.request.method': 'POST', 'http.target': '/api/chain?token=abc' }), 'POST /api/chain');
     assert.equal(traceApiRoute({ 'http.method': 'GET', 'url.path': '/health' }), 'GET /health');
@@ -57,4 +54,17 @@ test('trace duration stays in milliseconds below one second and switches to seco
     assert.deepEqual(traceDuration(1234), { value: '1.23', unit: 's' });
     assert.deepEqual(traceDuration(12345), { value: '12.3', unit: 's' });
     assert.deepEqual(traceDuration(123456), { value: '123', unit: 's' });
+});
+
+test('Client → Server names the two applications of a request', async () => {
+    const { traceClientServer, traceColumnValue } = await loadTraceColumns();
+
+    assert.equal(traceClientServer({ client: 'coroot-dev/demo-traffic', server: 'coroot-dev/express-demo' }), 'demo-traffic → express-demo');
+    // no namespace: a process of a node, an external service, an address
+    assert.equal(traceClientServer({ client: 'k3s', server: 'api.stripe.com:443' }), 'k3s → api.stripe.com:443');
+    assert.equal(traceClientServer({ client: '192.168.1.20', server: 'coroot-dev/express-demo' }), '192.168.1.20 → express-demo');
+    // a span with no client (an internal span) shows its server
+    assert.equal(traceClientServer({ client: '', server: 'coroot-dev/flask-demo' }), 'flask-demo');
+    assert.equal(traceClientServer({}), '—');
+    assert.equal(traceColumnValue({ client: 'coroot-dev/a', server: 'coroot-dev/b' }, { value: 'client_server' }), 'a → b');
 });

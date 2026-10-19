@@ -41,15 +41,16 @@ func TestOverviewTraceNamespaceFilters(t *testing.T) {
 		t.Fatalf("overview traces error: %s", traces.Error)
 	}
 	assertTraceFacet(t, traces, "Namespace", nsA, 20)
-	assertTraceFacet(t, traces, "ServiceName", svcA, 20)
-	assertTraceFacet(t, traces, "ServiceName", svcB, 8)
+	serverA := nsA + "/" + svcA // the namespace is the one of the server
+	assertTraceFacet(t, traces, "Server", serverA, 20)
+	assertTraceFacet(t, traces, "Server", svcB, 8)
 
 	withNS := copyQuery(base)
 	withNS["filters"] = []map[string]string{{"field": "Namespace", "op": "=", "value": nsA}}
 	traces = fetchOverviewTraces(t, projectID, withNS)
 	assertTraceFacet(t, traces, "Namespace", nsA, 20)
-	assertTraceFacet(t, traces, "ServiceName", svcA, 20)
-	assertTraceFacet(t, traces, "ServiceName", svcB, 0)
+	assertTraceFacet(t, traces, "Server", serverA, 20)
+	assertTraceFacet(t, traces, "Server", svcB, 0)
 	for _, s := range traces.Traces {
 		if s.Service == svcB {
 			t.Fatalf("Namespace=%s still listed %s", nsA, svcB)
@@ -60,6 +61,6 @@ func TestOverviewTraceNamespaceFilters(t *testing.T) {
 	withSvc["filters"] = []map[string]string{{"field": "ServiceName", "op": "=", "value": svcB}}
 	traces = fetchOverviewTraces(t, projectID, withSvc)
 	assertTraceFacet(t, traces, "Namespace", "n/a", 8)
-	assertTraceFacet(t, traces, "ServiceName", svcB, 8)
-	assertTraceFacet(t, traces, "ServiceName", svcA, 20)
+	assertTraceFacet(t, traces, "Server", svcB, 8)
+	assertTraceFacet(t, traces, "Server", serverA, 0)
 }

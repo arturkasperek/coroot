@@ -389,13 +389,21 @@ type overviewChart struct {
 
 func fetchOverviewTraces(t *testing.T, projectID string, query map[string]any) overviewTraces {
 	t.Helper()
+	return fetchOverviewTracesBetween(t, projectID, query, "now-15m", "now")
+}
+
+// fetchOverviewTracesBetween is the Traces page over from..to (now-50m, now).
+func fetchOverviewTracesBetween(t *testing.T, projectID string, query map[string]any, from, to string) overviewTraces {
+	t.Helper()
 	q, err := json.Marshal(query)
 	if err != nil {
 		t.Fatal(err)
 	}
-	u := fmt.Sprintf("%s/api/project/%s/overview/traces?from=now-15m&query=%s",
+	u := fmt.Sprintf("%s/api/project/%s/overview/traces?from=%s&to=%s&query=%s",
 		corootBase(),
 		url.PathEscape(projectID),
+		url.QueryEscape(from),
+		url.QueryEscape(to),
 		url.QueryEscape(string(q)),
 	)
 	var env apiEnvelope

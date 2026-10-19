@@ -9,7 +9,7 @@ import (
 )
 
 func traceFacetGroupsFromMerged(merged map[string]map[string]uint64) []clickhouse.FacetGroup {
-	order := []string{"Source", "Status", "Namespace", "ServiceName", "ApiRoute", "SpanName"}
+	order := []string{"Source", "Status", "Namespace", "Server", "Client", "ApiRoute", "SpanName"}
 	groups := []clickhouse.FacetGroup{}
 	for _, key := range order {
 		counts := merged[key]

@@ -25,36 +25,36 @@ func TestSpanQueryFilterSkipsNamedField(t *testing.T) {
 	assert.NotContains(t, joined, "SpanName")
 }
 
-func TestSpanQueryFilterNamespaceUsesColumn(t *testing.T) {
+// Namespace is the namespace of Server, not of the span's own resource.
+func TestSpanQueryFilterNamespaceUsesServer(t *testing.T) {
 	q := SpanQuery{}
 	q.AddFilter("Namespace", "=", "coroot-dev")
 	q.AddFilter("ServiceName", "=", "express-demo")
 
 	filter, args := q.filter("", false)
 	joined := strings.Join(filter, " AND ")
-	assert.Contains(t, joined, "Namespace")
+	assert.Contains(t, joined, "startsWith(Server,")
 	assert.NotContains(t, joined, "ResourceAttributes")
 	assert.Contains(t, joined, "ServiceName =")
 	assertArgsContain(t, args, "coroot-dev")
 
 	filter, _ = q.filter("Namespace", false)
 	joined = strings.Join(filter, " AND ")
-	assert.NotContains(t, joined, "Namespace")
+	assert.NotContains(t, joined, "Server")
 	assert.Contains(t, joined, "ServiceName =")
 
 	q.Filters = []SpanFilter{{Field: "Namespace", Op: "!=", Value: "n/a"}}
 	filter, _ = q.filter("", false)
-	assert.Contains(t, strings.Join(filter, " AND "), "NOT (")
+	assert.Equal(t, "NOT position(Server, '/') = 0", strings.Join(filter, " AND "))
 }
 
-func TestFiltersOnHistogramDimensionsRejectsNamespace(t *testing.T) {
+func TestFiltersOnHistogramDimensionsAcceptsNamespace(t *testing.T) {
 	q := SpanQuery{}
 	q.AddFilter("Namespace", "=", "coroot-dev")
-	assert.False(t, q.filtersOnHistogramDimensions())
+	assert.True(t, q.filtersOnHistogramDimensions(), "Server is a column of the histogram table")
 
-	q = SpanQuery{}
-	q.AddFilter("ServiceName", "=", "express-demo")
-	assert.True(t, q.filtersOnHistogramDimensions())
+	q.AddFilter("ApiRoute", "=", "GET /health")
+	assert.False(t, q.filtersOnHistogramDimensions())
 }
 
 func TestTraceFacetSelectSQL(t *testing.T) {
@@ -75,7 +75,7 @@ func TestTraceFacetSelectSQL(t *testing.T) {
 
 	q, ok = traceFacetSelectSQL("Namespace", false)
 	require.True(t, ok)
-	assert.Contains(t, q, "SELECT Namespace AS Namespace")
+	assert.Contains(t, q, "SELECT "+traceNamespaceExpr+" AS Namespace")
 	assert.NotContains(t, q, "ResourceAttributes")
 	assert.Contains(t, q, "@@table_otel_traces@@")
 	assert.NotContains(t, q, "@@table_otel_traces_histogram@@")
@@ -188,7 +188,7 @@ func TestTraceSourceFacet(t *testing.T) {
 		q := SpanQuery{}
 		q.AddFilter("Source", "=", "otel")
 		assert.True(t, q.filtersOnHistogramDimensions())
-		q.AddFilter("Namespace", "=", "prod")
+		q.AddFilter("ApiRoute", "=", "GET /health")
 		assert.False(t, q.filtersOnHistogramDimensions())
 	})
 }

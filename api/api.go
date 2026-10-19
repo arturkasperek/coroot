@@ -15,6 +15,7 @@ import (
 
 	"github.com/coroot/coroot/api/forms"
 	"github.com/coroot/coroot/api/views"
+	"github.com/coroot/coroot/api/views/overview"
 	"github.com/coroot/coroot/auditor"
 	"github.com/coroot/coroot/ch"
 	"github.com/coroot/coroot/clickhouse"
@@ -443,7 +444,19 @@ func (api *Api) Overview(w http.ResponseWriter, r *http.Request, u *db.User) {
 	}
 
 	auditor.Audit(world, project, nil, nil)
-	utils.WriteJson(w, api.WithContext(project, cacheStatus, world, views.Overview(r.Context(), chs, project, world, view, r.URL.Query().Get("query"))))
+	query := r.URL.Query()
+	requested := api.requestedTimeRange(project.Id, query.Get("from"), query.Get("to"), query.Get("incident"), query.Get("alert"))
+	utils.WriteJson(w, api.WithContext(project, cacheStatus, world, views.Overview(r.Context(), chs, project, world, view, r.URL.Query().Get("query"), requested)))
+}
+
+// requestedTimeRange is the time range of a request (from, to, an incident or
+// an alert), live when it ends now: the world loaded for it ends at the last
+// point of the metrics cache, which the views of ClickHouse data (traces)
+// need not wait for.
+func (api *Api) requestedTimeRange(projectId db.ProjectId, fromStr, toStr, incidentKey, alertId string) overview.TimeRange {
+	now := timeseries.Now()
+	from, to, _, _ := api.getTimeContext(projectId, fromStr, toStr, incidentKey, alertId)
+	return overview.TimeRange{From: from, To: to, Live: !to.Before(now)}
 }
 
 func (api *Api) Dashboards(w http.ResponseWriter, r *http.Request, u *db.User) {

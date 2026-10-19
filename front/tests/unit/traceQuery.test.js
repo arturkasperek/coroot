@@ -10,6 +10,12 @@ async function loadTraceQuery() {
     return import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}#${pathToFileURL(sourcePath)}`);
 }
 
+async function loadTraceQuickFilters() {
+    const sourcePath = path.resolve(__dirname, '../../src/utils/traceQuickFilters.js');
+    const source = await readFile(sourcePath, 'utf8');
+    return import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}#${pathToFileURL(sourcePath)}`);
+}
+
 async function loadSortFromTraceQuery() {
     const sourcePath = path.resolve(__dirname, '../../src/utils/observabilitySort.js');
     const source = await readFile(sourcePath, 'utf8');
@@ -19,7 +25,18 @@ async function loadSortFromTraceQuery() {
 test('shows trace fields with user-facing names in the query builder', async () => {
     const { TRACE_QUERY_FIELDS } = await loadTraceQuery();
 
-    assert.deepEqual(TRACE_QUERY_FIELDS, ['Source', 'Status', 'Namespace', 'Application', 'API Route', 'Root Span Name', 'Trace ID', 'Sort']);
+    assert.deepEqual(TRACE_QUERY_FIELDS, [
+        'Source',
+        'Status',
+        'Server',
+        'Client',
+        'Namespace',
+        'Application',
+        'API Route',
+        'Root Span Name',
+        'Trace ID',
+        'Sort',
+    ]);
 });
 
 test('maps existing trace filters to query-builder filters', async () => {
@@ -157,12 +174,13 @@ test('traces puts Query above the charts and hides unsupported controls', async 
     assert.doesNotMatch(traces, /select a chart area to see traces/);
 });
 
-test('traces sidebar exposes namespace, root service, and span name groups', async () => {
+test('traces sidebar exposes namespace, server, client, and span name groups', async () => {
     const traces = await readFile(path.resolve(__dirname, '../../src/views/Traces.vue'), 'utf8');
 
     assert.match(traces, /buildTraceQuickFilters/);
     assert.match(traces, /view\.facets/);
-    assert.match(traces, /local-search-keys="\['Namespace', 'ServiceName', 'ApiRoute', 'SpanName'\]"/);
+    assert.match(traces, /local-search-keys="\['Namespace', 'Server', 'Client', 'ApiRoute', 'SpanName'\]"/);
+    assert.match(traces, /case 'Server':/);
     assert.match(traces, /case 'Application':/);
     assert.match(traces, /case 'API Route':/);
     assert.doesNotMatch(traces, /case 'Root Service Name':/);

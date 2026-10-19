@@ -289,14 +289,25 @@ CREATE TABLE IF NOT EXISTS otel_traces @on_cluster (
      SpanName LowCardinality(String) CODEC(ZSTD(1)),
      SpanKind LowCardinality(String) CODEC(ZSTD(1)),
      ServiceName LowCardinality(String) CODEC(ZSTD(1)),
+     Client LowCardinality(String) CODEC(ZSTD(1)),
+     Server LowCardinality(String) CODEC(ZSTD(1)),
+     -- 1 for the span the views count for its request, 0 for a second record
+     -- of a request another span counts (collector/request_counting.go)
+     Counted UInt8 DEFAULT 1 CODEC(ZSTD(1)),
+     -- the protocol of the request of a span (http, grpc, the db.system of a
+     -- database), '' for anything else (collector/request_counting.go)
+     Protocol LowCardinality(String) CODEC(ZSTD(1)),
+     -- the key the node agent gives a request, the same at its client and
+     -- server spans, 0 for none: the server span finds the bodies of its
+     -- request in the client span by it
+     RequestKey UInt64 CODEC(ZSTD(1)),
      ResourceAttributes Map(LowCardinality(String), String) CODEC(ZSTD(1)),
      SpanAttributes Map(LowCardinality(String), String) CODEC(ZSTD(1)),
      Duration Int64 CODEC(ZSTD(1)),
      StatusCode LowCardinality(String) CODEC(ZSTD(1)),
      StatusMessage String CODEC(ZSTD(1)),
-     RequestBody String CODEC(ZSTD(1)),
-     ResponseBody String CODEC(ZSTD(1)),
-     Namespace LowCardinality(String) MATERIALIZED (if(ResourceAttributes['k8s.namespace.name'] != '', ResourceAttributes['k8s.namespace.name'], 'n/a')) CODEC(ZSTD(1)),
+     RequestBodyHash UInt64 CODEC(ZSTD(1)),
+     ResponseBodyHash UInt64 CODEC(ZSTD(1)),
      ApiRoute LowCardinality(String) MATERIALIZED (` + traceApiRouteExpression + `) CODEC(ZSTD(1)),
      Events Nested (
          Timestamp DateTime64(9),
@@ -315,12 +326,30 @@ CREATE TABLE IF NOT EXISTS otel_traces @on_cluster (
      INDEX idx_span_attr_key mapKeys(SpanAttributes) TYPE bloom_filter(0.01) GRANULARITY 1,
      INDEX idx_span_attr_value mapValues(SpanAttributes) TYPE bloom_filter(0.01) GRANULARITY 1,
      INDEX idx_duration Duration TYPE minmax GRANULARITY 1,
-     INDEX idx_request_body RequestBody TYPE text(tokenizer = 'splitByNonAlpha') GRANULARITY 1,
-     INDEX idx_response_body ResponseBody TYPE text(tokenizer = 'splitByNonAlpha') GRANULARITY 1
+     INDEX idx_request_key RequestKey TYPE bloom_filter(0.01) GRANULARITY 1,
+     INDEX idx_request_body_hash RequestBodyHash TYPE bloom_filter(0.01) GRANULARITY 1,
+     INDEX idx_response_body_hash ResponseBodyHash TYPE bloom_filter(0.01) GRANULARITY 1
 ) ENGINE @merge_tree
 TTL toDateTime(Timestamp) + toIntervalSecond(@ttl_traces)
 PARTITION BY toDate(Timestamp)
-ORDER BY (ServiceName, SpanName, toUnixTimestamp(Timestamp), TraceId)
+ORDER BY (Server, ServiceName, SpanName, toUnixTimestamp(Timestamp), TraceId)
+SETTINGS index_granularity=8192, ttl_only_drop_parts = 1`,
+
+		// The HTTP bodies of the spans, each stored once by its hash (xxHash64)
+		// however many spans carry it: the two sides of a request carry the same
+		// bytes, and many requests the same answers. A body written again moves
+		// its LastSeen, which the TTL counts from, so it outlives its spans;
+		// ReplacingMergeTree keeps one row per hash within a day's partition.
+		`
+CREATE TABLE IF NOT EXISTS trace_bodies @on_cluster (
+     Hash UInt64 CODEC(ZSTD(1)),
+     Body String CODEC(ZSTD(1)),
+     LastSeen DateTime CODEC(Delta, ZSTD(1)),
+     INDEX idx_body Body TYPE text(tokenizer = 'splitByNonAlpha') GRANULARITY 1
+) ENGINE @replacing_merge_tree_by(LastSeen)
+TTL LastSeen + toIntervalSecond(@ttl_traces)
+PARTITION BY toDate(LastSeen)
+ORDER BY Hash
 SETTINGS index_granularity=8192, ttl_only_drop_parts = 1`,
 
 		`ALTER TABLE otel_traces @on_cluster ADD COLUMN IF NOT EXISTS NetSockPeerAddr LowCardinality(String) MATERIALIZED SpanAttributes['net.sock.peer.addr'] CODEC(ZSTD(1))`,
@@ -339,11 +368,14 @@ CREATE TABLE IF NOT EXISTS otel_traces_histogram @on_cluster (
      Bucket Float64 CODEC(ZSTD(1)),
      Total UInt64 CODEC(ZSTD(1)),
      Failed UInt64 CODEC(ZSTD(1)),
-     StatusClass LowCardinality(String) CODEC(ZSTD(1))
+     StatusClass LowCardinality(String) CODEC(ZSTD(1)),
+     Client LowCardinality(String) CODEC(ZSTD(1)),
+     Server LowCardinality(String) CODEC(ZSTD(1)),
+     Counted UInt8 CODEC(ZSTD(1))
 ) ENGINE @summing_merge_tree
 TTL Timestamp + toIntervalSecond(@ttl_traces)
 PARTITION BY toDate(Timestamp)
-ORDER BY (ServiceName, SpanName, SpanKind, Root, Timestamp, NetSockPeerAddr, NetPeerName, NetPeerPort, Bucket, StatusClass)
+ORDER BY (Server, ServiceName, SpanName, SpanKind, Root, Timestamp, NetSockPeerAddr, NetPeerName, NetPeerPort, Bucket, StatusClass, Client, Counted)
 SETTINGS index_granularity=8192, ttl_only_drop_parts = 1`,
 
 		`
@@ -358,9 +390,12 @@ SELECT
     roundDown(Duration/1000000, [0,5,10,25,50,100,250,500,1000,2500,5000,10000]) AS Bucket,
     count(1) AS Total,
     countIf(StatusCode = 'STATUS_CODE_ERROR') AS Failed,
-    ` + TraceStatusClassExpression + ` AS StatusClass
+    ` + TraceStatusClassExpression + ` AS StatusClass,
+    Client,
+    Server,
+    Counted
 FROM otel_traces
-GROUP BY ServiceName, SpanName, SpanKind, Root, NetSockPeerAddr, NetPeerName, NetPeerPort, Timestamp, Bucket, StatusClass`,
+GROUP BY ServiceName, SpanName, SpanKind, Root, NetSockPeerAddr, NetPeerName, NetPeerPort, Timestamp, Bucket, StatusClass, Client, Server, Counted`,
 
 		`
 CREATE TABLE IF NOT EXISTS otel_traces_trace_id_ts @on_cluster (
@@ -397,6 +432,65 @@ PARTITION BY toDate(LastSeen)`,
 		`
 CREATE MATERIALIZED VIEW IF NOT EXISTS otel_traces_service_name_mv @on_cluster TO otel_traces_service_name AS
 SELECT ServiceName, max(Timestamp) AS LastSeen FROM otel_traces group by ServiceName`,
+
+		// The servers that record their side of requests: when a server last sent
+		// a server span of a protocol, from the node agent or from an SDK. The
+		// collector reads it to decide which span of a request the views count
+		// (collector/request_counting.go), so that a restart or another Coroot
+		// replica knows them at once. 'coroot-node-agent' is the scope of the
+		// agent's spans (nodeAgentScope of the collector).
+		`
+CREATE TABLE IF NOT EXISTS trace_server_sources @on_cluster (
+    Server LowCardinality(String) CODEC(ZSTD(1)),
+    Protocol LowCardinality(String) CODEC(ZSTD(1)),
+    FromAgent UInt8 CODEC(ZSTD(1)),
+    LastSeen DateTime CODEC(Delta, ZSTD(1))
+)
+ENGINE @replacing_merge_tree_by(LastSeen)
+TTL LastSeen + INTERVAL 1 DAY
+PARTITION BY toDate(LastSeen)
+ORDER BY (Server, Protocol, FromAgent)`,
+
+		`
+CREATE MATERIALIZED VIEW IF NOT EXISTS trace_server_sources_mv @on_cluster TO trace_server_sources AS
+SELECT Server, Protocol, SpanAttributes['otel.scope.name'] = 'coroot-node-agent' AS FromAgent, toDateTime(max(Timestamp)) AS LastSeen
+FROM otel_traces
+WHERE SpanKind = 'SPAN_KIND_SERVER' AND Protocol != ''
+GROUP BY Server, Protocol, FromAgent`,
+
+		// The addresses of the pods, as the spans of their node agents tell
+		// them: a server span where its pod received a request (ip:port), a
+		// client span where it sent one from (ip), and the application of that
+		// side. The collectors read it to name a pod the world does not know yet
+		// (collector/recent_addresses.go), each the addresses taught by the spans
+		// every Coroot replica received; which addresses are a pod's alone (not
+		// a node's, a loopback) is decided there.
+		`
+CREATE TABLE IF NOT EXISTS trace_addresses @on_cluster (
+    Address LowCardinality(String) CODEC(ZSTD(1)),
+    Application LowCardinality(String) CODEC(ZSTD(1)),
+    LastSeen DateTime CODEC(Delta, ZSTD(1))
+)
+ENGINE @replacing_merge_tree_by(LastSeen)
+TTL LastSeen + INTERVAL 1 DAY
+PARTITION BY toDate(LastSeen)
+ORDER BY (Address, Application)`,
+
+		`
+CREATE MATERIALIZED VIEW IF NOT EXISTS trace_addresses_mv @on_cluster TO trace_addresses AS
+SELECT
+    if(SpanKind = 'SPAN_KIND_SERVER',
+       if(position(SpanAttributes['server.address'], ':') > 0,
+          concat('[', SpanAttributes['server.address'], ']:', SpanAttributes['server.port']),
+          concat(SpanAttributes['server.address'], ':', SpanAttributes['server.port'])),
+       SpanAttributes['network.local.address']) AS Address,
+    if(SpanKind = 'SPAN_KIND_SERVER', Server, Client) AS Application,
+    toDateTime(max(Timestamp)) AS LastSeen
+FROM otel_traces
+WHERE SpanAttributes['otel.scope.name'] = 'coroot-node-agent' AND (
+    (SpanKind = 'SPAN_KIND_SERVER' AND SpanAttributes['server.address'] != '' AND SpanAttributes['server.port'] != '') OR
+    (SpanKind = 'SPAN_KIND_CLIENT' AND SpanAttributes['network.local.address'] != ''))
+GROUP BY Address, Application`,
 
 		`
 CREATE TABLE IF NOT EXISTS profiling_stacks @on_cluster (
@@ -545,6 +639,16 @@ METRIC FAMILIES INNER ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/
 		`CREATE TABLE IF NOT EXISTS otel_traces_trace_id_ts_distributed ON CLUSTER @cluster AS otel_traces_trace_id_ts
 			ENGINE = Distributed(@cluster, currentDatabase(), otel_traces_trace_id_ts)`,
 
+		// a body goes to the shard of its hash, so that its copies meet there
+		`CREATE TABLE IF NOT EXISTS trace_bodies_distributed ON CLUSTER @cluster AS trace_bodies
+			ENGINE = Distributed(@cluster, currentDatabase(), trace_bodies, Hash)`,
+
+		`CREATE TABLE IF NOT EXISTS trace_addresses_distributed ON CLUSTER @cluster AS trace_addresses
+			ENGINE = Distributed(@cluster, currentDatabase(), trace_addresses, cityHash64(Address))`,
+
+		`CREATE TABLE IF NOT EXISTS trace_server_sources_distributed ON CLUSTER @cluster AS trace_server_sources
+			ENGINE = Distributed(@cluster, currentDatabase(), trace_server_sources, cityHash64(Server))`,
+
 		`CREATE TABLE IF NOT EXISTS otel_traces_histogram_distributed ON CLUSTER @cluster AS otel_traces_histogram
 			ENGINE = Distributed(@cluster, currentDatabase(), otel_traces_histogram, rand())`,
 
@@ -579,7 +683,7 @@ METRIC FAMILIES INNER ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/
 func ReplaceTables(query string) string {
 	tbls := []string{
 		"otel_logs", "otel_logs_service_name_severity_text", "otel_logs_rollup",
-		"otel_traces", "otel_traces_trace_id_ts", "otel_traces_service_name", "otel_traces_histogram",
+		"otel_traces", "otel_traces_trace_id_ts", "otel_traces_service_name", "otel_traces_histogram", "trace_bodies", "trace_server_sources", "trace_addresses",
 		"profiling_stacks", "profiling_samples", "profiling_profiles",
 		"world_series", "world_points", "world_points_5m", "world_points_1h",
 	}

@@ -16,11 +16,18 @@ const maxTraceFacetValues = 1000
 // instrumented with OpenTelemetry.
 const traceSourceExpr = "if(startsWith(ServiceName, '/'), 'agent', 'otel')"
 
+// traceNamespaceExpr is the namespace of the application that served a span:
+// what comes before the slash of Server (namespace/name), n/a for an
+// application with no namespace (a process of a node, an external service).
+const traceNamespaceExpr = "if(position(Server, '/') > 0, splitByChar('/', Server)[1], 'n/a')"
+
 // traceDerivedFieldExpr is the expression of a field that is not a column of
 // otel_traces, or of otel_traces_histogram when fromMV.
 func traceDerivedFieldExpr(field string, fromMV bool) (string, bool) {
 	switch field {
-	case "Namespace", "ApiRoute":
+	case "Namespace":
+		return traceNamespaceExpr, true
+	case "ApiRoute":
 		return field, true
 	case "Source":
 		return traceSourceExpr, true
@@ -32,6 +39,22 @@ func traceDerivedFieldExpr(field string, fromMV bool) (string, bool) {
 	default:
 		return "", false
 	}
+}
+
+// traceNamespacePredicate compares the prefix of Server for = and !=, which
+// ClickHouse reads through the sorting key, unlike traceNamespaceExpr.
+func traceNamespacePredicate(op, name, value string) (string, bool) {
+	prefix := fmt.Sprintf("startsWith(Server, concat(@%s, '/'))", name)
+	if value == "n/a" {
+		prefix = "position(Server, '/') = 0"
+	}
+	switch op {
+	case "=":
+		return prefix, true
+	case "!=":
+		return "NOT " + prefix, true
+	}
+	return derivedFieldPredicate(traceNamespaceExpr, op, name)
 }
 
 func derivedFieldPredicate(base, op, name string) (string, bool) {
@@ -60,7 +83,7 @@ func traceFacetSelectSQL(field string, fromMV bool) (string, bool) {
 		), true
 	}
 	switch field {
-	case "ServiceName", "SpanName":
+	case "ServiceName", "SpanName", "Client", "Server":
 	default:
 		return "", false
 	}
@@ -82,10 +105,9 @@ func buildTraceFacetQuery(q SpanQuery, field string, fromMV bool) (string, []any
 		return "", nil, false
 	}
 	filter, args := q.rootSpansFilter(fromMV, field)
-	if fromMV {
-		filter = append(filter, "Timestamp >= @tsFrom AND Timestamp < @tsTo")
-	} else {
-		filter = append(filter, "Timestamp BETWEEN @tsFrom AND @tsTo")
+	// [tsFrom, tsTo), as the charts and the list count it
+	filter = append(filter, "Timestamp >= @tsFrom AND Timestamp < @tsTo")
+	if !fromMV {
 		durFilter, durArgs := q.SelectionFilter()
 		if durFilter != "" {
 			filter = append(filter, durFilter)
