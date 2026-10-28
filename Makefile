@@ -2,13 +2,16 @@ UI_PATH = front
 SHELL := /bin/bash
 
 .PHONY: all
-all: lint test
+all: lint test-unit
 
 .PHONY: lint
 lint: go-lint ui-lint
 
 .PHONY: test
-test: go-test ui-test
+test: test-unit test-e2e ## Unit and E2E tests (E2E needs the running make-dev cluster)
+
+.PHONY: test-unit
+test-unit: go-test ui-test ## Go and UI unit tests, no cluster needed
 
 .PHONY: go-lint
 go-lint: go-mod go-vet go-fmt go-imports
@@ -38,12 +41,16 @@ go-test:
 	bash scripts/dev/check-docker-remote.test.sh
 	bash scripts/dev/demo-apps.test.sh
 
+# the packages with tests tagged e2e: e2e/ and a few next to the code they test
+E2E_PACKAGES = $$(git grep -l --untracked '^//go:build e2e' -- '*_test.go' | xargs -n1 dirname | sort -u | sed 's|^|./|')
+
 .PHONY: test-e2e
 test-e2e: ## E2E tests against the running make-dev cluster. Optional: make test-e2e TestOverviewLogSourceFilters
 	@bash scripts/dev/k8s-dev-tools.sh
 	@eval "$$(bash scripts/dev/load-env.sh --export)"; \
 	  export COROOT_DEV_CLICKHOUSE_ADDRESS="$${COROOT_DEV_CLICKHOUSE_ADDRESS:-127.0.0.1:19000}"; \
-	  go test -tags e2e -count=1 -timeout 20m ./e2e/... $(if $(E2E_RUN),-run "$(E2E_RUN)")
+	  export COROOT_DEV_POSTGRES_DSN="$${COROOT_DEV_POSTGRES_DSN:-postgres://coroot:coroot@127.0.0.1:15432/coroot?sslmode=disable}"; \
+	  go test -tags e2e -count=1 -timeout 20m $(E2E_PACKAGES) $(if $(E2E_RUN),-run "$(E2E_RUN)")
 
 ifeq (test-e2e,$(firstword $(MAKECMDGOALS)))
 E2E_RUN_ARG := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
@@ -73,7 +80,8 @@ help: ## Show common targets
 	@echo "  make dev        Tilt into KUBERNETES_CONTEXT_NAME from .env (cluster must already exist)"
 	@echo "  make down       Tilt down + remove the coroot-dev namespace (keeps the cluster)"
 	@echo "  make seed 7 1000  Seed ClickHouse: 1e6 logs/day + 1e6 traces/day for 7 days (express/nextjs-demo)"
-	@echo "  make test       Go and UI unit tests"
+	@echo "  make test       Unit and E2E tests (E2E needs the make-dev cluster)"
+	@echo "  make test-unit  Go and UI unit tests"
 	@echo "  make test-e2e [RUN=regex]   E2E against the make-dev cluster (optional -run filter)"
 	@echo "  make lint       Go + UI linters"
 

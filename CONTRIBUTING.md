@@ -92,8 +92,6 @@ Then, start goland and you will see the following coroot log.
 2024-06-12T16:53:46+08:00 debug layer=debugger continuing
 2024-06-12T16:53:46+08:00 debug layer=debugger ContinueOnce
 I0612 16:53:46.238961   10436 main.go:63] version: unknown, url-base-path: /, read-only: false
-I0612 16:53:46.239085   10436 db.go:47] using sqlite database
-I0612 16:53:46.241036   10436 db.go:47] using sqlite database
 I0612 16:53:46.258643   10436 cache.go:169] loaded from disk in 17ms
 I0612 16:53:46.258878   10436 compaction.go:82] compaction worker started
 I0612 16:53:46.775754   10436 main.go:171] listening on 0.0.0.0:8888
@@ -115,7 +113,8 @@ Access coroot and then you can debug the code in goland.
 * Commits should be as small as possible, while ensuring that each commit is correct independently (i.e., each commit should compile and pass tests).
 * Add tests relevant to the fixed bug or new feature.
 * Use `make lint` to run linters and ensure formatting is correct.
-* Run the unit tests suite `make test`.
+* Run the unit tests suite `make test-unit` (`make test` runs the E2E tests too, against the `make dev` cluster).
+* A change of the Postgres or ClickHouse schema is a new migration: see [docs/schema-migrations.md](docs/schema-migrations.md).
 
 
 ## IDE configuration

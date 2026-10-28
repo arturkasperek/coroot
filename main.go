@@ -56,14 +56,7 @@ func main() {
 		klog.Exitln(err)
 	}
 
-	var database *db.DB
-	if cfg.Postgres != nil && cfg.Postgres.ConnectionString != "" {
-		klog.Infoln("database type: postgres")
-		database, err = db.NewPostgres(cfg.Postgres.ConnectionString)
-	} else {
-		klog.Infoln("database type: sqlite")
-		database, err = db.NewSqlite(cfg.DataDir)
-	}
+	database, err := db.NewPostgres(cfg.Postgres.ConnectionString)
 	if err != nil {
 		klog.Exitln(err)
 	}
@@ -118,6 +111,7 @@ func main() {
 		<-ch
 		grpcServer.Stop()
 		coll.Close()
+		_ = database.Close() // gives up the primary lock at once, for another replica to take
 		os.Exit(0)
 	}()
 

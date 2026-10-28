@@ -35,7 +35,7 @@ For instance, the `projects` parameter (a list of predefined projects) can only 
 | --logs-ttl                           | LOGS_TTL                           | 7d            | Logs Time-To-Live (TTL).                                                                                                                                                        |
 | --profiles-ttl                       | PROFILES_TTL                       | 7d            | Profiles Time-To-Live (TTL).                                                                                                                                                        |                                                                                                    
 | --metrics-ttl                        | METRICS_TTL                        | 7d            | Metrics Time-To-Live (TTL).                                                                                                                                                        |                                                                                                    
-| --pg-connection-string               | PG_CONNECTION_STRING               |               | PostgreSQL connection string (uses SQLite if not set).                                                                                                                          |
+| --pg-connection-string               | PG_CONNECTION_STRING               |               | PostgreSQL connection string (required).                                                                                                                                         |
 | --disable-usage-statistics           | DISABLE_USAGE_STATISTICS           | false         | Disable usage statistics.                                                                                                                                                       |
 | --read-only                          | READ_ONLY                          | false         | Enable read-only mode where configuration changes don't take effect.                                                                                                            |
 | --do-not-check-slo                   | DO_NOT_CHECK_SLO                   | false         | Do not check Service Level Objective (SLO) compliance.                                                                                                                          |
@@ -87,7 +87,7 @@ logs:
 profiles:
   ttl: 7d
 
-postgres: # Store configuration in a Postgres DB instead of SQLite
+postgres: # Store configuration in a Postgres DB (required)
   # URI form: "postgres://coroot:password@127.0.0.1:5432/coroot?sslmode=disable" 
   # KV form: "host=127.0.0.1 user=coroot password=password port=5432 dbname=coroot ssl_mode=disable"
   # https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING

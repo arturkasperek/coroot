@@ -13,35 +13,6 @@ import (
 
 type AlertingRule model.AlertingRule
 
-func (r *AlertingRule) Migrate(m *Migrator) error {
-	err := m.Exec(`
-	CREATE TABLE IF NOT EXISTS alerting_rule (
-		id TEXT NOT NULL,
-		project_id TEXT NOT NULL REFERENCES project(id),
-		config TEXT NOT NULL,
-		enabled INT NOT NULL DEFAULT 1,
-		builtin INT NOT NULL DEFAULT 0,
-		created_at INT NOT NULL,
-		updated_at INT NOT NULL,
-		PRIMARY KEY (id, project_id)
-	)`)
-	if err != nil {
-		return err
-	}
-	err = m.Exec(`CREATE INDEX IF NOT EXISTS alerting_rule_project ON alerting_rule (project_id)`)
-	if err != nil {
-		return err
-	}
-	projects, err := m.db.GetProjects()
-	if err != nil {
-		return err
-	}
-	for _, project := range projects {
-		_ = m.db.InitBuiltinAlertingRules(project.Id)
-	}
-	return nil
-}
-
 type alertingRuleConfig struct {
 	Name                 string                    `json:"name"`
 	Source               model.AlertSource         `json:"source"`
@@ -55,42 +26,6 @@ type alertingRuleConfig struct {
 }
 
 type Alert model.Alert
-
-func (a *Alert) Migrate(m *Migrator) error {
-	err := m.Exec(`
-	CREATE TABLE IF NOT EXISTS alert (
-		id TEXT PRIMARY KEY,
-		fingerprint TEXT NOT NULL,
-		rule_id TEXT NOT NULL,
-		project_id TEXT NOT NULL REFERENCES project(id),
-		application_id TEXT NOT NULL,
-		application_category TEXT NOT NULL DEFAULT '',
-		severity TEXT NOT NULL,
-		summary TEXT NOT NULL,
-		details TEXT,
-		opened_at INT NOT NULL,
-		resolved_at INT NOT NULL DEFAULT 0,
-		updated_at INT NOT NULL,
-		suppressed INT NOT NULL DEFAULT 0,
-		resolved_by TEXT NOT NULL DEFAULT '',
-		report TEXT NOT NULL DEFAULT '',
-		pattern_words TEXT NOT NULL DEFAULT '',
-		manually_resolved_at INT NOT NULL DEFAULT 0
-	)`)
-	if err != nil {
-		return err
-	}
-	if err = m.Exec(`CREATE INDEX IF NOT EXISTS alert_project_resolved ON alert (project_id, resolved_at)`); err != nil {
-		return err
-	}
-	if err = m.Exec(`CREATE INDEX IF NOT EXISTS alert_fingerprint_resolved ON alert (fingerprint, resolved_at)`); err != nil {
-		return err
-	}
-	if err = m.Exec(`CREATE INDEX IF NOT EXISTS alert_fingerprint_suppressed ON alert (fingerprint, suppressed)`); err != nil {
-		return err
-	}
-	return m.Exec(`CREATE INDEX IF NOT EXISTS alert_project_rule_resolved ON alert (project_id, rule_id, resolved_at)`)
-}
 
 func (db *DB) GetAlertingRules(projectId ProjectId) ([]*model.AlertingRule, error) {
 	rows, err := db.db.Query(

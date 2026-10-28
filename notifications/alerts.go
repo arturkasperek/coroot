@@ -3,6 +3,7 @@ package notifications
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/coroot/coroot/db"
@@ -14,16 +15,29 @@ import (
 
 type AlertNotifier struct {
 	db *db.DB
+	// sendLock lets one send run at a time: a notification enqueued while the
+	// retry runs would else be read as not sent by both, and sent twice
+	sendLock sync.Mutex
 }
 
 func NewAlertNotifier(database *db.DB) *AlertNotifier {
 	n := &AlertNotifier{db: database}
 	go func() {
 		for range time.Tick(retryInterval) {
-			n.sendAlerts()
+			n.retry()
 		}
 	}()
 	return n
+}
+
+// retry sends the notifications not sent yet. Only the primary Coroot replica
+// does, as it is the one that enqueues them: several would send each of them
+// once each.
+func (n *AlertNotifier) retry() {
+	if !n.db.GetPrimaryLock(context.TODO()) {
+		return
+	}
+	n.sendAlerts()
 }
 
 func (n *AlertNotifier) Enqueue(project *db.Project, app *model.Application, alert *model.Alert, rule *model.AlertingRule, now timeseries.Time) {
@@ -60,6 +74,8 @@ func (n *AlertNotifier) Enqueue(project *db.Project, app *model.Application, ale
 }
 
 func (n *AlertNotifier) sendAlerts() {
+	n.sendLock.Lock()
+	defer n.sendLock.Unlock()
 	ps, err := n.db.GetProjects()
 	if err != nil {
 		klog.Errorln(err)

@@ -56,6 +56,9 @@ type evalStatus struct {
 	lastEvaluated timeseries.Time
 	err           string
 	duration      time.Duration
+	// at is when the cycle ended: the status is this instance's while it is
+	// the primary, and goes stale when it stops being it
+	at time.Time
 }
 
 func (e *Evaluator) state(project *db.Project) (*projectState, error) {
@@ -157,7 +160,7 @@ func (e *Evaluator) runProject(ctx context.Context, project *db.Project) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	res, err := e.EvaluateProject(ctx, project, timeseries.Now())
-	st := evalStatus{duration: time.Since(start), lastEvaluated: res.To}
+	st := evalStatus{duration: time.Since(start), lastEvaluated: res.To, at: time.Now()}
 	if err != nil {
 		st.err = err.Error()
 		klog.Errorf("%s: world evaluation failed: %v", project.Id, err)

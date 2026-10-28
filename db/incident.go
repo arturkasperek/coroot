@@ -15,38 +15,6 @@ import (
 
 type Incident model.ApplicationIncident
 
-func (i *Incident) Migrate(m *Migrator) error {
-	err := m.Exec(`
-	CREATE TABLE IF NOT EXISTS incident (
-		project_id TEXT NOT NULL REFERENCES project(id),
-		application_id TEXT NOT NULL,
-		key TEXT NOT NULL,
-		opened_at INT NOT NULL,
-		resolved_at INT NOT NULL DEFAULT 0,
-		severity INT NOT NULL,
-		PRIMARY KEY (project_id, application_id, opened_at)
-	);
-	CREATE UNIQUE INDEX IF NOT EXISTS incident_key ON incident (project_id, key);
-	CREATE INDEX IF NOT EXISTS incident_project_id_resolved_opened ON incident (project_id, (resolved_at = 0), opened_at);
-`)
-	if err != nil {
-		return err
-	}
-	if err = m.AddColumnIfNotExists("incident", "details", "text"); err != nil {
-		return err
-	}
-	if err = m.AddColumnIfNotExists("incident", "rca", "text"); err != nil {
-		return err
-	}
-	if err = m.AddColumnIfNotExists("incident", "rca_status", "text"); err != nil {
-		return err
-	}
-	if err = m.AddColumnIfNotExists("incident", "rca_summary", "text"); err != nil {
-		return err
-	}
-	return nil
-}
-
 func effectiveRCAStatus(status, rootCause string) string {
 	if status == "" && rootCause != "" {
 		return "OK"
@@ -64,22 +32,6 @@ type IncidentNotification struct {
 	SentAt        timeseries.Time
 	ExternalKey   string
 	Details       *IncidentNotificationDetails
-}
-
-func (n *IncidentNotification) Migrate(m *Migrator) error {
-	return m.Exec(`
-	CREATE TABLE IF NOT EXISTS incident_notification (
-		project_id TEXT NOT NULL REFERENCES project(id),
-		application_id TEXT NOT NULL,
-		incident_key TEXT NOT NULL,
-		status INT NOT NULL,
-		destination TEXT NOT NULL,
-		timestamp INT NOT NULL,
-		sent_at INT NOT NULL DEFAULT 0,
-		external_key TEXT NOT NULL DEFAULT '',
-		details TEXT
-	);
-`)
 }
 
 type IncidentNotificationDestination struct {

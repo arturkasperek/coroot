@@ -142,10 +142,10 @@ into that secret if it doesn't exist yet, and the same secret is referenced by t
 Git.
 :::
 
-### Option A: Single instance with SQLite
+### Option A: Single instance
 
-This is the simplest setup: a single Coroot pod that stores its configuration in SQLite on a persistent volume.
-It's a great fit for small to medium installations.
+This is the simplest setup: a single Coroot pod. Coroot stores its configuration in PostgreSQL, which is required
+(see Option B for the `postgres` section and its password secret). It's a great fit for small to medium installations.
 
 ```yaml title="coroot/coroot.yaml"
 apiVersion: coroot.com/v1
@@ -154,7 +154,15 @@ metadata:
   name: coroot
   namespace: coroot
 spec:
-  # replicas defaults to 1, a single instance backed by SQLite.
+  # replicas defaults to 1
+  postgres:
+    host: postgres.example.com
+    port: 5432
+    database: coroot
+    user: coroot
+    passwordSecret:
+      name: coroot-postgres
+      key: password
   storage:
     size: 10Gi
     # className: ""  # uses the default storage class if not set
@@ -186,12 +194,9 @@ spec:
   #   className: traefik
 ```
 
-Because SQLite cannot be shared across pods, this option is limited to a single replica.
-
 ### Option B: Highly available with external PostgreSQL
 
-For HA, Coroot must store its configuration in PostgreSQL instead of SQLite. This is **required** whenever `replicas`
-is greater than 1, since multiple Coroot pods need a shared, concurrent configuration store.
+For HA, run several Coroot pods: they share the PostgreSQL configuration store, the one every Coroot needs.
 
 First, create a secret with the Postgres password. Keep it out of Git by creating it directly, or manage it with a tool
 like [Sealed Secrets](https://github.com/bitnami-labs/sealed-secrets) or
@@ -306,7 +311,7 @@ kubectl apply -f bootstrap/coroot-root.yaml
 ArgoCD now creates the operator and Coroot Applications from Git, the operator installs into the `coroot` namespace and
 registers the `Coroot` CRD, and the CR is applied so the operator can deploy all components.
 
-From here on you never touch the cluster directly: switching from SQLite to Postgres, scaling replicas, enabling ingress,
+From here on you never touch the cluster directly: scaling replicas, enabling ingress,
 or adding a license key is just a commit to your repository.
 
 ## A note on ordering

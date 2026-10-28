@@ -37,7 +37,11 @@ type projectApplicationDirectory struct {
 // starts building a new one in the background when it is older than
 // applicationDirectoryRefresh (applicationDirectoryRetry while there is none).
 // It never waits for a build.
-func (c *Collector) getApplicationDirectory(project *db.Project) (*ApplicationDirectory, bool) {
+func (c *Collector) getApplicationDirectory(projectId db.ProjectId) (*ApplicationDirectory, bool) {
+	project, err := c.loadedProject(projectId)
+	if err != nil {
+		return nil, true // deleted: no directory will come
+	}
 	c.applicationDirectoriesLock.Lock()
 	defer c.applicationDirectoriesLock.Unlock()
 	entry := c.applicationDirectories[project.Id]

@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/coroot/coroot/api/views/overview"
@@ -47,15 +46,9 @@ Time arguments accept epoch ms or relative strings like 'now-1h', 'now-15m'. Def
 
 type mcpUserCtxKey struct{}
 
-type mcpSessionState struct {
-	mu        sync.Mutex
-	projectId db.ProjectId
-}
-
 type MCPHandler struct {
-	Api      *Api
-	Server   *mcpserver.MCPServer
-	sessions sync.Map // sessionID -> *mcpSessionState
+	Api    *Api
+	Server *mcpserver.MCPServer
 }
 
 func (api *Api) SetupMCP(instructions string) *MCPHandler {
@@ -75,7 +68,9 @@ func (api *Api) SetupMCP(instructions string) *MCPHandler {
 func (h *MCPHandler) HTTPHandler() http.Handler {
 	httpSrv := mcpserver.NewStreamableHTTPServer(
 		h.Server,
-		mcpserver.WithStateful(true),
+		// sessions any replica accepts (mcpSessionIdManager): the calls of a
+		// session can go to any Coroot replica
+		mcpserver.WithSessionIdManager(&mcpSessionIdManager{secret: func() string { return h.Api.authSecret }, db: h.Api.db}),
 		mcpserver.WithHTTPContextFunc(func(ctx context.Context, r *http.Request) context.Context {
 			if user := h.Api.MCPUserFromBearer(r); user != nil {
 				ctx = context.WithValue(ctx, mcpUserCtxKey{}, user)
@@ -99,35 +94,27 @@ func mcpUserFromContext(ctx context.Context) *db.User {
 	return u
 }
 
-func (h *MCPHandler) sessionState(ctx context.Context) *mcpSessionState {
+// sessionId is the id of the MCP session of a call, "" for none.
+func sessionId(ctx context.Context) string {
 	cs := mcpserver.ClientSessionFromContext(ctx)
 	if cs == nil {
-		return nil
+		return ""
 	}
-	id := cs.SessionID()
-	if id == "" {
-		return nil
-	}
-	if v, ok := h.sessions.Load(id); ok {
-		return v.(*mcpSessionState)
-	}
-	st := &mcpSessionState{}
-	actual, _ := h.sessions.LoadOrStore(id, st)
-	return actual.(*mcpSessionState)
+	return cs.SessionID()
 }
 
+// currentProject is the project selected in the session of a call, from the
+// database: the session may have selected it on another replica.
 func (h *MCPHandler) currentProject(ctx context.Context) (*db.Project, error) {
-	st := h.sessionState(ctx)
-	if st == nil {
-		return nil, nil
-	}
-	st.mu.Lock()
-	id := st.projectId
-	st.mu.Unlock()
+	id := sessionId(ctx)
 	if id == "" {
 		return nil, nil
 	}
-	return h.Api.db.GetProject(id)
+	projectId, err := h.Api.db.GetMcpSessionProject(id)
+	if err != nil || projectId == "" {
+		return nil, err
+	}
+	return h.Api.db.GetProject(projectId)
 }
 
 func (h *MCPHandler) AddTool(tool mcp.Tool, handler mcpserver.ToolHandlerFunc) {
@@ -404,13 +391,13 @@ func (h *MCPHandler) toolSelectProject(ctx context.Context, req mcp.CallToolRequ
 	if err != nil || p == nil {
 		return mcp.NewToolResultError("project not found"), nil
 	}
-	st := h.sessionState(ctx)
-	if st == nil {
+	id := sessionId(ctx)
+	if id == "" {
 		return mcp.NewToolResultError("no session"), nil
 	}
-	st.mu.Lock()
-	st.projectId = p.Id
-	st.mu.Unlock()
+	if err = h.Api.db.SetMcpSessionProject(id, p.Id); err != nil {
+		return nil, err
+	}
 	return MCPJSON(map[string]string{"selected_project_id": string(p.Id), "name": p.Name})
 }
 

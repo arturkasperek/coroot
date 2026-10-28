@@ -11,16 +11,6 @@ import (
 
 type CheckConfigs struct{}
 
-func (cc *CheckConfigs) Migrate(m *Migrator) error {
-	return m.Exec(`
-	CREATE TABLE IF NOT EXISTS check_configs (
-		project_id TEXT NOT NULL REFERENCES project(id),
-		application_id TEXT NOT NULL,
-		configs TEXT,
-		PRIMARY KEY (project_id, application_id)
-	)`)
-}
-
 func (db *DB) GetCheckConfigs(projectId ProjectId) (model.CheckConfigs, error) {
 	rows, err := db.db.Query("SELECT application_id, configs FROM check_configs WHERE project_id = $1", projectId)
 	if err != nil {

@@ -2,6 +2,7 @@ package collector
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -39,6 +40,9 @@ type Collector struct {
 
 	projects     map[db.ProjectId]*db.Project
 	projectsLock sync.RWMutex
+	// clickhouseConfigs are the ClickHouse settings of the projects as last
+	// seen (JSON), to notice when another replica changes them.
+	clickhouseConfigs map[db.ProjectId]string
 
 	migrationDone     map[db.ProjectId]bool
 	migrationDoneLock sync.RWMutex
@@ -102,12 +106,49 @@ func (c *Collector) updateProjects() {
 		klog.Errorln(err)
 		return
 	}
+	c.setProjects(projects)
+}
+
+// setProjects makes projects the projects of the collector. A project whose
+// ClickHouse settings changed (on this or another Coroot replica) loses its
+// client and its migration, so that the collector connects to the new
+// ClickHouse and creates its tables there.
+func (c *Collector) setProjects(projects map[string]*db.Project) {
+	var changed []db.ProjectId
 	c.projectsLock.Lock()
-	defer c.projectsLock.Unlock()
+	if c.clickhouseConfigs == nil {
+		c.clickhouseConfigs = map[db.ProjectId]string{}
+	}
 	c.projects = map[db.ProjectId]*db.Project{}
 	for _, p := range projects {
 		c.projects[p.Id] = p
+		config, _ := json.Marshal(p.ClickHouseConfig(c.globalClickHouse))
+		if previous, ok := c.clickhouseConfigs[p.Id]; ok && previous != string(config) {
+			changed = append(changed, p.Id)
+		}
+		c.clickhouseConfigs[p.Id] = string(config)
 	}
+	c.projectsLock.Unlock()
+
+	for _, id := range changed {
+		klog.Infof("the clickhouse settings of project %s changed", id)
+		c.deleteClickhouseClient(id)
+		c.migrationDoneLock.Lock()
+		delete(c.migrationDone, id)
+		c.migrationDoneLock.Unlock()
+	}
+}
+
+// loadedProject is a project as last loaded from the database, with the
+// settings another replica may have changed since its batches were made; an
+// error once it is deleted.
+func (c *Collector) loadedProject(id db.ProjectId) (*db.Project, error) {
+	c.projectsLock.RLock()
+	defer c.projectsLock.RUnlock()
+	if project := c.projects[id]; project != nil {
+		return project, nil
+	}
+	return nil, fmt.Errorf("project %s not found", id)
 }
 
 func (c *Collector) getProject(apiKey string) (*db.Project, error) {
@@ -215,7 +256,11 @@ func (c *Collector) deleteClickhouseClient(projectId db.ProjectId) {
 
 // getClickhouseReader returns the client that reads from the ClickHouse of a
 // project once its tables are ready.
-func (c *Collector) getClickhouseReader(project *db.Project) (*clickhouse.Client, error) {
+func (c *Collector) getClickhouseReader(projectId db.ProjectId) (*clickhouse.Client, error) {
+	project, err := c.loadedProject(projectId)
+	if err != nil {
+		return nil, err
+	}
 	c.migrationDoneLock.RLock()
 	done := c.migrationDone[project.Id]
 	c.migrationDoneLock.RUnlock()
@@ -263,7 +308,11 @@ func (c *Collector) getClickhouseClient(project *db.Project) (*ch.LowLevelClient
 	return client, nil
 }
 
-func (c *Collector) clickhouseDo(ctx context.Context, project *db.Project, query chgo.Query) error {
+func (c *Collector) clickhouseDo(ctx context.Context, projectId db.ProjectId, query chgo.Query) error {
+	project, err := c.loadedProject(projectId)
+	if err != nil {
+		return err
+	}
 	c.migrationDoneLock.RLock()
 	done := c.migrationDone[project.Id]
 	c.migrationDoneLock.RUnlock()
@@ -288,11 +337,11 @@ func (c *Collector) getTracesBatch(project *db.Project) *TracesBatch {
 	b := c.traceBatches[project.Id]
 	if b == nil {
 		b = NewTracesBatch(batchLimit, batchTimeout, func(query chgo.Query) error {
-			return c.clickhouseDo(context.TODO(), project, query)
+			return c.clickhouseDo(context.TODO(), project.Id, query)
 		}, func() (*clickhouse.Client, error) {
-			return c.getClickhouseReader(project)
+			return c.getClickhouseReader(project.Id)
 		}, func() (*ApplicationDirectory, bool) {
-			return c.getApplicationDirectory(project)
+			return c.getApplicationDirectory(project.Id)
 		})
 		c.traceBatches[project.Id] = b
 	}
@@ -305,7 +354,7 @@ func (c *Collector) getLogsBatch(project *db.Project) *LogsBatch {
 	b := c.logBatches[project.Id]
 	if b == nil {
 		b = NewLogsBatch(batchLimit, batchTimeout, func(query chgo.Query) error {
-			return c.clickhouseDo(context.TODO(), project, query)
+			return c.clickhouseDo(context.TODO(), project.Id, query)
 		})
 		c.logBatches[project.Id] = b
 	}
@@ -318,7 +367,7 @@ func (c *Collector) getProfilesBatch(project *db.Project) *ProfilesBatch {
 	b := c.profileBatches[project.Id]
 	if b == nil {
 		b = NewProfilesBatch(batchLimit, batchTimeout, func(query chgo.Query) error {
-			return c.clickhouseDo(context.TODO(), project, query)
+			return c.clickhouseDo(context.TODO(), project.Id, query)
 		})
 		c.profileBatches[project.Id] = b
 	}
@@ -331,7 +380,7 @@ func (c *Collector) getMetricsBatch(project *db.Project) *MetricsBatch {
 	b := c.metricsBatches[project.Id]
 	if b == nil {
 		b = NewMetricsBatch(batchLimit, batchTimeout, func(query chgo.Query) error {
-			return c.clickhouseDo(context.TODO(), project, query)
+			return c.clickhouseDo(context.TODO(), project.Id, query)
 		})
 		c.metricsBatches[project.Id] = b
 	}

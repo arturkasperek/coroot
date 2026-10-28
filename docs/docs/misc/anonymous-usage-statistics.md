@@ -15,7 +15,7 @@ The following is an example of the reported payload:
     "instance": {
         "uuid": "4423595b-9d97-4e01-a19f-8e3d60c83b2a", // generated upon the first startup and stored in `data-dir/instance.uuid`
         "version": "0.20.0", // Coroot version
-        "database_type": "sqlite" // the type of database being used
+        "database_type": "postgres" // the type of database being used (always postgres)
     },
     "integration": {
         "node_agent": true, // shows whether Coroot has seen the metrics gathered by `node-agent` or not

@@ -32,23 +32,6 @@ type AlertNotificationDetails struct {
 	ResolvedBy  string              `json:"resolved_by,omitempty"`
 }
 
-func (n *AlertNotification) Migrate(m *Migrator) error {
-	return m.Exec(`
-	CREATE TABLE IF NOT EXISTS alert_notification (
-		project_id TEXT NOT NULL REFERENCES project(id),
-		alert_id TEXT NOT NULL,
-		rule_id TEXT NOT NULL,
-		application_id TEXT NOT NULL,
-		status INT NOT NULL,
-		destination TEXT NOT NULL,
-		timestamp INT NOT NULL,
-		sent_at INT NOT NULL DEFAULT 0,
-		external_key TEXT NOT NULL DEFAULT '',
-		details TEXT
-	);
-`)
-}
-
 func (db *DB) PutAlertNotification(n AlertNotification) {
 	details, err := marshal(n.Details)
 	if err != nil {

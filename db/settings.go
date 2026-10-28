@@ -11,18 +11,6 @@ type Setting struct {
 	Value string
 }
 
-func (s *Setting) Migrate(m *Migrator) error {
-	err := m.Exec(`
-	CREATE TABLE IF NOT EXISTS settings (
-		name TEXT NOT NULL PRIMARY KEY,
-		value TEXT NOT NULL
-	)`)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
 func (db *DB) GetSetting(name string, value any) error {
 	var v string
 	err := db.db.QueryRow("SELECT value FROM settings WHERE name = $1", name).Scan(&v)

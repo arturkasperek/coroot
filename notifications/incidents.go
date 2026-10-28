@@ -3,6 +3,7 @@ package notifications
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/coroot/coroot/db"
@@ -13,16 +14,27 @@ import (
 
 type IncidentNotifier struct {
 	db *db.DB
+	// sendLock lets one send run at a time (see AlertNotifier)
+	sendLock sync.Mutex
 }
 
 func NewIncidentNotifier(db *db.DB) *IncidentNotifier {
-	n := IncidentNotifier{db: db}
+	n := &IncidentNotifier{db: db}
 	go func() {
 		for range time.Tick(retryInterval) {
-			n.sendIncidents()
+			n.retry()
 		}
 	}()
-	return &n
+	return n
+}
+
+// retry sends the notifications not sent yet, on the primary Coroot replica
+// only (see AlertNotifier.retry).
+func (n *IncidentNotifier) retry() {
+	if !n.db.GetPrimaryLock(context.TODO()) {
+		return
+	}
+	n.sendIncidents()
 }
 
 func (n *IncidentNotifier) Enqueue(project *db.Project, app *model.Application, incident *model.ApplicationIncident, now timeseries.Time) {
@@ -53,6 +65,8 @@ func (n *IncidentNotifier) Enqueue(project *db.Project, app *model.Application, 
 }
 
 func (n *IncidentNotifier) sendIncidents() {
+	n.sendLock.Lock()
+	defer n.sendLock.Unlock()
 	ps, err := n.db.GetProjects()
 	if err != nil {
 		klog.Errorln(err)

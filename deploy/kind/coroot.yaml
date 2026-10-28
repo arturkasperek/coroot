@@ -17,7 +17,10 @@ metadata:
   name: coroot
   namespace: coroot-dev
 spec:
-  replicas: 1
+  # two replicas: Coroot runs highly available by default (they share the
+  # Postgres config DB and ClickHouse; only the primary, by a Postgres advisory
+  # lock, runs the background jobs)
+  replicas: 2
   selector:
     matchLabels:
       app: coroot

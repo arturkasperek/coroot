@@ -9,8 +9,8 @@ These instances work with the same ClickHouse cluster. Only one of them writes t
 
 ## Configuration Database
 
-By default, Coroot uses [SQLite](/configuration/database#sqlite-default) to store configuration and incident history. 
-However, to run multiple instances, you must use [PostgreSQL](/configuration/database#postgres) as the configuration database. This ensures consistent configuration and incident history across all instances.
+Coroot stores its configuration and incident history in [PostgreSQL](/configuration/database#postgres), which every
+instance shares. This ensures consistent configuration and incident history across all instances.
 
 ## Alerting and Deployment Tracking
 

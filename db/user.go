@@ -24,21 +24,6 @@ type User struct {
 	Anonymous bool
 }
 
-func (u *User) Migrate(m *Migrator) error {
-	err := m.Exec(`
-	CREATE TABLE IF NOT EXISTS users (
-		id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-		email TEXT NOT NULL UNIQUE,
-		name TEXT NOT NULL,
-		password TEXT NOT NULL,
-		roles TEXT NOT NULL
-	)`)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
 func (u *User) IsDefaultAdmin() bool {
 	return u.Email == AdminUserLogin
 }

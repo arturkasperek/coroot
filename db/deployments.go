@@ -15,22 +15,6 @@ const (
 
 type ApplicationDeployment model.ApplicationDeployment
 
-func (ad *ApplicationDeployment) Migrate(m *Migrator) error {
-	return m.Exec(`
-	CREATE TABLE IF NOT EXISTS application_deployment (
-		project_id TEXT NOT NULL REFERENCES project(id),
-		application_id TEXT NOT NULL,
-		name TEXT NOT NULL,
-		started_at INT NOT NULL,
-		finished_at INT NOT NULL DEFAULT 0,
-		details TEXT,
-		metrics_snapshot TEXT,
-		notifications TEXT,
-		PRIMARY KEY (project_id, application_id, started_at)
-	);
-`)
-}
-
 func (db *DB) SaveApplicationDeployment(projectId ProjectId, d *model.ApplicationDeployment) error {
 	if d.StartedAt.IsZero() {
 		return fmt.Errorf("invalid deployment")

@@ -246,14 +246,15 @@ func assertTraceListSpanNames(t *testing.T, traces overviewTraces, want map[stri
 }
 
 // The requests chart and the Status facet of the Traces page count the same
-// window: over a view in the past whose ends are not whole minutes, the bars
-// add up to the facet's values.
+// window: over a view in the past whose ends are not whole minutes (nor whole
+// steps), the bars add up to the facet's values.
 func TestTracesChartAndFacetsCountTheSameRequests(t *testing.T) {
 	requireDevCluster(t)
 	httpGetOK(t, corootBase()+"/health")
 	projectID := defaultProjectID(t)
 
-	traces := fetchOverviewTracesBetween(t, projectID, map[string]any{"view": "traces"}, "now-50m", "now-20m")
+	// a short view, so that a cluster started a quarter of an hour ago has its data
+	traces := fetchOverviewTracesBetween(t, projectID, map[string]any{"view": "traces"}, "now-12m", "now-3m")
 	if traces.Error != "" {
 		t.Fatalf("overview traces error: %s", traces.Error)
 	}

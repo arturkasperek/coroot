@@ -36,7 +36,7 @@ func (c *Collector) TracedClients(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var res TracedClientsResponse
-	if directory, _ := c.getApplicationDirectory(project); directory != nil {
+	if directory, _ := c.getApplicationDirectory(project.Id); directory != nil {
 		res.Ready = true
 		clients := map[string]bool{}
 		for _, ip := range directory.TracedClients() {

@@ -11,16 +11,6 @@ import (
 
 type ApplicationSettings struct{}
 
-func (s *ApplicationSettings) Migrate(m *Migrator) error {
-	return m.Exec(`
-	CREATE TABLE IF NOT EXISTS application_settings (
-		project_id TEXT NOT NULL REFERENCES project(id),
-		application_id TEXT NOT NULL,
-		settings TEXT NOT NULL,
-		PRIMARY KEY (project_id, application_id)
-	)`)
-}
-
 func (db *DB) GetApplicationSettings(projectId ProjectId, appId model.ApplicationId) (*model.ApplicationSettings, error) {
 	var settings sql.NullString
 	err := db.db.QueryRow(

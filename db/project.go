@@ -51,32 +51,6 @@ func (k *ApiKey) IsEmpty() bool {
 	return k.Key == emptyApiKey
 }
 
-func (p *Project) Migrate(m *Migrator) error {
-	err := m.Exec(`
-	CREATE TABLE IF NOT EXISTS project (
-		id TEXT NOT NULL PRIMARY KEY,
-		name TEXT NOT NULL UNIQUE,
-		prometheus TEXT
-	)`)
-	if err != nil {
-		return err
-	}
-	if err = m.AddColumnIfNotExists("project", "settings", "text"); err != nil {
-		return err
-	}
-
-	projects, err := m.db.GetProjects()
-	if err != nil {
-		return err
-	}
-	for _, project := range projects {
-		if err = m.db.migrateApplicationCategories(project); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func (p *Project) Multicluster() bool {
 	return len(p.Settings.MemberProjects) > 0
 }
@@ -245,6 +219,9 @@ func (db *DB) DeleteProject(id ProjectId) error {
 		return err
 	}
 	if _, err = tx.Exec("DELETE FROM alerting_rule WHERE project_id = $1", id); err != nil {
+		return err
+	}
+	if _, err = tx.Exec("DELETE FROM clickhouse_schema WHERE project_id = $1", id); err != nil {
 		return err
 	}
 	if _, err = tx.Exec("DELETE FROM project WHERE id = $1", id); err != nil {

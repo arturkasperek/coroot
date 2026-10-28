@@ -294,7 +294,7 @@ spec:
 
 #  replicas: 1 # Number of Coroot StatefulSet pods.
 
-# Store configuration in a Postgres DB instead of SQLite (required if `replicas` > 1).
+# Store configuration in a Postgres DB (required).
 #  postgres:
 #    host: # Postgres host or service name.
 #    port: # Postgres port (optional, default 5432).

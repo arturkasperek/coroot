@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Print shell assignments for ClickHouse endpoints.
+# Print shell assignments for the ClickHouse endpoints and the Postgres config DB.
 # With DEV_REMOTE_HOST, NodePorts bind on that host, not laptop loopback.
 set -euo pipefail
 
@@ -11,3 +11,4 @@ host="${DEV_REMOTE_HOST:-127.0.0.1}"
 
 printf 'export COROOT_DEV_CLICKHOUSE_ADDRESS=%q\n' "${host}:9000"
 printf 'export COROOT_DEV_CLICKHOUSE_HTTP=%q\n' "http://${host}:8123"
+printf 'export COROOT_DEV_POSTGRES_DSN=%q\n' "postgres://coroot:coroot@127.0.0.1:15432/coroot?sslmode=disable"

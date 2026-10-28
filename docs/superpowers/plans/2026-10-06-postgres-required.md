@@ -1,6 +1,6 @@
 # Postgres required, SQLite removed (future work)
 
-> **Status: ❌ NOT IMPLEMENTED** (verified against the code and git history on 2026-10-11). SQLite is still supported (`db/db.go`, `main.go`, `go.mod`). Original note: not scheduled. This is a product decision as much as a code change: it was discussed as a consequence of "new product, no compatibility to keep, Kubernetes only".
+> **Status: ✅ IMPLEMENTED** (2026-10-19, not committed). Coroot needs `--pg-connection-string` (validated in `config.Validate`); `db.NewSqlite`, `Type`, the SQLite branches and `mattn/go-sqlite3` are gone. Tests use a database per test on the dev Postgres (`db/dbtest`, `COROOT_DEV_POSTGRES_DSN`). Docs updated. Not done: the Helm chart and the operator (other repositories); `Dockerfile.dev` keeps cgo, still needed for lz4.
 
 ## Why
 

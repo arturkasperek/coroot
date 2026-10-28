@@ -8,11 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/coroot/coroot/ch"
 	"github.com/coroot/coroot/ch/chtest"
 	"github.com/coroot/coroot/clickhouse"
-	"github.com/coroot/coroot/config"
 	"github.com/coroot/coroot/db"
-	"github.com/coroot/coroot/timeseries"
 	"github.com/stretchr/testify/require"
 )
 
@@ -34,16 +33,16 @@ func queryStrings(t *testing.T, e *chtest.Env, query string) []string {
 	return res
 }
 
-// The whole schema applies to the ClickHouse version the product ships, and a
-// second run (every startup replays it) changes nothing and fails nowhere.
+// The whole schema applies to the ClickHouse version the product ships, and
+// version 1 run again (as on a database created before versions, or after a
+// migration interrupted half way) changes nothing and fails nowhere.
 func TestMigrateAppliesAndReplays(t *testing.T) {
 	e := chtest.New(t)
 	before := queryStrings(t, e, "SELECT name FROM system.tables WHERE database = currentDatabase()")
 	require.Contains(t, before, "otel_logs")
 	require.Contains(t, before, "otel_traces")
 
-	day := 24 * 3600 * timeseries.Second
-	require.NoError(t, e.LL.Migrate(context.Background(), config.CollectorConfig{TracesTTL: 30 * day, LogsTTL: 30 * day, ProfilesTTL: 30 * day, MetricsTTL: 30 * day}))
+	require.NoError(t, e.LL.ExecMigration(context.Background(), e.CollectorConfig, ch.Migrations[0]))
 	after := queryStrings(t, e, "SELECT name FROM system.tables WHERE database = currentDatabase()")
 	require.Equal(t, before, after)
 

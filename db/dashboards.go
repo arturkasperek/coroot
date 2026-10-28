@@ -10,18 +10,6 @@ import (
 
 type Dashboards struct{}
 
-func (s *Dashboards) Migrate(m *Migrator) error {
-	return m.Exec(`
-	CREATE TABLE IF NOT EXISTS dashboards (
-		project_id TEXT NOT NULL REFERENCES project(id),
-		id TEXT NOT NULL,
-		name TEXT NOT NULL,
-		description TEXT NOT NULL DEFAULT '',
-		config TEXT NOT NULL DEFAULT '{}',
-		PRIMARY KEY (project_id, id)
-	)`)
-}
-
 type Dashboard struct {
 	Id          string          `json:"id"`
 	Name        string          `json:"name"`

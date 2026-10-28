@@ -317,7 +317,7 @@ func (c *Collector) collect() Stats {
 
 	stats.Instance.Uuid = c.instanceUuid
 	stats.Instance.Version = c.instanceVersion
-	stats.Instance.DatabaseType = string(c.db.Type())
+	stats.Instance.DatabaseType = "postgres"
 	stats.Instance.Edition = c.edition
 	stats.Instance.InstallationType = c.installationType
 

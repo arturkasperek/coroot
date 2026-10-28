@@ -16,7 +16,6 @@ import (
 	"github.com/ClickHouse/ch-go"
 	"github.com/ClickHouse/ch-go/chpool"
 	chproto "github.com/ClickHouse/ch-go/proto"
-	"github.com/coroot/coroot/config"
 	"github.com/coroot/coroot/db"
 	"golang.org/x/exp/maps"
 )
@@ -30,6 +29,8 @@ const (
 type LowLevelClient struct {
 	pool    *chpool.Pool
 	cluster string
+	// target names the database the client writes to (Target)
+	target string
 	// metricsCluster has one shard and every node as its replica: PromQL runs
 	// on a single node, so that node must hold all series (see MetricsCluster).
 	metricsCluster string
@@ -71,6 +72,11 @@ func NewLowLevelClient(ctx context.Context, cfg *db.IntegrationClickhouse) (*Low
 	if err = c.info(ctx, opts.Address); err != nil {
 		return nil, err
 	}
+	database := cfg.Database
+	if database == "" {
+		database = "default"
+	}
+	c.target = database + "@" + c.cluster
 	return c, nil
 }
 
@@ -181,37 +187,10 @@ func (c *LowLevelClient) MetricsCluster() string {
 // with the same sorting key, the one with the largest Column.
 var replacingByVersion = regexp.MustCompile(`@replacing_merge_tree_by\((\w+)\)`)
 
-func (c *LowLevelClient) Migrate(ctx context.Context, cfg config.CollectorConfig) error {
-	for _, t := range tables {
-		t = strings.ReplaceAll(t, "@ttl_traces", fmt.Sprintf("%d", cfg.TracesTTL))
-		t = strings.ReplaceAll(t, "@ttl_logs", fmt.Sprintf("%d", cfg.LogsTTL))
-		t = strings.ReplaceAll(t, "@ttl_profiles", fmt.Sprintf("%d", cfg.ProfilesTTL))
-		t = strings.ReplaceAll(t, "@ttl_metrics", fmt.Sprintf("%d", cfg.MetricsTTL))
-		t = strings.ReplaceAll(t, "@merge_tree", "ReplicatedMergeTree('/clickhouse/tables/{shard}/{database}/{table}', '{replica}')")
-		t = replacingByVersion.ReplaceAllString(t, "ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/{database}/{table}', '{replica}', $1)")
-		t = strings.ReplaceAll(t, "@replacing_merge_tree", "ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/{database}/{table}', '{replica}')")
-		t = strings.ReplaceAll(t, "@summing_merge_tree", "ReplicatedSummingMergeTree('/clickhouse/tables/{shard}/{database}/{table}', '{replica}')")
-		t = strings.ReplaceAll(t, "@aggregating_merge_tree", "ReplicatedAggregatingMergeTree('/clickhouse/tables/{shard}/{database}/{table}', '{replica}')")
-		err := c.Exec(ctx, t)
-		if err != nil {
-			return err
-		}
-	}
-	for _, t := range distributedTables {
-		if err := c.Exec(ctx, t); err != nil {
-			return err
-		}
-	}
-	for _, t := range timeSeriesTables {
-		t = strings.ReplaceAll(t, "@ttl_metrics", fmt.Sprintf("%d", cfg.MetricsTTL))
-		if err := c.ExecWithSettings(ctx, t, TimeSeriesSettings); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 var (
+	// tables, distributedTables and timeSeriesTables are version 1 of the
+	// schema (Migrations). Never edit them: a change of the schema is a new
+	// Migration.
 	tables = []string{
 		`
 CREATE TABLE IF NOT EXISTS otel_logs @on_cluster (

@@ -392,7 +392,7 @@ func fetchOverviewTraces(t *testing.T, projectID string, query map[string]any) o
 	return fetchOverviewTracesBetween(t, projectID, query, "now-15m", "now")
 }
 
-// fetchOverviewTracesBetween is the Traces page over from..to (now-50m, now).
+// fetchOverviewTracesBetween is the Traces page over from..to (now-12m, now-3m).
 func fetchOverviewTracesBetween(t *testing.T, projectID string, query map[string]any, from, to string) overviewTraces {
 	t.Helper()
 	q, err := json.Marshal(query)

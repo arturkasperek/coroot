@@ -215,6 +215,12 @@ func (cfg *Config) Validate() error {
 		return fmt.Errorf("invalid url_base_path: %s", cfg.UrlBasePath)
 	}
 
+	// the configuration and the state of Coroot live in Postgres, which every
+	// replica shares
+	if cfg.Postgres == nil || cfg.Postgres.ConnectionString == "" {
+		return fmt.Errorf("a Postgres connection string is required (--pg-connection-string, PG_CONNECTION_STRING or postgres.connection_string)")
+	}
+
 	if cfg.HTTPDisabled && cfg.HTTPSListenAddress == "" {
 		return fmt.Errorf("at least one of HTTP or HTTPS listener must be enabled")
 	}

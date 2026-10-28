@@ -4,12 +4,9 @@ sidebar_position: 7
 
 # Database
 
-Coroot requires a database to store its configuration, such as projects and Prometheus connection details.
-
-## SQLite (default)
-
-By default, Coroot uses an embedded sqlite database. For production installations, we recommend users to use a 
-robust database, such as Postgres. This allows you to run several Coroot replicas for high availability and backup the database.
+Coroot stores its configuration and state (projects, users, API keys, settings, alerting rules, alerts and incidents)
+in Postgres. Postgres is required: Coroot does not start without a connection string. Every Coroot replica uses the
+same database, which is what lets several replicas run for high availability, and it is the one thing to back up.
 
 ## Postgres
 

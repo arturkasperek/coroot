@@ -17,6 +17,7 @@ import (
 	"github.com/coroot/coroot/collector"
 	"github.com/coroot/coroot/constructor"
 	"github.com/coroot/coroot/db"
+	"github.com/coroot/coroot/db/dbtest"
 	"github.com/coroot/coroot/model"
 	"github.com/coroot/coroot/promql"
 	"github.com/coroot/coroot/timeseries"
@@ -155,9 +156,7 @@ func TestWorldEvaluator(t *testing.T) {
 		require.NoError(t, cc.QueryRow(coch.TimeSeriesContext(ctx), query).Scan(&v))
 		return v
 	}
-	database, err := db.NewSqlite(t.TempDir())
-	require.NoError(t, err)
-	require.NoError(t, database.Migrate())
+	database := dbtest.New(t)
 	ev := world.NewEvaluator(database, nil, world.Period, world.Backfill)
 	t.Cleanup(ev.Close)
 	require.Eventually(t, func() bool {
@@ -231,9 +230,7 @@ func TestWorldRecordingRules(t *testing.T) {
 	cc, err := clickhouse.NewClient(e.Config, project)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = cc.Close() })
-	database, err := db.NewSqlite(t.TempDir())
-	require.NoError(t, err)
-	require.NoError(t, database.Migrate())
+	database := dbtest.New(t)
 
 	var windows [][2]timeseries.Time
 	constructor.RecordingRules["rr_e2e_test"] = func(_ *db.DB, _ *db.Project, w *model.World) []*model.MetricValues {

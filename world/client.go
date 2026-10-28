@@ -3,6 +3,7 @@ package world
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/coroot/coroot/db"
 	"github.com/coroot/coroot/model"
@@ -53,8 +54,9 @@ func (c *Client) QueryRange(ctx context.Context, query string, from, to timeseri
 func (c *Client) GetStep(from, to timeseries.Time) (timeseries.Duration, error) { return Step, nil }
 
 // GetTo is the end of the stored results: a page ends there. Zero when there is nothing yet.
+// The primary instance knows it from its last cycle; the others ask the store.
 func (c *Client) GetTo() (timeseries.Time, error) {
-	if t := c.e.lastEvaluated(c.id); t != 0 {
+	if t, ok := c.e.recentlyEvaluated(c.id, time.Now()); ok {
 		return t, nil
 	}
 	st, err := c.store()
@@ -97,10 +99,18 @@ func (e *Evaluator) cachedStore(id db.ProjectId) *Store {
 	return nil
 }
 
-func (e *Evaluator) lastEvaluated(id db.ProjectId) timeseries.Time {
+// recentlyEvaluated is up to when this instance stored the results of a project
+// in its last cycle, if that was within the last two periods: an instance that
+// stopped being the primary (another one evaluates now) does not keep serving
+// the time of its last cycle.
+func (e *Evaluator) recentlyEvaluated(id db.ProjectId, now time.Time) (timeseries.Time, bool) {
 	e.lock.Lock()
 	defer e.lock.Unlock()
-	return e.status[id].lastEvaluated
+	st := e.status[id]
+	if st.lastEvaluated == 0 || now.Sub(st.at) > 2*e.period {
+		return 0, false
+	}
+	return st.lastEvaluated, true
 }
 
 func (e *Evaluator) lastError(id db.ProjectId) string {

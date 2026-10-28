@@ -88,6 +88,12 @@ type Store struct {
 
 	lock    sync.Mutex
 	windows map[window]*loadedWindow
+
+	// lastEvaluated is LastEvaluated as read at lastEvaluatedAt: a page
+	// served by an instance that is not the primary asks for it, and so would
+	// every request
+	lastEvaluated   timeseries.Time
+	lastEvaluatedAt time.Time
 }
 
 type window struct {
@@ -125,17 +131,36 @@ func (s *Store) GetStep(from, to timeseries.Time) (timeseries.Duration, error) {
 // LastEvaluated is the end of the stored results: the step up to which the
 // recording rules are computed (the markers of the rules), or the newest point
 // when there are no rules yet. Pages end there.
+// It is read again at most every windowTTL, and from the last day first (the
+// partitions of the points are days), the whole table only when that day has
+// nothing.
 func (s *Store) LastEvaluated(ctx context.Context) (timeseries.Time, error) {
-	var t uint32
-	if err := s.c.QueryRow(ctx, "SELECT toUInt32(maxIf(Timestamp, startsWith(Query, 'rr_world_computed_'))) FROM @@table_world_points@@").Scan(&t); err != nil {
-		return 0, err
+	s.lock.Lock()
+	if time.Since(s.lastEvaluatedAt) < windowTTL {
+		defer s.lock.Unlock()
+		return s.lastEvaluated, nil
 	}
-	if t == 0 {
-		if err := s.c.QueryRow(ctx, "SELECT toUInt32(max(Timestamp)) FROM @@table_world_points@@").Scan(&t); err != nil {
+	s.lock.Unlock()
+
+	var t uint32
+	for _, where := range []string{"WHERE Timestamp > now() - INTERVAL 1 DAY", ""} {
+		if err := s.c.QueryRow(ctx, "SELECT toUInt32(maxIf(Timestamp, startsWith(Query, 'rr_world_computed_'))) FROM @@table_world_points@@ "+where).Scan(&t); err != nil {
 			return 0, err
 		}
+		if t == 0 {
+			if err := s.c.QueryRow(ctx, "SELECT toUInt32(max(Timestamp)) FROM @@table_world_points@@ "+where).Scan(&t); err != nil {
+				return 0, err
+			}
+		}
+		if t != 0 {
+			break
+		}
 	}
-	return timeseries.Time(t), nil
+
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	s.lastEvaluated, s.lastEvaluatedAt = timeseries.Time(t), time.Now()
+	return s.lastEvaluated, nil
 }
 
 func (s *Store) QueryRange(ctx context.Context, query string, from, to timeseries.Time, step timeseries.Duration, fillFunc timeseries.FillFunc) ([]*model.MetricValues, error) {

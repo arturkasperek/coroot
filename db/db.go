@@ -4,26 +4,16 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/url"
-	"path"
 	"strings"
+	"sync"
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 	_ "github.com/lib/pq"
-	"github.com/mattn/go-sqlite3"
-	_ "github.com/mattn/go-sqlite3"
 )
 
-type Type string
-
-const (
-	TypeSqlite   Type = "sqlite"
-	TypePostgres Type = "postgres"
-
-	defaultPostgresTimeoutSecond = "30"
-)
+const defaultPostgresTimeoutSecond = "30"
 
 var (
 	ErrNotFound = errors.New("not found")
@@ -32,23 +22,16 @@ var (
 	ErrReadonly = errors.New("readonly")
 )
 
+// DB is the Postgres database that keeps the configuration and the state of
+// Coroot (projects, users, settings, alerting rules, alerts, incidents). It
+// is the one store shared by every Coroot replica.
 type DB struct {
-	typ Type
-	db  *sql.DB
+	db *sql.DB
 
+	// primaryLockConn holds the primary lock (GetPrimaryLock) while this
+	// instance is the primary; primaryLock guards it.
+	primaryLock     sync.Mutex
 	primaryLockConn *sql.Conn
-}
-
-func NewSqlite(dataDir string) (*DB, error) {
-	db, err := sql.Open("sqlite3", fmt.Sprintf("file:%s?mode=rwc", path.Join(dataDir, "db.sqlite")))
-	if err != nil {
-		return nil, err
-	}
-	if _, err = db.Exec("PRAGMA foreign_keys = ON"); err != nil {
-		return nil, err
-	}
-	db.SetMaxOpenConns(1)
-	return &DB{typ: TypeSqlite, db: db}, nil
 }
 
 func NewPostgres(dsn string) (*DB, error) {
@@ -60,7 +43,7 @@ func NewPostgres(dsn string) (*DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &DB{typ: TypePostgres, db: db}, nil
+	return &DB{db: db}, nil
 }
 
 func addPostgresConnectTimeout(dsn string) (string, error) {
@@ -83,8 +66,16 @@ func addPostgresConnectTimeout(dsn string) (string, error) {
 	}
 }
 
-func (db *DB) Type() Type {
-	return db.typ
+// Close closes the database, giving up the primary lock if this instance
+// holds it.
+func (db *DB) Close() error {
+	db.primaryLock.Lock()
+	if db.primaryLockConn != nil {
+		_ = db.primaryLockConn.Close()
+		db.primaryLockConn = nil
+	}
+	db.primaryLock.Unlock()
+	return db.db.Close()
 }
 
 func (db *DB) DB() *sql.DB {
@@ -103,38 +94,9 @@ func (db *DB) QueryRow(query string, args ...any) *sql.Row {
 	return db.db.QueryRow(query, args...)
 }
 
-func (db *DB) Migrator() *Migrator {
-	return NewMigrator(db.typ, db)
-}
-
-func (db *DB) Migrate(extraTables ...Table) error {
-	defaultTables := []Table{
-		&Project{},
-		&CheckConfigs{},
-		&Incident{},
-		&IncidentNotification{},
-		&AlertNotification{},
-		&ApplicationDeployment{},
-		&ApplicationSettings{},
-		&Dashboards{},
-		&Setting{},
-		&User{},
-		&AlertingRule{},
-		&Alert{},
-	}
-	return db.Migrator().Migrate(append(defaultTables, extraTables...)...)
-}
-
 func (db *DB) IsUniqueViolationError(err error) bool {
-	switch db.typ {
-	case TypePostgres:
-		e, ok := err.(*pq.Error)
-		return ok && e.Code.Name() == "unique_violation"
-	case TypeSqlite:
-		e, ok := err.(sqlite3.Error)
-		return ok && e.Code == sqlite3.ErrConstraint
-	}
-	return false
+	e, ok := err.(*pq.Error)
+	return ok && e.Code.Name() == "unique_violation"
 }
 
 func (db *DB) GetDeploymentUuid() (string, error) {
@@ -157,70 +119,6 @@ func (db *DB) GetDeploymentUuid() (string, error) {
 		return "", err
 	}
 	return id, nil
-}
-
-type Table interface {
-	Migrate(m *Migrator) error
-}
-
-type Migrator struct {
-	typ Type
-	db  *DB
-}
-
-func NewMigrator(t Type, db *DB) *Migrator {
-	return &Migrator{typ: t, db: db}
-}
-
-func (m *Migrator) Migrate(tables ...Table) error {
-	for _, t := range tables {
-		err := t.Migrate(m)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (m *Migrator) Exec(query string, args ...any) error {
-	switch m.typ {
-	case TypePostgres:
-		query = strings.ReplaceAll(query, "INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY")
-	}
-	_, err := m.db.Exec(query, args...)
-	return err
-}
-
-func (m *Migrator) AddColumnIfNotExists(table, column, dataType string) error {
-	switch m.typ {
-	case TypeSqlite:
-		rows, err := m.db.Query(fmt.Sprintf("SELECT name FROM pragma_table_info('%s');", table))
-		if err != nil {
-			return nil
-		}
-		defer func() {
-			_ = rows.Close()
-		}()
-		var name string
-		for rows.Next() {
-			if err := rows.Scan(&name); err != nil {
-				return err
-			}
-			if name == column {
-				return nil
-			}
-		}
-		_, err = m.db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, dataType))
-		if err != nil {
-			return err
-		}
-	case TypePostgres:
-		_, err := m.db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN IF NOT EXISTS %s %s", table, column, dataType))
-		if err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func marshal[T any](v *T) (*string, error) {
