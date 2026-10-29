@@ -433,7 +433,10 @@ var QUERIES = []Query{
 	qDB("mongo_scrape_error", `mongo_scrape_error`, "error", "warning"),
 	qDB("mongo_info", `mongo_info`, "server_version", "flavor"),
 	qDB("mongo_rs_status", `mongo_rs_status`, "rs", "role"),
-	qDB("mongo_rs_last_applied_timestamp_ms", `timestamp(mongo_rs_last_applied_timestamp_ms) - mongo_rs_last_applied_timestamp_ms/1000`),
+	// how long ago, at each step, the instance applied its last operation;
+	// ClickHouse's PromQL has no timestamp(), and the auditor needs only the
+	// difference between a secondary and the primary, where time() cancels out
+	qDB("mongo_rs_last_applied_timestamp_ms", `time() - mongo_rs_last_applied_timestamp_ms/1000`),
 	qDB("mongo_rs_member_status", `mongo_rs_member_status`, "rs", "member", "state"),
 	qDB("mongo_rs_member_replication_lag_seconds", `mongo_rs_member_replication_lag_seconds`, "rs", "member"),
 	qDB("mongo_rs_member_config_info", `mongo_rs_member_config_info`, "rs", "member", "arbiter", "votes"),

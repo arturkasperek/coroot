@@ -1,15 +1,16 @@
 # Metrics follow-ups (future work)
 
-> **Status: ❌ NOT IMPLEMENTED** (verified against the code and git history on 2026-10-11). None of the items is done, except items 2 and 4, closed by decisions (2026-10-29; in 4 the `lastPerQuery` fix and the query marking are done). Original note: not scheduled.
+> **Status: ❌ NOT IMPLEMENTED** (verified against the code and git history on 2026-10-11). None of the items is done, except item 1 (done) and items 2 and 4, closed by decisions (2026-10-29; in 4 the `lastPerQuery` fix and the query marking are done). Original note: not scheduled.
 
 These are the gaps left after `2026-10-05-clickhouse-promql-metrics.md` (all 12 tasks done). Each item says what is wrong, the evidence, and the first thing to try. Numbers are from the dev cluster (2 shards, 2026-10-05).
 
-## 1. `timestamp()` is not supported by ClickHouse PromQL
+## 1. `timestamp()` is not supported by ClickHouse PromQL — done 2026-10-29
 
 - **Problem:** `mongo_rs_last_applied_timestamp_ms` (`constructor/queries.go`) uses `timestamp()`; ClickHouse PromQL rejects it, so the query returns nothing. It is 1 of 393 queries.
 - **Evidence:** `e2e/storage/promql_compat_test.go` (`TestPromQLCompat`), the audit run: 94 queries identical, 298 empty, 1 `timestamp()` error.
 - **Options:** (a) rewrite the query without `timestamp()` (check what the Mongo replication-lag inspection really needs; maybe `time() - metric/1000` on a gauge), (b) compute it in Go from the raw series, (c) wait for ClickHouse support and re-run the compat test on each upgrade.
 - **Done when:** the Mongo replica-set lag shows on a dev cluster with a Mongo, and `TestPromQLCompat` has a case for it.
+- **Done 2026-10-29 (not committed):** option (a). The query is `time() - mongo_rs_last_applied_timestamp_ms/1000`. The auditor uses it only as the difference between a secondary and the primary of a replica set (`mongoInstanceLag`, `calcMongoPrimaryBaseline`), and in that difference `time()` cancels out: the lag is the difference of the applied optimes, as before (before, the scrape times of the two instances were in it too). `TestPromQLCompat` ("the Mongo replication lag query") runs the constructor's query on a primary and a secondary 40 s behind and checks the difference is 40 at every step; it failed with the old query. Not checked on a real Mongo: the dev cluster has none.
 
 ## 2. Data lag of 60–75 s on pages (was ~45 s)
 

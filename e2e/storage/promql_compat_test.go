@@ -15,6 +15,7 @@ import (
 	"github.com/coroot/coroot/ch"
 	"github.com/coroot/coroot/ch/chtest"
 	"github.com/coroot/coroot/clickhouse"
+	"github.com/coroot/coroot/constructor"
 	"github.com/coroot/coroot/db"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -63,6 +64,11 @@ func compatEnv(t *testing.T) *compatEnvT {
 	ins(compatInsert("c", map[string]string{"app": "a"}, 40, "i*15"))
 	ins(compatInsert("g", map[string]string{"app": "a"}, 40, "5"))
 	ins(compatInsert("stop", map[string]string{"app": "b"}, 8, "1"))
+	// the optime of a Mongo replica set: the primary applies every operation as
+	// it is scraped, the secondary 40 s later
+	appliedNow := "toUnixTimestamp(toDateTime64('2026-10-05 08:00:00', 3) + toIntervalSecond(i*15)) * 1000"
+	ins(compatInsert("mongo_rs_last_applied_timestamp_ms", map[string]string{"instance": "primary"}, 40, appliedNow))
+	ins(compatInsert("mongo_rs_last_applied_timestamp_ms", map[string]string{"instance": "secondary"}, 40, appliedNow+" - 40000"))
 	c, err := clickhouse.NewClient(e.Config, &db.Project{Name: "test"})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = c.Close() })
@@ -83,7 +89,7 @@ func (e *compatEnvT) waitSeries(t *testing.T, n uint64) {
 			var samples uint64
 			require.NoError(t, e.c.QueryRow(ch.TimeSeriesContext(context.Background()),
 				`SELECT count() FROM timeSeriesData(currentDatabase(), 'compat')`).Scan(&samples))
-			if samples == 40+40+8 {
+			if samples == 40+40+8+40+40 {
 				return
 			}
 		}
@@ -121,7 +127,7 @@ func (e *compatEnvT) queryRange(t *testing.T, q string, from, to time.Time) map[
 
 func TestPromQLCompat(t *testing.T) {
 	e := compatEnv(t)
-	e.waitSeries(t, 3)
+	e.waitSeries(t, 5)
 	from, to := compatT0.Add(time.Minute), compatT0.Add(5*time.Minute)
 
 	t.Run("rate over 45s", func(t *testing.T) {
@@ -174,6 +180,23 @@ func TestPromQLCompat(t *testing.T) {
 		p := res["app=a"][0]
 		assert.InDelta(t, float64(p.t.Unix())-5, p.v, 1e-9)
 	})
+	t.Run("the Mongo replication lag query", func(t *testing.T) {
+		var query string
+		for _, q := range constructor.QUERIES {
+			if q.Name == "mongo_rs_last_applied_timestamp_ms" {
+				query = q.Query
+			}
+		}
+		require.NotEmpty(t, query)
+		res := e.queryRange(t, query, from, to)
+		primary, secondary := res["instance=primary"], res["instance=secondary"]
+		require.Len(t, primary, 17)
+		require.Len(t, secondary, 17)
+		for i := range primary {
+			// the auditor's lag of a secondary is its value minus the primary's
+			assert.InDelta(t, 40, secondary[i].v-primary[i].v, 1e-6, primary[i].t)
+		}
+	})
 	t.Run("histogram_quantile and over_time functions", func(t *testing.T) {
 		assert.NotEmpty(t, e.queryRange(t, `max_over_time(g[1m])`, from, to))
 		assert.NotEmpty(t, e.queryRange(t, `sum(rate(c[1m]))`, from, to))
@@ -186,6 +209,6 @@ func TestPromQLCompat(t *testing.T) {
 		require.NoError(t, e.c.QueryRow(ch.TimeSeriesContext(context.Background()), `SELECT count(), min(n) FROM
 			clusterAllReplicas('`+ch.MetricsCluster+`', view(SELECT count() AS n FROM timeSeriesTags('`+database+`', 'compat')))`).Scan(&nodes, &minSeries))
 		assert.Equal(t, uint64(2), nodes)
-		assert.Equal(t, uint64(3), minSeries)
+		assert.Equal(t, uint64(5), minSeries)
 	})
 }
