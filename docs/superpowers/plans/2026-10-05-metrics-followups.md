@@ -1,6 +1,6 @@
 # Metrics follow-ups (future work)
 
-> **Status: ❌ NOT IMPLEMENTED** (verified against the code and git history on 2026-10-11). None of the items is done. Original note: not scheduled.
+> **Status: ❌ NOT IMPLEMENTED** (verified against the code and git history on 2026-10-11). None of the items is done, except item 2, closed by a decision (2026-10-29). Original note: not scheduled.
 
 These are the gaps left after `2026-10-05-clickhouse-promql-metrics.md` (all 12 tasks done). Each item says what is wrong, the evidence, and the first thing to try. Numbers are from the dev cluster (2 shards, 2026-10-05).
 
@@ -16,7 +16,7 @@ These are the gaps left after `2026-10-05-clickhouse-promql-metrics.md` (all 12 
 - **Problem:** the pipeline waits `lag=2` steps, then recording rules wait `ruleLookahead=2` steps, on a 15 s `world.Period`.
 - **Evidence:** `world/rules.go`, `world/run.go`; lookahead 3 with a 30 s period gave 90 s lag and two e2e failures, so those values are a trade-off, not a free knob.
 - **Options:** (a) evaluate rules incrementally on the points of the last cycle instead of re-reading `ruleHistory` and waiting for lookahead, (b) make `lag` adaptive: shrink it while the agents' remote-write latency is low (measure `now - max(sample time)` per project), (c) accept it and say so in the docs.
-- **Done when:** a data point reaches a page within ~45 s at the dev scrape interval, and `TestCorootIngestsOtelTraces` / external-service classification tests stay green.
+- **Decided 2026-10-29: option (c).** The delay is accepted and documented in `docs/docs/configuration/metrics.md` ("Data delay"). Options (a) and (b) are not planned; reopen only if users ask for fresher pages.
 
 ## 3. Page latency under load (target median ≤ 60 ms at 1 h)
 
