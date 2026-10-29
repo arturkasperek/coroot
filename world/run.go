@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	clickhousego "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/coroot/coroot/ch"
 	"github.com/coroot/coroot/clickhouse"
 	"github.com/coroot/coroot/constructor"
@@ -115,13 +116,21 @@ func (e *Evaluator) EvaluateProject(ctx context.Context, project *db.Project, no
 		return Result{}, fmt.Errorf("could not get check configs: %w", err)
 	}
 	queries := constructor.EvaluatedQueries(project, checkConfigs)
-	res, err := cycle(ctx, ps.b, queries, now, e.backfill, ps.seen)
+	ctx = ch.WithSettings(ctx, clickhousego.Settings{"log_comment": logComment})
+	// read once for the queries and the recording rules: the cycle writes no rows
+	// of the rules; an hour more than the backfill covers the lag and the lookahead
+	last, err := ps.b.lastPerQuery(ctx, now.Add(-e.backfill-timeseries.Hour))
+	if err != nil {
+		e.drop(project.Id)
+		return Result{}, fmt.Errorf("last evaluated: %w", err)
+	}
+	res, err := cycle(ctx, ps.b, queries, now, e.backfill, ps.seen, last)
 	if err != nil {
 		e.drop(project.Id) // new connections next time
 		return res, err
 	}
 	// the recording rules are computed from the World the stored results make
-	if err := e.recordingRules(ctx, project, ps, res.To, &res); err != nil {
+	if err := e.recordingRules(ctx, project, ps, res.To, last, &res); err != nil {
 		return res, fmt.Errorf("recording rules: %w", err)
 	}
 	return res, res.FirstError

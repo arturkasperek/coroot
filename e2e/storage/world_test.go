@@ -185,6 +185,17 @@ func TestWorldEvaluator(t *testing.T) {
 	assert.Equal(t, uint64(0), q(`SELECT countIf(mapContains(Labels, 'namespace')) FROM @@table_world_series@@ FINAL WHERE Query = 'up'`))
 	assert.Equal(t, uint64(3), q(`SELECT countIf(mapContains(Labels, 'job') AND mapContains(Labels, 'instance')) FROM @@table_world_series@@ FINAL WHERE Query = 'up'`))
 
+	t.Run("the evaluator's queries are marked in the query log", func(t *testing.T) {
+		require.NoError(t, e.LL.Exec(ctx, "SYSTEM FLUSH LOGS @on_cluster"))
+		marked := func(kind string) uint64 {
+			return q(`SELECT count() FROM clusterAllReplicas('` + e.LL.Cluster() + `', system.query_log)
+				WHERE current_database = currentDatabase() AND log_comment = 'coroot-evaluator' AND is_initial_query
+				AND event_date >= yesterday() AND query_kind = '` + kind + `'`)
+		}
+		assert.NotZero(t, marked("Select"), "the reads (clickhouse-go)")
+		assert.NotZero(t, marked("Insert"), "the writes (ch-go)")
+	})
+
 	t.Run("a second cycle adds only the new steps and never a duplicate", func(t *testing.T) {
 		res2, err := ev.EvaluateProject(ctx, project, now.Add(60))
 		require.NoError(t, err)

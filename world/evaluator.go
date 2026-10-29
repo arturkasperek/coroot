@@ -46,7 +46,9 @@ type batch struct {
 // backend is what a cycle needs from ClickHouse; the tests fake it.
 type backend interface {
 	metricNames(ctx context.Context) (map[string]bool, error)
-	lastPerQuery(ctx context.Context) (map[string]timeseries.Time, error)
+	// lastPerQuery is the last stored step of each query (and recording rule),
+	// among the steps since since.
+	lastPerQuery(ctx context.Context, since timeseries.Time) (map[string]timeseries.Time, error)
 	queryRange(ctx context.Context, q constructor.Query, from, to timeseries.Time, step timeseries.Duration) ([]*model.MetricValues, error)
 	write(ctx context.Context, b batch) error
 }
@@ -113,17 +115,13 @@ func labelMap(mv *model.MetricValues) map[string]string {
 // call per query) and stores the results. It evaluates only queries whose metrics
 // exist: three quarters of the constructor's queries read metrics that nobody
 // sends, and ClickHouse charges a fixed ~14 CPU-ms per PromQL query.
-func cycle(ctx context.Context, b backend, queries []constructor.Query, now timeseries.Time, backfill timeseries.Duration, seen *seriesCache) (Result, error) {
+func cycle(ctx context.Context, b backend, queries []constructor.Query, now timeseries.Time, backfill timeseries.Duration, seen *seriesCache, last map[string]timeseries.Time) (Result, error) {
 	to := now.Add(-lag * Step).Truncate(Step)
 	res := Result{To: to}
 
 	names, err := b.metricNames(ctx)
 	if err != nil {
 		return res, fmt.Errorf("metric names: %w", err)
-	}
-	last, err := b.lastPerQuery(ctx)
-	if err != nil {
-		return res, fmt.Errorf("last evaluated: %w", err)
 	}
 
 	type task struct {

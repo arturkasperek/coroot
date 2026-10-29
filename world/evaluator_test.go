@@ -34,7 +34,7 @@ type written struct {
 }
 
 func (f *fakeBackend) metricNames(context.Context) (map[string]bool, error) { return f.names, nil }
-func (f *fakeBackend) lastPerQuery(context.Context) (map[string]timeseries.Time, error) {
+func (f *fakeBackend) lastPerQuery(context.Context, timeseries.Time) (map[string]timeseries.Time, error) {
 	return f.last, nil
 }
 func (f *fakeBackend) queryRange(_ context.Context, q constructor.Query, from, to timeseries.Time, step timeseries.Duration) ([]*model.MetricValues, error) {
@@ -60,28 +60,28 @@ func q(expr string, labels ...string) constructor.Query {
 func TestCycleEvaluatesOnlyExistingMetricsAndOnlyNewSteps(t *testing.T) {
 	f := &fakeBackend{names: map[string]bool{"up": true}, last: map[string]timeseries.Time{"up": 1020}}
 	// now 1095: the window ends two steps back, at 1065
-	_, err := cycle(context.Background(), f, []constructor.Query{q("up"), q("pg_up")}, 1095, 24*timeseries.Hour, newSeriesCache())
+	_, err := cycle(context.Background(), f, []constructor.Query{q("up"), q("pg_up")}, 1095, 24*timeseries.Hour, newSeriesCache(), f.last)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"up|1035|1065"}, f.calls, "pg_up has no series; up is evaluated after its last point only")
 }
 
 func TestCycleBackfillsAQueryWithNoPoints(t *testing.T) {
 	f := &fakeBackend{names: map[string]bool{"pg_up": true}, last: map[string]timeseries.Time{}}
-	_, err := cycle(context.Background(), f, []constructor.Query{q("pg_up")}, 100_080, 24*timeseries.Hour, newSeriesCache())
+	_, err := cycle(context.Background(), f, []constructor.Query{q("pg_up")}, 100_080, 24*timeseries.Hour, newSeriesCache(), f.last)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"pg_up|13650|100050"}, f.calls, "a new query is evaluated over the backfill window in one call")
 }
 
 func TestCycleEvaluatesQueriesWhoseMetricsItCannotTell(t *testing.T) {
 	f := &fakeBackend{names: map[string]bool{}, last: map[string]timeseries.Time{}}
-	_, err := cycle(context.Background(), f, []constructor.Query{q(`{job="x"}`), q(`rate(`)}, 100_080, timeseries.Hour, newSeriesCache())
+	_, err := cycle(context.Background(), f, []constructor.Query{q(`{job="x"}`), q(`rate(`)}, 100_080, timeseries.Hour, newSeriesCache(), f.last)
 	require.NoError(t, err)
 	assert.Equal(t, []string{`{job="x"}|96450|100050`}, f.calls, "no metric name: evaluated; a query that does not parse is skipped")
 }
 
 func TestCycleSkipsAQueryThatIsUpToDate(t *testing.T) {
 	f := &fakeBackend{names: map[string]bool{"up": true}, last: map[string]timeseries.Time{"up": 1065}}
-	_, err := cycle(context.Background(), f, []constructor.Query{q("up")}, 1095, timeseries.Hour, newSeriesCache())
+	_, err := cycle(context.Background(), f, []constructor.Query{q("up")}, 1095, timeseries.Hour, newSeriesCache(), f.last)
 	require.NoError(t, err)
 	assert.Empty(t, f.calls)
 }
@@ -99,7 +99,7 @@ func TestCycleDropsNaNAndWritesSeriesOnce(t *testing.T) {
 	f := &fakeBackend{names: map[string]bool{"up": true}, last: map[string]timeseries.Time{"up": 1020},
 		results: map[string][]*model.MetricValues{"up": {mv(map[string]string{"job": "a"}, 1, nan, 3)}}}
 	seen := newSeriesCache()
-	res, err := cycle(context.Background(), f, []constructor.Query{q("up")}, 1095, timeseries.Hour, seen)
+	res, err := cycle(context.Background(), f, []constructor.Query{q("up")}, 1095, timeseries.Hour, seen, f.last)
 	require.NoError(t, err)
 	assert.Equal(t, 2, res.Points)
 	sort.Slice(f.written, func(i, j int) bool { return f.written[i].t < f.written[j].t })
@@ -112,7 +112,7 @@ func TestCycleDropsNaNAndWritesSeriesOnce(t *testing.T) {
 	// the next cycle, one step later, does not write the series again
 	f.series, f.written, f.calls = nil, nil, nil
 	f.last["up"] = 1065
-	_, err = cycle(context.Background(), f, []constructor.Query{q("up")}, 1125, timeseries.Hour, seen)
+	_, err = cycle(context.Background(), f, []constructor.Query{q("up")}, 1125, timeseries.Hour, seen, f.last)
 	require.NoError(t, err)
 	assert.Empty(t, f.series, "a series is rewritten only when it is new or old")
 }

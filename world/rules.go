@@ -45,7 +45,7 @@ const ruleChunk = timeseries.Hour
 // aggregates that are not PromQL: connections between applications, log
 // messages per application) for the steps they are missing, from the World that
 // the stored results of the queries make, and stores them like any other query.
-func (e *Evaluator) recordingRules(ctx context.Context, project *db.Project, ps *projectState, evaluatedTo timeseries.Time, res *Result) error {
+func (e *Evaluator) recordingRules(ctx context.Context, project *db.Project, ps *projectState, evaluatedTo timeseries.Time, last map[string]timeseries.Time, res *Result) error {
 	to := evaluatedTo.Add(-ruleLookahead * Step) // the last step the rules are computed for
 	res.To = to                                  // and so the last one a page can use
 	names := make([]string, 0, len(constructor.RecordingRules))
@@ -58,10 +58,6 @@ func (e *Evaluator) recordingRules(ctx context.Context, project *db.Project, ps 
 		return nil
 	}
 	marker := rulesMarker(names)
-	last, err := ps.b.lastPerQuery(ctx)
-	if err != nil {
-		return err
-	}
 	// A rule that has nothing to say (an empty World, an application without logs) leaves
 	// no rows, so the rows cannot tell how far the rules were computed: a marker does.
 	from := to.Add(-e.backfill)

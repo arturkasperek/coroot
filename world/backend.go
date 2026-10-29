@@ -6,6 +6,7 @@ import (
 
 	chgo "github.com/ClickHouse/ch-go"
 	chproto "github.com/ClickHouse/ch-go/proto"
+	clickhousego "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/coroot/coroot/ch"
 	"github.com/coroot/coroot/clickhouse"
 	"github.com/coroot/coroot/constructor"
@@ -14,10 +15,14 @@ import (
 	"github.com/coroot/coroot/timeseries"
 )
 
-// foreground inserts return when the shard has the rows (and the rollups, which
-// are materialized views on the shard, have them too): a page that follows the
-// notification of a cycle must find them.
-var foreground = []chgo.Setting{chgo.SettingInt("distributed_foreground_insert", 1)}
+// insertSettings: foreground inserts return when the shard has the rows (and
+// the rollups, which are materialized views on the shard, have them too): a page
+// that follows the notification of a cycle must find them.
+var insertSettings = []chgo.Setting{chgo.SettingInt("distributed_foreground_insert", 1), {Key: "log_comment", Value: logComment}}
+
+// logComment marks the evaluator's queries in system.query_log, to tell their
+// cost from the pages'.
+const logComment = "coroot-evaluator"
 
 type chBackend struct {
 	ll   *ch.LowLevelClient
@@ -29,8 +34,12 @@ func (b *chBackend) metricNames(ctx context.Context) (map[string]bool, error) {
 	return b.prom.MetricNames(ctx)
 }
 
-func (b *chBackend) lastPerQuery(ctx context.Context) (map[string]timeseries.Time, error) {
-	rows, err := b.c.Query(ctx, "SELECT Query, toUInt32(max(Timestamp)) FROM @@table_world_points@@ GROUP BY Query")
+// lastPerQuery reads the points since since only (the sorting key starts with
+// the hour, so older parts are skipped): an older point never changes what a
+// cycle evaluates, which goes back at most the backfill.
+func (b *chBackend) lastPerQuery(ctx context.Context, since timeseries.Time) (map[string]timeseries.Time, error) {
+	rows, err := b.c.Query(ctx, "SELECT Query, toUInt32(max(Timestamp)) FROM @@table_world_points@@ WHERE Timestamp >= toDateTime(@since) GROUP BY Query",
+		clickhousego.Named("since", uint32(since)))
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +77,7 @@ func (b *chBackend) write(ctx context.Context, bt batch) error {
 			{Name: "Query", Data: query}, {Name: "SeriesHash", Data: hash},
 			{Name: "Labels", Data: labels}, {Name: "LastSeen", Data: lastSeen},
 		}
-		if err := b.ll.Do(ctx, chgo.Query{Body: input.Into("@@table_world_series@@"), Input: input, Settings: foreground}); err != nil {
+		if err := b.ll.Do(ctx, chgo.Query{Body: input.Into("@@table_world_series@@"), Input: input, Settings: insertSettings}); err != nil {
 			return err
 		}
 	}
@@ -86,5 +95,5 @@ func (b *chBackend) write(ctx context.Context, bt batch) error {
 		{Name: "Query", Data: query}, {Name: "SeriesHash", Data: hash},
 		{Name: "Timestamp", Data: ts}, {Name: "Value", Data: value},
 	}
-	return b.ll.Do(ctx, chgo.Query{Body: input.Into("@@table_world_points@@"), Input: input, Settings: foreground})
+	return b.ll.Do(ctx, chgo.Query{Body: input.Into("@@table_world_points@@"), Input: input, Settings: insertSettings})
 }
