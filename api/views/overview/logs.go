@@ -50,7 +50,17 @@ type LogsQuery struct {
 	Since   string                 `json:"since"`
 }
 
-func renderLogs(ctx context.Context, chs clickhouse.Clients, w *model.World, query string) *Logs {
+// logsContext is the time range the Logs page reads: the requested one, as the
+// logs are in ClickHouse within seconds, while the world of the view ends at the
+// last evaluated step (a minute or so ago). The step is the world's.
+func logsContext(w *model.World, requested TimeRange) timeseries.Context {
+	if requested.From.IsZero() || requested.To.IsZero() {
+		return w.Ctx
+	}
+	return timeseries.Context{From: requested.From, To: requested.To, Step: w.Ctx.Step, Truncated: w.Ctx.Truncated}
+}
+
+func renderLogs(ctx context.Context, chs clickhouse.Clients, w *model.World, query string, requested TimeRange) *Logs {
 	v := &Logs{}
 
 	if chs.Error != nil {
@@ -72,7 +82,7 @@ func renderLogs(ctx context.Context, chs clickhouse.Clients, w *model.World, que
 	if q.Limit <= 0 {
 		q.Limit = defaultLimit
 	}
-	lq := clickhouse.LogQuery{Ctx: w.Ctx, Limit: q.Limit, Filters: q.Filters, Sort: q.Sort}
+	lq := clickhouse.LogQuery{Ctx: logsContext(w, requested), Limit: q.Limit, Filters: q.Filters, Sort: q.Sort}
 	var clusterFilter *clickhouse.LogFilter
 
 	var rest []clickhouse.LogFilter
@@ -187,7 +197,7 @@ func renderLogs(ctx context.Context, chs clickhouse.Clients, w *model.World, que
 	}
 
 	if len(bySeverity) > 0 {
-		v.Chart = model.NewChart(w.Ctx, "").Column().Sorted()
+		v.Chart = model.NewChart(lq.Ctx, "").Column().Sorted()
 		for severity, agg := range bySeverity {
 			v.Chart.AddSeries(severity.String(), agg, severity.Color())
 		}

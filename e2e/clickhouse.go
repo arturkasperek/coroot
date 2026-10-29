@@ -173,7 +173,8 @@ type logFixtureRow struct {
 
 func insertLogFixture(t *testing.T, token string, rows []logFixtureRow) {
 	t.Helper()
-	// Overview clamps `to` to Prometheus cache GetTo (~45–60s behind wall clock).
+	// Two minutes back: the application pages end where their world does (60–75 s
+	// behind the wall clock); the overview Logs and Traces pages read up to now.
 	now := time.Now().UTC().Add(-2 * time.Minute)
 	var buf bytes.Buffer
 	for _, s := range rows {
@@ -265,7 +266,8 @@ func (s traceFixtureRow) server() string {
 
 func insertTraceFixture(t *testing.T, rows []traceFixtureRow) {
 	t.Helper()
-	// Overview clamps `to` to Prometheus cache GetTo (~45–60s behind wall clock).
+	// Two minutes back: the application pages end where their world does (60–75 s
+	// behind the wall clock); the overview Logs and Traces pages read up to now.
 	now := time.Now().UTC().Add(-2 * time.Minute)
 	base := uint64(now.UnixNano())
 	var buf bytes.Buffer

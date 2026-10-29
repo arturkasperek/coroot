@@ -319,6 +319,7 @@ type overviewLogs struct {
 		Cluster     string            `json:"cluster"`
 	} `json:"entries"`
 	Facets apiFacetGroups `json:"facets"`
+	Chart  *overviewChart `json:"chart"`
 }
 
 func fetchOverviewLogs(t *testing.T, projectID string, query map[string]any) overviewLogs {

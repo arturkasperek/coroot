@@ -110,8 +110,8 @@ func TestClickhouseMigrationKeepsData(t *testing.T) {
 	ctx := context.Background()
 	e.Exec(t, "INSERT INTO otel_traces_distributed (Timestamp, TraceId, SpanId, ServiceName) SETTINGS distributed_foreground_insert = 1 VALUES (now(), 't1', 's1', 'svc')")
 	migrations := append(append([]ch.Migration{}, ch.Migrations...), ch.Migration{
-		Version:    len(ch.Migrations) + 1,
-		Name:       "add a column",
+		Version: len(ch.Migrations) + 1,
+		Name:    "add a column",
 		Statements: []string{
 			"ALTER TABLE otel_traces @on_cluster ADD COLUMN IF NOT EXISTS TestColumn String DEFAULT 'x'",
 			// a Distributed table keeps the columns it was created with
