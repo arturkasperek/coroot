@@ -16,4 +16,5 @@ func TestWithSettingsKeepsTheSettingsAddedBefore(t *testing.T) {
 		"enable_time_series_table":               1,
 		"enable_time_series_aggregate_functions": 1,
 	}, ctx.Value(settingsKey{}))
+	assert.Equal(t, context.Background(), QueryContext(context.Background()), "no settings: the context as it is")
 }

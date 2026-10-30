@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/coroot/coroot/constructor"
 	"github.com/coroot/coroot/db"
 	"github.com/coroot/coroot/model"
 	"github.com/coroot/coroot/promql"
@@ -52,6 +53,14 @@ func (c *Client) QueryRange(ctx context.Context, query string, from, to timeseri
 }
 
 func (c *Client) GetStep(from, to timeseries.Time) (timeseries.Duration, error) { return Step, nil }
+
+// PlanQueries passes the plan on to the store; without a store (no ClickHouse
+// yet) there is nothing to plan, and QueryRange returns the error.
+func (c *Client) PlanQueries(windows map[constructor.Window][]string) {
+	if st, err := c.store(); err == nil {
+		st.PlanQueries(windows)
+	}
+}
 
 // GetTo is the end of the stored results: a page ends there. Zero when there is nothing yet.
 // The primary instance knows it from its last cycle; the others ask the store.

@@ -37,6 +37,19 @@ type Cache interface {
 	GetStep(from, to timeseries.Time) (timeseries.Duration, error)
 }
 
+// Window is a time range at a step, as the constructor asks a Cache for it.
+type Window struct {
+	From, To timeseries.Time
+	Step     timeseries.Duration
+}
+
+// QueryPlanner is a Cache that reads the queries of a window together. Before
+// a run asks for them, it is told which queries the run asks for in each
+// window, so that it can read only those.
+type QueryPlanner interface {
+	PlanQueries(windows map[Window][]string)
+}
+
 type Constructor struct {
 	db           DB
 	rootProject  *db.Project
@@ -255,6 +268,15 @@ func (c *Constructor) queryCache(ctx context.Context, cache Cache, project *db.P
 		if latencyCfg.Custom {
 			addQuery(qName+"requests_histogram", qApplicationCustomSLI, latencyCfg.Histogram(), true, nil)
 		}
+	}
+
+	if planner, ok := cache.(QueryPlanner); ok {
+		windows := map[Window][]string{}
+		for _, q := range queries {
+			window := Window{From: q.from, To: q.to, Step: q.step}
+			windows[window] = append(windows[window], q.query)
+		}
+		planner.PlanQueries(windows)
 	}
 
 	res := make(map[string][]*model.MetricValues, len(queries))

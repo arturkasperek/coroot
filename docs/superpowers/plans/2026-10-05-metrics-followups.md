@@ -25,6 +25,33 @@ These are the gaps left after `2026-10-05-clickhouse-promql-metrics.md` (all 12 
 - **Evidence:** measurements in the plan's "Results"; the window cache is 5 s (`world/store.go`, `windowTTL`) and one page loads every query of the window.
 - **Options:** (a) load only the queries a page needs instead of the whole window, (b) a longer window cache with invalidation on a new evaluation cycle, (c) reduce rows read by pruning on `Query` (it is the second sort-key part after the hour), (d) re-measure on a quiet cluster and under a realistic number of series before optimizing: the dev data set is small.
 - **Done when:** the measurement script of Task 7 Step 6 gives a median ≤ 60 ms at 1 h with the evaluator running.
+- **Measured 2026-10-29** on dev with 7 days of world data (today's copied to the 6 days before), quiet cluster, the evaluator running, 10 requests per page; "cold" = the page's window not in the 5 s window cache, "warm" = the same request right after:
+
+  | page | cold median | cold p90 | warm median |
+  |---|---|---|---|
+  | `/health` (the network floor) | 13 ms | 14 ms | 12 ms |
+  | overview/applications 1h / 24h / 7d | 617 ms / 2.1 s / 13.2 s | 623 ms / 2.2 s / 13.4 s | 27 / 31 ms / 13.2 s |
+  | overview/map 1h | 254 ms | 635 ms | 25 ms |
+  | app express-demo 1h / 24h / 7d | 39 ms (the window was cached by the page before) / 2.1 s / 10.1 s | 49 ms / 2.2 s / 13.5 s | 36 / 39 ms / 3.4 s |
+
+  - **Where the time goes:** building the World with the same `Store`, `constructor` and `auditor` as a page (a throwaway test with the constructor's stage profile): the `query` stage (reading the windows) is 646 ms of 696 ms at 1 h, 2.2 s of 2.3 s at 24 h, 13.8 s of 13.9 s at 7 d; `auditor.Audit` is 2 ms. ClickHouse itself answers in 107 ms at 1 h and ≤ 0.9 s per query at 7 d (`system.query_log`): **most of the time is the Go side decoding the rows**. The CPU profile at 7 d: 77 % in clickhouse-go's `column.(*Array).scanSlice` (arrays scanned into slices through `reflect`, with an allocation per element), the rest the GC.
+  - **Why 24 h and 7 d read so much:** a page also reads the SLI queries at the raw step (15 s) from `min(from, to - MaxAlertRuleWindow)` (`constructor.queryCache`, `_raw` queries), and `Store.load` reads every query of a window, not only the ones asked for. So a 7 d page reads the raw points of all 113 queries for 7 days (57.7 M points, 11 s in ClickHouse when not cached) while only the 3 SLI queries need them (7.1 M points, 12 %).
+  - **Fixes, by expected effect:**
+    1. A window reads only the queries asked for it (`Query IN (...)` in `pointsSQL`, the set of queries part of the window key): the raw window of a 24 h / 7 d page shrinks ~8x. Option (a) above.
+    2. Decode the window with ch-go (columnar, no `reflect`) instead of clickhouse-go's `Scan` into `[]uint32` / `[]float32`: the cost at every range, the 1 h page included (~0.8 M points, ~0.5 s of decoding).
+    3. Then re-measure; the 60 ms target at 1 h needs 2 (ClickHouse alone is ~100 ms cold at 1 h, so a cold 1 h page stays above 60 ms; warm pages are ~30 ms already).
+- **Done 2026-10-29 (not committed):** both fixes.
+  - **Planned windows:** `constructor.QueryPlanner` / `constructor.Window`; `queryCache` tells the cache which queries it asks for in each window before asking. `world.Store.PlanQueries` makes a window of at most `maxFilteredQueries` (50) queries read only those (`Query IN (...)` in `pointsSQL` and `seriesSQL`); a larger one, or one nobody planned, reads every query as before. A window can now be loaded several times, for different query sets (`Store.windows` holds a list per window). Tests: `TestStorePlansWindows`, `TestPointsSQLReadsOnlyThePlannedQueries`, and `TestWorldStoreMatchesFillFuncs` ("a window planned for some queries reads those, as a full one does", a query with a quote and a backslash in the IN list).
+  - **Decoding:** a window is read as one row per point instead of an array per series. Measured on a 6 h raw window (2.3 M points): arrays 632 ms, one row per point 254-325 ms. Tried and dropped: ch-go (ClickHouse 26.9 rejects its distributed reads, "Sending a distributed query with unknown (zero) client version", the same as D1 of the PromQL plan; ch-go 0.74 does not build with clickhouse-go 2.17), arrays packed into strings with `reinterpretAsFixedString` (5x faster but loses trailing zero bytes: 2741 series came back with a wrong length).
+  - **Result on dev**, same method as above:
+
+    | page | cold median before | after |
+    |---|---|---|
+    | overview/applications 1h / 24h / 7d | 617 ms / 2.1 s / 13.2 s | 159 / 193 / 857 ms |
+    | overview/map 1h | 254 ms | 25 ms |
+    | app express-demo 24h / 7d | 2.1 s / 10.1 s | 40 / 81 ms |
+
+    The World of a page alone (LoadWorld + Audit, a throwaway test): 1 h 696 → ~180 ms, 24 h 2.27 s → ~215 ms, 7 d 13.9 s → ~830 ms. Warm pages stay ~25-40 ms; a cold 1 h page is still above the 60 ms target (ClickHouse alone ~100 ms).
 
 ## 4. Evaluator cost in ClickHouse (~0.2 core, target 0.1) — closed 2026-10-29
 
@@ -34,6 +61,7 @@ These are the gaps left after `2026-10-05-clickhouse-promql-metrics.md` (all 12 
 - **Done when:** `system.query_log` shows ≤ 0.1 core for the evaluator over 5 minutes on the dev cluster.
 - **Closed 2026-10-29 by decision (code in `7151b75`):** (c) and the `lastPerQuery` fix are done; the 0.1 core target is dropped, (a) is measured not worth it, (b) and (d) stay as ideas. Reopen if the cost matters, e.g. many projects on one ClickHouse (the cost grows with the number of projects).
   - **(c) done:** every query of the evaluator has `log_comment = 'coroot-evaluator'`: the reads through `ch.WithSettings` (it keeps the settings added before; clickhouse-go's own `WithSettings` replaces them, so `TimeSeriesContext` dropped any comment), the writes through `insertSettings` (`world/backend.go`). Checked by `TestWorldEvaluator` ("the evaluator's queries are marked in the query log"). Query to measure: `SELECT count(), sum(ProfileEvents['OSCPUVirtualTimeMicroseconds'])/1e6 FROM clusterAllReplicas(coroot, system.query_log) WHERE log_comment = 'coroot-evaluator' AND type = 'QueryFinish' AND event_time > now() - INTERVAL 5 MINUTE`.
+  - **Bug of (c), found and fixed 2026-10-29 (fix not committed):** `ch.WithSettings` as committed in `7151b75` put clickhouse-go's options into the evaluator's context; clickhouse-go writes `max_execution_time` into the settings of the context it derives from, and the 8 parallel PromQL queries of a cycle did so on one map: `fatal error: concurrent map writes`, 42 Coroot crashes on dev in an hour (and the Tilt port-forward dropping during e2e runs). Now `ch.WithSettings` only records the settings in the context, and `ch.QueryContext` makes clickhouse-go's options per query (`clickhouse.Client.Query` and `QueryRow` call it). Test: `TestSettingsAreSafeForConcurrentQueries` (`go test -race ./ch`; it reported the race and the fatal error on the committed code).
   - **`lastPerQuery` done:** it reads only `Timestamp >= now - backfill - 1h` and runs once per cycle (every 15 s per project, on the primary); `EvaluateProject` passes its result to `cycle` and `recordingRules`. Measured on dev with 7 days of world data (today's copied to the 6 days before, as with the default 7 d `METRICS_TTL`):
     - one call, directly: 49 → 17 ms, 57 → 9 M rows, 279 → 57 CPU-ms over the shards;
     - live, 5 minutes: 40 → 20 calls, 12.0 → 1.8 CPU-s, 2.28 G → 0.33 G rows read.

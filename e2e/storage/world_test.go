@@ -110,6 +110,27 @@ func TestWorldStoreMatchesFillFuncs(t *testing.T) {
 		require.NoError(t, err)
 		assert.Empty(t, res)
 	})
+	t.Run("a window planned for some queries reads those, as a full one does", func(t *testing.T) {
+		quoted := `up{job='a\b'}` // quoted into the IN list of the read
+		worldInsert(t, e, fmt.Sprintf(`INSERT INTO world_series_distributed VALUES ('%s', 2, map('app','b'), now())`, strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(quoted)))
+		worldInsert(t, e, fmt.Sprintf(`INSERT INTO world_points_distributed VALUES ('%s', 2, toDateTime(%d), 1)`, strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(quoted), from.Add(15*timeseries.Minute)))
+		full, err := world.NewStore(c).QueryRange(ctx, query, from, to, 15, timeseries.FillAny)
+		require.NoError(t, err)
+
+		planned := world.NewStore(c)
+		planned.PlanQueries(map[constructor.Window][]string{{From: from, To: to, Step: 15}: {query, quoted}})
+		got, err := planned.QueryRange(ctx, query, from, to, 15, timeseries.FillAny)
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		assert.Equal(t, full[0].Values.String(), got[0].Values.String())
+		require.Eventually(t, func() bool {
+			planned := world.NewStore(c)
+			planned.PlanQueries(map[constructor.Window][]string{{From: from, To: to, Step: 15}: {query, quoted}})
+			got, err := planned.QueryRange(ctx, quoted, from, to, 15, timeseries.FillAny)
+			require.NoError(t, err)
+			return len(got) == 1 && got[0].Labels["app"] == "b"
+		}, 15*time.Second, 300*time.Millisecond)
+	})
 }
 
 func pointsAfterFirst(t *testing.T, tsJSON []byte) []any {

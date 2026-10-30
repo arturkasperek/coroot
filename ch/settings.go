@@ -27,19 +27,26 @@ func TimeSeriesContext(ctx context.Context) context.Context {
 type settingsKey struct{}
 
 // WithSettings adds settings to the clickhouse-go queries made with ctx and
-// keeps the ones added before by WithSettings: clickhouse-go's own
-// WithSettings replaces them.
+// keeps the ones added before by WithSettings (clickhouse-go's own
+// WithSettings replaces them). They reach clickhouse-go in QueryContext.
 func WithSettings(ctx context.Context, settings clickhouse.Settings) context.Context {
 	merged := clickhouse.Settings{}
 	if previous, ok := ctx.Value(settingsKey{}).(clickhouse.Settings); ok {
-		for key, value := range previous {
-			merged[key] = value
-		}
+		maps.Copy(merged, previous)
 	}
-	for key, value := range settings {
-		merged[key] = value
+	maps.Copy(merged, settings)
+	return context.WithValue(ctx, settingsKey{}, merged)
+}
+
+// QueryContext is ctx for one clickhouse-go query, with the settings of
+// WithSettings. It is made per query and never shared: clickhouse-go writes
+// max_execution_time into the settings of the context it derives from, so
+// queries running in parallel from one context that carried clickhouse-go's
+// options would write one map at once (a fatal error in Go).
+func QueryContext(ctx context.Context) context.Context {
+	settings, ok := ctx.Value(settingsKey{}).(clickhouse.Settings)
+	if !ok {
+		return ctx
 	}
-	ctx = context.WithValue(ctx, settingsKey{}, merged)
-	// a copy: clickhouse-go writes max_execution_time into the map it is given
-	return clickhouse.Context(ctx, clickhouse.WithSettings(maps.Clone(merged)))
+	return clickhouse.Context(ctx, clickhouse.WithSettings(maps.Clone(settings)))
 }
