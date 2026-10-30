@@ -12,6 +12,7 @@ import (
 	coch "github.com/coroot/coroot/ch"
 	"github.com/coroot/coroot/ch/chtest"
 	"github.com/coroot/coroot/clickhouse"
+	"github.com/coroot/coroot/constructor"
 	"github.com/coroot/coroot/db"
 	"github.com/coroot/coroot/promql"
 	"github.com/coroot/coroot/timeseries"
@@ -104,8 +105,8 @@ FROM (SELECT number AS q FROM numbers(50)) ARRAY JOIN range(100) AS s ARRAY JOIN
 	} {
 		from := to.Add(-timeseries.Duration(r.hours) * timeseries.Hour)
 		timed("world store "+r.name, func() (int, error) {
-			res, err := world.NewStore(c).QueryRange(ctx, query+"7", from, to, r.step, timeseries.FillAvg)
-			return len(res), err
+			res, err := world.NewStore(c).QueryRanges(ctx, map[string]constructor.QueryRequest{"q": {Query: query + "7", From: from, To: to, Step: r.step, FillFunc: timeseries.FillAvg}})
+			return len(res["q"]), err
 		})
 	}
 }

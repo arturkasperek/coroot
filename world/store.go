@@ -106,22 +106,18 @@ func queryFilter(queries []string) string {
 	return " AND Query IN (" + strings.Join(quoted, ", ") + ")"
 }
 
-// maxFilteredQueries: a window planned for more queries reads all of them. A
-// page's own window needs nearly all (~400, too long for one IN list); the
-// windows worth filtering are the small ones, such as the raw SLIs a 24 h or 7 d
-// page reads at 15 s over its whole range.
+// maxFilteredQueries: a window of more queries reads all of them. A page's
+// own window needs nearly all (~340, too long for one IN list); the windows
+// worth filtering are the small ones, such as the raw SLIs a 24 h or 7 d page
+// reads at 15 s over its whole range.
 const maxFilteredQueries = 50
 
 // Store reads the results of the constructor's queries; it satisfies
-// constructor.Cache and constructor.QueryPlanner.
+// constructor.Cache.
 type Store struct {
 	c *clickhouse.Client
 
 	lock sync.Mutex
-	// windows are the loaded windows, several per window when runs planned
-	// different queries for it
-	windows map[window][]*loadedWindow
-
 	// lastEvaluated is LastEvaluated as read at lastEvaluatedAt: a page
 	// served by an instance that is not the primary asks for it, and so would
 	// every request
@@ -142,75 +138,11 @@ type storedSeries struct {
 	sum, max  []float32
 }
 
-type loadedWindow struct {
-	once    sync.Once
-	created time.Time
-	queries map[string]bool            // the queries it reads; nil: all
-	series  map[string][]*storedSeries // by query
-	err     error
-}
-
-// has tells whether the window reads query.
-func (lw *loadedWindow) has(query string) bool {
-	return lw.queries == nil || lw.queries[query]
-}
-
-// windowTTL is how long a loaded window is reused: the constructor asks for
-// ~400 queries of the same window, concurrently, in one run.
-const windowTTL = 5 * time.Second
+// lastEvaluatedTTL is how long LastEvaluated is reused.
+const lastEvaluatedTTL = 5 * time.Second
 
 func NewStore(c *clickhouse.Client) *Store {
-	return &Store{c: c, windows: map[window][]*loadedWindow{}}
-}
-
-// PlanQueries makes the windows a run is about to ask for read only its
-// queries, unless a window that has them all is loaded already.
-func (s *Store) PlanQueries(windows map[constructor.Window][]string) {
-	s.lock.Lock()
-	defer s.lock.Unlock()
-	s.dropExpired()
-	for planned, queries := range windows {
-		w := window{planned.From.Truncate(planned.Step), planned.To.Truncate(planned.Step), planned.Step}
-		set := map[string]bool{}
-		for _, query := range queries {
-			set[query] = true
-		}
-		if len(set) > maxFilteredQueries {
-			set = nil
-		}
-		covered := false
-		for _, lw := range s.windows[w] {
-			covered = lw.queries == nil
-			for query := range set {
-				if covered = lw.has(query); !covered {
-					break
-				}
-			}
-			if covered {
-				break
-			}
-		}
-		if !covered {
-			s.windows[w] = append(s.windows[w], &loadedWindow{created: time.Now(), queries: set})
-		}
-	}
-}
-
-// dropExpired forgets the windows older than windowTTL; s.lock is held.
-func (s *Store) dropExpired() {
-	for w, loaded := range s.windows {
-		var kept []*loadedWindow
-		for _, lw := range loaded {
-			if time.Since(lw.created) <= windowTTL {
-				kept = append(kept, lw)
-			}
-		}
-		if len(kept) == 0 {
-			delete(s.windows, w)
-		} else {
-			s.windows[w] = kept
-		}
-	}
+	return &Store{c: c}
 }
 
 func (s *Store) GetStep(from, to timeseries.Time) (timeseries.Duration, error) {
@@ -220,12 +152,12 @@ func (s *Store) GetStep(from, to timeseries.Time) (timeseries.Duration, error) {
 // LastEvaluated is the end of the stored results: the step up to which the
 // recording rules are computed (the markers of the rules), or the newest point
 // when there are no rules yet. Pages end there.
-// It is read again at most every windowTTL, and from the last day first (the
+// It is read again at most every lastEvaluatedTTL, and from the last day first (the
 // partitions of the points are days), the whole table only when that day has
 // nothing.
 func (s *Store) LastEvaluated(ctx context.Context) (timeseries.Time, error) {
 	s.lock.Lock()
-	if time.Since(s.lastEvaluatedAt) < windowTTL {
+	if time.Since(s.lastEvaluatedAt) < lastEvaluatedTTL {
 		defer s.lock.Unlock()
 		return s.lastEvaluated, nil
 	}
@@ -252,16 +184,61 @@ func (s *Store) LastEvaluated(ctx context.Context) (timeseries.Time, error) {
 	return s.lastEvaluated, nil
 }
 
-func (s *Store) QueryRange(ctx context.Context, query string, from, to timeseries.Time, step timeseries.Duration, fillFunc timeseries.FillFunc) ([]*model.MetricValues, error) {
-	from, to = from.Truncate(step), to.Truncate(step)
-	lw, err := s.load(ctx, window{from, to, step}, query)
-	if err != nil {
-		return nil, err
+// QueryRanges reads the requests with one read per window, the windows in
+// parallel: a window of at most maxFilteredQueries queries reads only those, a
+// larger one every query. Nothing is kept after it returns.
+func (s *Store) QueryRanges(ctx context.Context, requests map[string]constructor.QueryRequest) (map[string][]*model.MetricValues, error) {
+	queriesByWindow := map[window]map[string]bool{}
+	for _, request := range requests {
+		w := windowOf(request)
+		if queriesByWindow[w] == nil {
+			queriesByWindow[w] = map[string]bool{}
+		}
+		queriesByWindow[w][request.Query] = true
 	}
+
+	seriesByWindow := make(map[window]map[string][]*storedSeries, len(queriesByWindow))
+	var lock sync.Mutex
+	var lastErr error
+	var wg sync.WaitGroup
+	for w, queries := range queriesByWindow {
+		wg.Go(func() {
+			series, err := s.read(ctx, w, queries)
+			lock.Lock()
+			defer lock.Unlock()
+			if err != nil {
+				lastErr = err
+				return
+			}
+			seriesByWindow[w] = series
+		})
+	}
+	wg.Wait()
+
+	res := make(map[string][]*model.MetricValues, len(requests))
+	for name, request := range requests {
+		w := windowOf(request)
+		if series, ok := seriesByWindow[w]; ok {
+			res[name] = metricValues(series[request.Query], w, request.FillFunc)
+		}
+	}
+	return res, lastErr
+}
+
+// windowOf is the window of a request, aligned to its step.
+func windowOf(request constructor.QueryRequest) window {
+	return window{request.From.Truncate(request.Step), request.To.Truncate(request.Step), request.Step}
+}
+
+// metricValues makes the constructor's series of a query from the series read
+// for its window, with the aggregate of fillFunc; a series with no point in the
+// window is left out.
+func metricValues(series []*storedSeries, w window, fillFunc timeseries.FillFunc) []*model.MetricValues {
+	from, step := w.from, w.step
+	n := int(w.to.Sub(from)/step) + 1
 	agg := aggregateFor(fillFunc)
-	n := int(to.Sub(from)/step) + 1
 	var res []*model.MetricValues
-	for _, ss := range lw.series[query] {
+	for _, ss := range series {
 		vals := ss.last
 		switch agg {
 		case aggAvg:
@@ -302,38 +279,17 @@ func (s *Store) QueryRange(ctx context.Context, query string, from, to timeserie
 			res = append(res, mv)
 		}
 	}
-	return res, nil
-}
-
-// load returns a window that reads query, loading it on first use; a window
-// nobody planned reads every query.
-func (s *Store) load(ctx context.Context, w window, query string) (*loadedWindow, error) {
-	s.lock.Lock()
-	s.dropExpired()
-	var lw *loadedWindow
-	for _, loaded := range s.windows[w] {
-		if loaded.has(query) {
-			lw = loaded
-			break
-		}
-	}
-	if lw == nil {
-		lw = &loadedWindow{created: time.Now()}
-		s.windows[w] = append(s.windows[w], lw)
-	}
-	s.lock.Unlock()
-
-	// the first caller's context must not cancel the load the others wait for
-	lw.once.Do(func() { lw.series, lw.err = s.read(context.WithoutCancel(ctx), w, lw.queries) })
-	return lw, lw.err
+	return res
 }
 
 func (s *Store) read(ctx context.Context, w window, queries map[string]bool) (map[string][]*storedSeries, error) {
-	var names []string
-	for query := range queries {
-		names = append(names, query)
+	var names []string // none: every query
+	if len(queries) <= maxFilteredQueries {
+		for query := range queries {
+			names = append(names, query)
+		}
+		sort.Strings(names)
 	}
-	sort.Strings(names)
 
 	type key struct {
 		query string

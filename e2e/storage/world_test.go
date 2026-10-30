@@ -76,8 +76,9 @@ func TestWorldStoreMatchesFillFuncs(t *testing.T) {
 
 			var got []byte
 			require.Eventually(t, func() bool {
-				res, err := s.QueryRange(ctx, query, from, to, step, fill)
+				results, err := s.QueryRanges(ctx, map[string]constructor.QueryRequest{"q": {Query: query, From: from, To: to, Step: step, FillFunc: fill}})
 				require.NoError(t, err)
+				res := results["q"]
 				if len(res) != 1 {
 					return false
 				}
@@ -106,30 +107,48 @@ func TestWorldStoreMatchesFillFuncs(t *testing.T) {
 		assert.Equal(t, t0.Add(timeseries.Duration(n-1)*15), last)
 	})
 	t.Run("an unknown query has no series", func(t *testing.T) {
-		res, err := s.QueryRange(ctx, "nope", from, to, 15, timeseries.FillAny)
+		res, err := s.QueryRanges(ctx, map[string]constructor.QueryRequest{"nope": {Query: "nope", From: from, To: to, Step: 15}})
 		require.NoError(t, err)
-		assert.Empty(t, res)
+		assert.Empty(t, res["nope"])
 	})
-	t.Run("a window planned for some queries reads those, as a full one does", func(t *testing.T) {
+	t.Run("a window of a few queries reads those, as a window of every query does", func(t *testing.T) {
 		quoted := `up{job='a\b'}` // quoted into the IN list of the read
 		worldInsert(t, e, fmt.Sprintf(`INSERT INTO world_series_distributed VALUES ('%s', 2, map('app','b'), now())`, strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(quoted)))
 		worldInsert(t, e, fmt.Sprintf(`INSERT INTO world_points_distributed VALUES ('%s', 2, toDateTime(%d), 1)`, strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(quoted), from.Add(15*timeseries.Minute)))
-		full, err := world.NewStore(c).QueryRange(ctx, query, from, to, 15, timeseries.FillAny)
-		require.NoError(t, err)
 
-		planned := world.NewStore(c)
-		planned.PlanQueries(map[constructor.Window][]string{{From: from, To: to, Step: 15}: {query, quoted}})
-		got, err := planned.QueryRange(ctx, query, from, to, 15, timeseries.FillAny)
-		require.NoError(t, err)
-		require.Len(t, got, 1)
-		assert.Equal(t, full[0].Values.String(), got[0].Values.String())
+		few := map[string]constructor.QueryRequest{
+			"query":  {Query: query, From: from, To: to, Step: 15},
+			"quoted": {Query: quoted, From: from, To: to, Step: 15},
+		}
+		// more queries than a read lists: the window reads every query
+		every := map[string]constructor.QueryRequest{"query": few["query"]}
+		for i := range 60 {
+			every[fmt.Sprint("other", i)] = constructor.QueryRequest{Query: fmt.Sprint("other", i), From: from, To: to, Step: 15}
+		}
 		require.Eventually(t, func() bool {
-			planned := world.NewStore(c)
-			planned.PlanQueries(map[constructor.Window][]string{{From: from, To: to, Step: 15}: {query, quoted}})
-			got, err := planned.QueryRange(ctx, quoted, from, to, 15, timeseries.FillAny)
+			got, err := s.QueryRanges(ctx, few)
 			require.NoError(t, err)
-			return len(got) == 1 && got[0].Labels["app"] == "b"
+			return len(got["quoted"]) == 1 && got["quoted"][0].Labels["app"] == "b"
 		}, 15*time.Second, 300*time.Millisecond)
+		got, err := s.QueryRanges(ctx, few)
+		require.NoError(t, err)
+		all, err := s.QueryRanges(ctx, every)
+		require.NoError(t, err)
+		require.Len(t, got["query"], 1)
+		require.Len(t, all["query"], 1)
+		assert.Equal(t, all["query"][0].Values.String(), got["query"][0].Values.String())
+		assert.Empty(t, all["other0"])
+	})
+	t.Run("the windows of one read are read together", func(t *testing.T) {
+		got, err := s.QueryRanges(ctx, map[string]constructor.QueryRequest{
+			"page": {Query: query, From: from, To: to, Step: 5 * timeseries.Minute, FillFunc: timeseries.FillSum},
+			"raw":  {Query: query, From: from, To: to, Step: 15},
+		})
+		require.NoError(t, err)
+		require.Len(t, got["page"], 1)
+		require.Len(t, got["raw"], 1)
+		assert.Equal(t, int(to.Sub(from)/(5*timeseries.Minute))+1, got["page"][0].Values.Len())
+		assert.Equal(t, int(to.Sub(from)/15)+1, got["raw"][0].Values.Len())
 	})
 }
 
@@ -359,8 +378,9 @@ func TestWorldRecordingRules(t *testing.T) {
 	})
 
 	// read back through the store, with the labels of the rule
-	got, err := world.NewStore(cc).QueryRange(ctx, "rr_e2e_test", now.Add(-5*timeseries.Minute), now, 15, timeseries.FillAny)
+	results, err := world.NewStore(cc).QueryRanges(ctx, map[string]constructor.QueryRequest{"rule": {Query: "rr_e2e_test", From: now.Add(-5 * timeseries.Minute), To: now, Step: 15}})
 	require.NoError(t, err)
+	got := results["rule"]
 	require.Len(t, got, 1)
 	assert.Equal(t, "a", got[0].Labels["application"])
 	at, v := got[0].Values.LastNotNull()

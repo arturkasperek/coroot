@@ -6,10 +6,10 @@
 
 After the metrics move to ClickHouse there is no metric cache any more, but the names still say so:
 
-- `constructor.Cache` (`constructor/constructor.go:35`) is an interface of two methods, `QueryRange(ctx, query, from, to, step, fillFunc)` and `GetStep(from, to)`. Its only implementation is `world.Client`, which reads results the evaluator already stored in the `world_*` tables. `QueryRange` does not evaluate PromQL: the query text is a key.
+- `constructor.Cache` (`constructor/constructor.go:35`) is an interface of two methods, `QueryRanges(ctx, requests)` (was `QueryRange(ctx, query, from, to, step, fillFunc)`) and `GetStep(from, to)`. Its only implementation is `world.Client`, which reads results the evaluator already stored in the `world_*` tables. `QueryRange` does not evaluate PromQL: the query text is a key.
 - `Constructor.cacheClients`, `queryCache`, `QueryCache`, `cacheQuery`, `cacheClient`, `cacheClients`, `cacheStatus` in `constructor`, `api`, `watchers`, `stats`, `collector`, `world` (about 120 occurrences). `constructor.Constructor.QueryCache` (public, used by `api/rca.go`) and `queryCache` (private, used by `LoadWorld`) look like one function defined twice and are not.
 - `GetStep` always returns `world.Step` (15 s) in `world.Client`: a method that exists only to satisfy the interface.
-- The word "cache" next to `world.Store`, which really has a 5 s in-memory window cache (`windowTTL`), blurs which one is meant.
+- The word "cache" next to `world.Store`, which until 2026-10-30 really had a 5 s in-memory window cache (`windowTTL`), blurred which one is meant. The interface method is now `QueryRanges` (all requests of a run at once) and the store keeps nothing between calls.
 
 ## Goal
 

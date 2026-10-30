@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 	"strings"
-	"sync"
 	"time"
 
 	pricing "github.com/coroot/coroot/cloud-pricing"
@@ -33,21 +32,18 @@ type DB interface {
 }
 
 type Cache interface {
-	QueryRange(ctx context.Context, query string, from, to timeseries.Time, step timeseries.Duration, fillFunc timeseries.FillFunc) ([]*model.MetricValues, error)
+	// QueryRanges reads every request of a run at once; the result is by the
+	// requests' names.
+	QueryRanges(ctx context.Context, requests map[string]QueryRequest) (map[string][]*model.MetricValues, error)
 	GetStep(from, to timeseries.Time) (timeseries.Duration, error)
 }
 
-// Window is a time range at a step, as the constructor asks a Cache for it.
-type Window struct {
+// QueryRequest is one query a run reads, in a time range at a step.
+type QueryRequest struct {
+	Query    string
 	From, To timeseries.Time
 	Step     timeseries.Duration
-}
-
-// QueryPlanner is a Cache that reads the queries of a window together. Before
-// a run asks for them, it is told which queries the run asks for in each
-// window, so that it can read only those.
-type QueryPlanner interface {
-	PlanQueries(windows map[Window][]string)
+	FillFunc timeseries.FillFunc
 }
 
 type Constructor struct {
@@ -202,14 +198,6 @@ func (c *Constructor) QueryCache(ctx context.Context, cache Cache, project *db.P
 	return c.queryCache(ctx, cache, project, from, to, step, rawStep, checkConfigs, nil)
 }
 
-type cacheQuery struct {
-	query     string
-	from, to  timeseries.Time
-	step      timeseries.Duration
-	statsName string
-	fillFunc  timeseries.FillFunc
-}
-
 func (c *Constructor) queryCache(ctx context.Context, cache Cache, project *db.Project, from, to timeseries.Time, step, rawStep timeseries.Duration, checkConfigs model.CheckConfigs, stats map[string]QueryStats) (map[string][]*model.MetricValues, error) {
 	loadRawSLIs := !c.options[OptionDoNotLoadRawSLIs]
 	rawFrom := from
@@ -221,13 +209,21 @@ func (c *Constructor) queryCache(ctx context.Context, cache Cache, project *db.P
 
 	from = from.Truncate(step)
 	to = to.Truncate(step)
-	queries := map[string]cacheQuery{}
+	requests := map[string]QueryRequest{}
+	statsNames := map[string]string{}
+	addRequest := func(name, statsName string, request QueryRequest) {
+		if request.FillFunc == nil {
+			request.FillFunc = timeseries.FillAny
+		}
+		requests[name] = request
+		statsNames[name] = statsName
+	}
 	addQuery := func(name, statsName, query string, sli bool, fillFunc timeseries.FillFunc) {
 		if sli && loadRawSLIs {
-			queries[name+"_raw"] = cacheQuery{query: query, from: rawFrom, to: rawTo, step: rawStep, statsName: statsName + "_raw"}
+			addRequest(name+"_raw", statsName+"_raw", QueryRequest{Query: query, From: rawFrom, To: rawTo, Step: rawStep})
 		}
 		if !sli {
-			queries[name] = cacheQuery{query: query, from: from, to: to, step: step, statsName: statsName, fillFunc: fillFunc}
+			addRequest(name, statsName, QueryRequest{Query: query, From: from, To: to, Step: step, FillFunc: fillFunc})
 		}
 	}
 
@@ -236,21 +232,14 @@ func (c *Constructor) queryCache(ctx context.Context, cache Cache, project *db.P
 			continue
 		}
 		if !c.options[OptionLoadContainerLogs] && q.Name == "container_log_messages" {
-			queries[qRecordingRuleApplicationLogMessages] = cacheQuery{
-				query:     qRecordingRuleApplicationLogMessages,
-				from:      from,
-				to:        to,
-				step:      step,
-				statsName: qRecordingRuleApplicationLogMessages,
-				fillFunc:  timeseries.FillSum,
-			}
+			addQuery(qRecordingRuleApplicationLogMessages, qRecordingRuleApplicationLogMessages, qRecordingRuleApplicationLogMessages, false, timeseries.FillSum)
 			continue
 		}
 		addQuery(q.Name, q.Name, q.Query, false, q.FillFunc)
 	}
 	if !c.options[OptionLoadInstanceToInstanceConnections] {
 		for _, query := range qConnectionAggregations {
-			queries[query] = cacheQuery{query: query, from: from, to: to, step: step, statsName: query}
+			addQuery(query, query, query, false, nil)
 		}
 		addQuery(qRecordingRuleApplicationL7Requests, qRecordingRuleApplicationL7Requests, qRecordingRuleApplicationL7Requests, true, nil)
 		addQuery(qRecordingRuleApplicationL7Histogram, qRecordingRuleApplicationL7Histogram, qRecordingRuleApplicationL7Histogram, true, nil)
@@ -270,50 +259,22 @@ func (c *Constructor) queryCache(ctx context.Context, cache Cache, project *db.P
 		}
 	}
 
-	if planner, ok := cache.(QueryPlanner); ok {
-		windows := map[Window][]string{}
-		for _, q := range queries {
-			window := Window{From: q.from, To: q.to, Step: q.step}
-			windows[window] = append(windows[window], q.query)
+	start := time.Now()
+	res, err := cache.QueryRanges(ctx, requests)
+	if stats != nil {
+		// the requests are read together: each one took the time of the whole read
+		queryTime := float32(time.Since(start).Seconds())
+		for name, statsName := range statsNames {
+			metrics := res[name]
+			s := stats[statsName]
+			s.MetricsCount += len(metrics)
+			s.QueryTime += queryTime
+			s.Failed = s.Failed || err != nil
+			s.Cardinality = cardinalityStats(metrics)
+			stats[statsName] = s
 		}
-		planner.PlanQueries(windows)
 	}
-
-	res := make(map[string][]*model.MetricValues, len(queries))
-	var lock sync.Mutex
-	var lastErr error
-	wg := sync.WaitGroup{}
-	now := time.Now()
-	for name, query := range queries {
-		wg.Add(1)
-		go func(name string, q cacheQuery) {
-			defer wg.Done()
-			if q.fillFunc == nil {
-				q.fillFunc = timeseries.FillAny
-			}
-			metrics, err := cache.QueryRange(ctx, q.query, q.from, q.to, q.step, q.fillFunc)
-			if stats != nil {
-				queryTime := float32(time.Since(now).Seconds())
-				lock.Lock()
-				s := stats[q.statsName]
-				s.MetricsCount += len(metrics)
-				s.QueryTime += queryTime
-				s.Failed = s.Failed || err != nil
-				s.Cardinality = cardinalityStats(metrics)
-				stats[q.statsName] = s
-				lock.Unlock()
-			}
-			if err != nil {
-				lastErr = err
-				return
-			}
-			lock.Lock()
-			res[name] = metrics
-			lock.Unlock()
-		}(name, query)
-	}
-	wg.Wait()
-	return res, lastErr
+	return res, err
 }
 
 func (c *Constructor) calcApplicationCategories(w *model.World, project *db.Project) {

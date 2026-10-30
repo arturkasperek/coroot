@@ -229,12 +229,12 @@ the statement was sent, minus a safety margin, e.g. `ttl - 2*renew`.
     duration_ms INTEGER, updated_at TIMESTAMPTZ)`, upserted per cycle, rows
     deleted with the project (`DeleteProject`).
   - `GetStatus` reads the error from it on every replica (a cache of a few
-    seconds, like `windowTTL`, is enough); an `updated_at` older than a few
+    seconds, like `lastEvaluatedTTL` in `world/store.go`, is enough); an `updated_at` older than a few
     periods means no replica evaluates the project (no primary), worth
     showing as such.
   - The data of the world itself needs nothing: every replica reads it from
-    ClickHouse (`world_points*`, `world_series`); only the in-memory caches
-    differ, by up to `windowTTL` (5 s).
+    ClickHouse (`world_points*`, `world_series`); only where a page ends
+    differs, by up to `lastEvaluatedTTL` (5 s).
   - Test (`e2e/storage`): a cycle failing on one evaluator shows its error in
     the status read through another evaluator on the same databases.
 - **Per-replica duplicates that are only waste:** the application directory

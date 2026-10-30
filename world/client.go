@@ -44,23 +44,15 @@ func (c *Client) store() (*Store, error) {
 	return ps.store, nil
 }
 
-func (c *Client) QueryRange(ctx context.Context, query string, from, to timeseries.Time, step timeseries.Duration, fillFunc timeseries.FillFunc) ([]*model.MetricValues, error) {
+func (c *Client) QueryRanges(ctx context.Context, requests map[string]constructor.QueryRequest) (map[string][]*model.MetricValues, error) {
 	st, err := c.store()
 	if err != nil {
 		return nil, err
 	}
-	return st.QueryRange(ctx, query, from, to, step, fillFunc)
+	return st.QueryRanges(ctx, requests)
 }
 
 func (c *Client) GetStep(from, to timeseries.Time) (timeseries.Duration, error) { return Step, nil }
-
-// PlanQueries passes the plan on to the store; without a store (no ClickHouse
-// yet) there is nothing to plan, and QueryRange returns the error.
-func (c *Client) PlanQueries(windows map[constructor.Window][]string) {
-	if st, err := c.store(); err == nil {
-		st.PlanQueries(windows)
-	}
-}
 
 // GetTo is the end of the stored results: a page ends there. Zero when there is nothing yet.
 // The primary instance knows it from its last cycle; the others ask the store.

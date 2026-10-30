@@ -41,7 +41,7 @@ These are the gaps left after `2026-10-05-clickhouse-promql-metrics.md` (all 12 
     2. Decode the window with ch-go (columnar, no `reflect`) instead of clickhouse-go's `Scan` into `[]uint32` / `[]float32`: the cost at every range, the 1 h page included (~0.8 M points, ~0.5 s of decoding).
     3. Then re-measure; the 60 ms target at 1 h needs 2 (ClickHouse alone is ~100 ms cold at 1 h, so a cold 1 h page stays above 60 ms; warm pages are ~30 ms already).
 - **Done 2026-10-29 (not committed):** both fixes.
-  - **Planned windows:** `constructor.QueryPlanner` / `constructor.Window`; `queryCache` tells the cache which queries it asks for in each window before asking. `world.Store.PlanQueries` makes a window of at most `maxFilteredQueries` (50) queries read only those (`Query IN (...)` in `pointsSQL` and `seriesSQL`); a larger one, or one nobody planned, reads every query as before. A window can now be loaded several times, for different query sets (`Store.windows` holds a list per window). Tests: `TestStorePlansWindows`, `TestPointsSQLReadsOnlyThePlannedQueries`, and `TestWorldStoreMatchesFillFuncs` ("a window planned for some queries reads those, as a full one does", a query with a quote and a backslash in the IN list).
+  - **Only the queries asked for:** `constructor.Cache` has `QueryRanges(ctx, map[name]QueryRequest)` instead of `QueryRange`: `queryCache` hands every request of a run at once, and `world.Store.QueryRanges` reads each window once (the windows in parallel), a window of at most `maxFilteredQueries` (50) queries with `Query IN (...)` in `pointsSQL` and `seriesSQL`, a larger one every query. The store keeps nothing between calls: the 5 s window cache (`windowTTL`, `sync.Once` per window, shared by concurrent runs) is gone, as is a first version of this fix that told the store the queries in advance (`QueryPlanner`, in `6372ee0`). Tests: `TestPointsSQLReadsOnlyTheListedQueries`, and `TestWorldStoreMatchesFillFuncs` ("a window of a few queries reads those, as a window of every query does", a query with a quote and a backslash in the IN list; "the windows of one read are read together").
   - **Decoding:** a window is read as one row per point instead of an array per series. Measured on a 6 h raw window (2.3 M points): arrays 632 ms, one row per point 254-325 ms. Tried and dropped: ch-go (ClickHouse 26.9 rejects its distributed reads, "Sending a distributed query with unknown (zero) client version", the same as D1 of the PromQL plan; ch-go 0.74 does not build with clickhouse-go 2.17), arrays packed into strings with `reinterpretAsFixedString` (5x faster but loses trailing zero bytes: 2741 series came back with a wrong length).
   - **Result on dev**, same method as above:
 
@@ -52,6 +52,15 @@ These are the gaps left after `2026-10-05-clickhouse-promql-metrics.md` (all 12 
     | app express-demo 24h / 7d | 2.1 s / 10.1 s | 40 / 81 ms |
 
     The World of a page alone (LoadWorld + Audit, a throwaway test): 1 h 696 → ~180 ms, 24 h 2.27 s → ~215 ms, 7 d 13.9 s → ~830 ms. Warm pages stay ~25-40 ms; a cold 1 h page is still above the 60 ms target (ClickHouse alone ~100 ms).
+  - **Without the window cache (2026-10-30, decided for simplicity):** the numbers above have the 5 s window cache, shared by the requests of one 15 s step (`overview/map` and the `app` pages reused the window `overview/applications` had just loaded). With `QueryRanges` every request reads its windows itself:
+
+    | page | first request, cache → none | same request right after, cache → none |
+    |---|---|---|
+    | overview/applications 1h / 24h / 7d | 159 / 193 / 857 → 148 / 185 / 787 ms | 25 / 31 / 74 → 131 / 179 / 793 ms |
+    | overview/map 1h | 25 → 133 ms | 24 → 134 ms |
+    | app express-demo 1h / 24h / 7d | 37 / 40 / 81 → 144 / 189 / 795 ms | 36 / 39 / 81 → 142 / 186 / 797 ms |
+
+    A page opened on its own is as fast as before; moving between pages of the same range within a few seconds costs ~0.1 s more (~0.7 s at 7 d). Accepted: a store with no state is worth it. If it matters later, the cheapest way back is a 5 s cache of a window read keyed by (window, queries), concurrent reads of one key joined; no planning is needed for it.
 
 ## 4. Evaluator cost in ClickHouse (~0.2 core, target 0.1) — closed 2026-10-29
 
@@ -68,7 +77,7 @@ These are the gaps left after `2026-10-05-clickhouse-promql-metrics.md` (all 12 
   - **The evaluator after it:** ~55 CPU-s per 5 min (~0.18 core), of which `prometheusQueryRange` ~45 CPU-s: ~25 queries of connections and traffic (`sum by(app_id, destination, ...) (rate(container_net_*...))`) at ~70-80 ms each (~60 %), ~80 simple queries of cluster state and metadata (`kube_pod_info`, `kube_*_annotations`, `container_info`, ...) at ~14 ms each, the fixed cost of a PromQL query.
   - **(a) measured, not worth it:** the 105 evaluated expressions read 103 different metrics (2 metrics are shared), so there is nothing to merge by selector; 20 different queries in one `UNION ALL` cost 916 CPU-ms against 1017 ms as 20 calls (~10 %): the fixed cost is inside `prometheusQueryRange`, not per call.
   - **(b) if the cost matters:** evaluate the slowly changing metadata queries (`kube_*_info`, `*_labels`, `*_annotations`, `container_info`) every minute instead of every 15 s, filling the steps in between: ~4x less for ~80 queries, ~25-30 % of the evaluator. The connection queries need the schema change discussed on 2026-10-29 (fact and dimension tables instead of PromQL), not tuning.
-  - **Not the evaluator, seen while measuring:** the pages' window reads (`Store.read`) take ~13 CPU-s per 5 min, and `Store.LastEvaluated` scans a day of `world_points` every `windowTTL` (5 s) per replica.
+  - **Not the evaluator, seen while measuring:** the pages' window reads (`Store.read`) take ~13 CPU-s per 5 min, and `Store.LastEvaluated` scans a day of `world_points` every 5 s (`lastEvaluatedTTL`, was `windowTTL`) per replica.
 
 ## 5. Large PromQL reads over the TimeSeries table
 
