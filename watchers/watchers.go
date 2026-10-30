@@ -168,7 +168,7 @@ func handleProjectUpdate(database *db.DB, evaluator *world.Evaluator, pricing *p
 		}
 	}
 
-	ctr := constructor.New(database, project, cacheClients, pricing)
+	ctr := constructor.New(database, project, cacheClients, pricing, constructor.OptionLoadRawSLIs)
 	world, err := ctr.LoadWorld(context.TODO(), from, to, step, nil)
 	if err != nil {
 		klog.Errorln("failed to load world:", err)

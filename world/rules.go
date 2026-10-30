@@ -75,7 +75,7 @@ func (e *Evaluator) recordingRules(ctx context.Context, project *db.Project, ps 
 			chunkTo = to
 		}
 		ctr := constructor.New(e.db, project, cacheClients, nil,
-			constructor.OptionLoadInstanceToInstanceConnections, constructor.OptionDoNotLoadRawSLIs, constructor.OptionLoadContainerLogs)
+			constructor.OptionLoadInstanceToInstanceConnections, constructor.OptionLoadContainerLogs)
 		worldTo := chunkTo.Add(ruleLookahead * Step)
 		if worldTo > evaluatedTo {
 			worldTo = evaluatedTo

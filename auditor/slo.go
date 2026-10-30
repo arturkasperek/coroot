@@ -24,7 +24,7 @@ func availability(w *model.World, app *model.Application, report *model.AuditRep
 		return
 	}
 	sli := app.AvailabilitySLIs[0]
-	if sli.TotalRequestsRaw.TailIsEmpty() {
+	if sli.TotalRequests.TailIsEmpty() {
 		check.SetStatus(model.UNKNOWN, "no data")
 		return
 	}
@@ -51,8 +51,8 @@ func latency(w *model.World, app *model.Application, report *model.AuditReport) 
 	}
 	sli := app.LatencySLIs[0]
 
-	totalRaw, _ := sli.GetTotalAndFast(false)
-	if totalRaw.TailIsEmpty() {
+	total, _ := sli.GetTotalAndFast(false)
+	if total.TailIsEmpty() {
 		check.SetStatus(model.UNKNOWN, "no data")
 		return
 	}

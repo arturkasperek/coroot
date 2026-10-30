@@ -117,7 +117,7 @@ func (api *Api) RCA(w http.ResponseWriter, r *http.Request, u *db.User) {
 		return
 	}
 
-	ctr := constructor.New(api.db, project, map[db.ProjectId]constructor.Cache{project.Id: cacheClient}, api.pricing)
+	ctr := constructor.New(api.db, project, map[db.ProjectId]constructor.Cache{project.Id: cacheClient}, api.pricing, constructor.OptionLoadRawSLIs)
 	if rcaRequest.Metrics, err = ctr.QueryCache(r.Context(), cacheClient, project, rcaRequest.Ctx.From, rcaRequest.Ctx.To, rcaRequest.Ctx.Step); err != nil {
 		klog.Errorln(err)
 		rca.Status = "Failed"
@@ -228,7 +228,7 @@ func (api *Api) IncidentRCA(ctx context.Context, project *db.Project, world *mod
 	}
 
 	cacheClient := api.evaluator.Client(project.Id)
-	ctr := constructor.New(api.db, project, map[db.ProjectId]constructor.Cache{project.Id: cacheClient}, api.pricing)
+	ctr := constructor.New(api.db, project, map[db.ProjectId]constructor.Cache{project.Id: cacheClient}, api.pricing, constructor.OptionLoadRawSLIs)
 	if rcaRequest.Metrics, err = ctr.QueryCache(ctx, cacheClient, project, rcaRequest.Ctx.From, rcaRequest.Ctx.To, rcaRequest.Ctx.Step); err != nil {
 		klog.Errorln(err)
 		rca.Status = "Failed"

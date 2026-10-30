@@ -19,8 +19,18 @@ type Option int
 
 const (
 	OptionLoadInstanceToInstanceConnections Option = iota
-	OptionDoNotLoadRawSLIs
+	// OptionLoadRawSLIs also reads the SLIs at the raw step over the longest
+	// alert rule window, for the burn rates of incidents (the watchers) and for
+	// RCA; a page needs only the SLIs at its own step.
+	OptionLoadRawSLIs
 	OptionLoadContainerLogs
+)
+
+// The keys of the SLI queries in the results: at the step of the World, and
+// at the raw step (with OptionLoadRawSLIs).
+const (
+	sliSuffix    = "_sli"
+	sliRawSuffix = "_raw"
 )
 
 type DB interface {
@@ -199,7 +209,7 @@ func (c *Constructor) QueryCache(ctx context.Context, cache Cache, project *db.P
 }
 
 func (c *Constructor) queryCache(ctx context.Context, cache Cache, project *db.Project, from, to timeseries.Time, step, rawStep timeseries.Duration, checkConfigs model.CheckConfigs, stats map[string]QueryStats) (map[string][]*model.MetricValues, error) {
-	loadRawSLIs := !c.options[OptionDoNotLoadRawSLIs]
+	loadRawSLIs := c.options[OptionLoadRawSLIs]
 	rawFrom := from
 	if t := to.Add(-model.MaxAlertRuleWindow); t.Before(rawFrom) {
 		rawFrom = t
@@ -219,11 +229,14 @@ func (c *Constructor) queryCache(ctx context.Context, cache Cache, project *db.P
 		statsNames[name] = statsName
 	}
 	addQuery := func(name, statsName, query string, sli bool, fillFunc timeseries.FillFunc) {
-		if sli && loadRawSLIs {
-			addRequest(name+"_raw", statsName+"_raw", QueryRequest{Query: query, From: rawFrom, To: rawTo, Step: rawStep})
-		}
 		if !sli {
 			addRequest(name, statsName, QueryRequest{Query: query, From: from, To: to, Step: step, FillFunc: fillFunc})
+			return
+		}
+		// an SLI is a rate: its average over a step of the World
+		addRequest(name+sliSuffix, statsName, QueryRequest{Query: query, From: from, To: to, Step: step, FillFunc: timeseries.FillAvg})
+		if loadRawSLIs {
+			addRequest(name+sliRawSuffix, statsName+sliRawSuffix, QueryRequest{Query: query, From: rawFrom, To: rawTo, Step: rawStep})
 		}
 	}
 

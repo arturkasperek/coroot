@@ -12,58 +12,77 @@ import (
 )
 
 func (c *Constructor) loadSLIs(w *model.World, metrics map[string][]*model.MetricValues, project *db.Project) {
-	inboundAvailabilityRaw := inboundAvailability(w, metrics[qRecordingRuleApplicationL7InboundRequests+"_raw"], project)
-	inboundLatencyRaw := inboundLatency(w, metrics[qRecordingRuleApplicationL7InboundHistogram+"_raw"], project)
-	builtinAvailabilityRaw := builtinAvailability(w, metrics[qRecordingRuleApplicationL7Requests+"_raw"], project)
-	builtinLatencyRaw := builtinLatency(w, metrics[qRecordingRuleApplicationL7Histogram+"_raw"], project)
-
-	customAvailabilityRaw := map[model.ApplicationId]availabilitySlis{}
-	customLatencyRaw := map[model.ApplicationId][]model.HistogramBucket{}
-	loadCustomSLIs(metrics, customAvailabilityRaw, customLatencyRaw, project)
+	slis := loadSLIValues(w, metrics, project, sliSuffix)
+	raw := loadSLIValues(w, metrics, project, sliRawSuffix) // empty without OptionLoadRawSLIs
 
 	for _, app := range w.Applications {
 		availabilityCfg, _ := w.CheckConfigs.GetAvailability(app.Id)
-		if availabilityCfg.Custom {
-			raw := customAvailabilityRaw[app.Id]
+		if availability, ok := slis.availability(app.Id, availabilityCfg.Custom); ok {
+			availabilityRaw, _ := raw.availability(app.Id, availabilityCfg.Custom)
 			app.AvailabilitySLIs = append(app.AvailabilitySLIs, &model.AvailabilitySLI{
 				Config:        availabilityCfg,
-				TotalRequests: aggregateSLI(w.Ctx, raw.total), TotalRequestsRaw: raw.total,
-				FailedRequests: aggregateSLI(w.Ctx, raw.failed), FailedRequestsRaw: raw.failed,
+				TotalRequests: availability.total, TotalRequestsRaw: availabilityRaw.total,
+				FailedRequests: availability.failed, FailedRequestsRaw: availabilityRaw.failed,
 			})
-		} else {
-			raw, ok := inboundAvailabilityRaw[app.Id]
-			if !ok || raw.total.IsEmpty() {
-				raw = builtinAvailabilityRaw[app.Id]
-			}
-			if !raw.total.IsEmpty() {
-				app.AvailabilitySLIs = append(app.AvailabilitySLIs, &model.AvailabilitySLI{
-					Config:        availabilityCfg,
-					TotalRequests: aggregateSLI(w.Ctx, raw.total), TotalRequestsRaw: raw.total,
-					FailedRequests: aggregateSLI(w.Ctx, raw.failed), FailedRequestsRaw: raw.failed,
-				})
-			}
 		}
 
 		latencyCfg, _ := w.CheckConfigs.GetLatency(app.Id, app.Category)
-		if latencyCfg.Custom {
-			raw := customLatencyRaw[app.Id]
+		if histogram, ok := slis.latency(app.Id, latencyCfg.Custom); ok {
+			histogramRaw, _ := raw.latency(app.Id, latencyCfg.Custom)
 			app.LatencySLIs = append(app.LatencySLIs, &model.LatencySLI{
 				Config:    latencyCfg,
-				Histogram: aggregateHistogram(w.Ctx, raw), HistogramRaw: raw,
+				Histogram: histogram, HistogramRaw: histogramRaw,
 			})
-		} else {
-			raw := inboundLatencyRaw[app.Id]
-			if len(raw) == 0 {
-				raw = builtinLatencyRaw[app.Id]
-			}
-			if len(raw) > 0 {
-				app.LatencySLIs = append(app.LatencySLIs, &model.LatencySLI{
-					Config:    latencyCfg,
-					Histogram: aggregateHistogram(w.Ctx, raw), HistogramRaw: raw,
-				})
-			}
 		}
 	}
+}
+
+// sliValues are the SLIs of the applications read at one step: the custom
+// ones, those of the inbound requests (from the server side) and the built-in
+// ones (from the clients' side).
+type sliValues struct {
+	inboundAvailability, builtinAvailability, customAvailability map[model.ApplicationId]availabilitySlis
+	inboundLatency, builtinLatency, customLatency                map[model.ApplicationId][]model.HistogramBucket
+}
+
+// loadSLIValues reads the SLI queries whose keys end with suffix.
+func loadSLIValues(w *model.World, metrics map[string][]*model.MetricValues, project *db.Project, suffix string) sliValues {
+	values := sliValues{
+		inboundAvailability: inboundAvailability(w, metrics[qRecordingRuleApplicationL7InboundRequests+suffix], project),
+		inboundLatency:      inboundLatency(w, metrics[qRecordingRuleApplicationL7InboundHistogram+suffix], project),
+		builtinAvailability: builtinAvailability(w, metrics[qRecordingRuleApplicationL7Requests+suffix], project),
+		builtinLatency:      builtinLatency(w, metrics[qRecordingRuleApplicationL7Histogram+suffix], project),
+		customAvailability:  map[model.ApplicationId]availabilitySlis{},
+		customLatency:       map[model.ApplicationId][]model.HistogramBucket{},
+	}
+	loadCustomSLIs(metrics, suffix, values.customAvailability, values.customLatency, project)
+	return values
+}
+
+// availability is the availability SLI of an application: the custom one when
+// configured, else that of the inbound requests, else the built-in one; false
+// when the application has none.
+func (values sliValues) availability(appId model.ApplicationId, custom bool) (availabilitySlis, bool) {
+	if custom {
+		return values.customAvailability[appId], true
+	}
+	availability, ok := values.inboundAvailability[appId]
+	if !ok || availability.total.IsEmpty() {
+		availability = values.builtinAvailability[appId]
+	}
+	return availability, !availability.total.IsEmpty()
+}
+
+// latency is the latency histogram of an application, chosen as availability.
+func (values sliValues) latency(appId model.ApplicationId, custom bool) ([]model.HistogramBucket, bool) {
+	if custom {
+		return values.customLatency[appId], true
+	}
+	histogram := values.inboundLatency[appId]
+	if len(histogram) == 0 {
+		histogram = values.builtinLatency[appId]
+	}
+	return histogram, len(histogram) > 0
 }
 
 func inboundAvailability(w *model.World, values []*model.MetricValues, project *db.Project) map[model.ApplicationId]availabilitySlis {
@@ -130,9 +149,9 @@ func inboundLatency(w *model.World, values []*model.MetricValues, project *db.Pr
 	return res
 }
 
-func loadCustomSLIs(metrics map[string][]*model.MetricValues,
-	availabilityRaw map[model.ApplicationId]availabilitySlis,
-	latencyRaw map[model.ApplicationId][]model.HistogramBucket,
+func loadCustomSLIs(metrics map[string][]*model.MetricValues, suffix string,
+	availability map[model.ApplicationId]availabilitySlis,
+	latency map[model.ApplicationId][]model.HistogramBucket,
 	project *db.Project,
 ) {
 	for queryName, values := range metrics {
@@ -145,21 +164,21 @@ func loadCustomSLIs(metrics map[string][]*model.MetricValues,
 		}
 		appId, _ := model.NewApplicationIdFromString(parts[1], project.ClusterId())
 		switch parts[2] {
-		case "total_requests_raw":
-			a := availabilityRaw[appId]
+		case "total_requests" + suffix:
+			a := availability[appId]
 			a.total = values[0].Values
-			availabilityRaw[appId] = a
-		case "failed_requests_raw":
-			a := availabilityRaw[appId]
+			availability[appId] = a
+		case "failed_requests" + suffix:
+			a := availability[appId]
 			a.failed = values[0].Values
-			availabilityRaw[appId] = a
-		case "requests_histogram_raw":
+			availability[appId] = a
+		case "requests_histogram" + suffix:
 			buckets := map[string]*timeseries.TimeSeries{}
 			for _, mv := range values {
 				leStr := mv.Labels["le"]
 				buckets[leStr] = mv.Values
 			}
-			latencyRaw[appId] = histogramBuckets(buckets)
+			latency[appId] = histogramBuckets(buckets)
 		}
 	}
 }
@@ -259,43 +278,4 @@ func histogramBuckets(values map[string]*timeseries.TimeSeries) []model.Histogra
 		return buckets[i].Le < buckets[j].Le
 	})
 	return buckets
-}
-
-func aggregateHistogram(ctx timeseries.Context, raw []model.HistogramBucket) []model.HistogramBucket {
-	res := make([]model.HistogramBucket, 0, len(raw))
-	for _, b := range raw {
-		res = append(res, model.HistogramBucket{
-			Le:         b.Le,
-			TimeSeries: aggregateSLI(ctx, b.TimeSeries),
-		})
-	}
-	return res
-}
-
-func aggregateSLI(ctx timeseries.Context, raw *timeseries.TimeSeries) *timeseries.TimeSeries {
-	from := ctx.From.Truncate(ctx.Step)
-	to := ctx.To.Truncate(ctx.Step)
-	resPoints := int(to.Sub(from)/ctx.Step + 1)
-	res := timeseries.New(from, resPoints, ctx.Step)
-	var sum, count float32
-	tNext := from
-	iter := raw.IterFrom(from)
-	for iter.Next() {
-		tRaw, vRaw := iter.Value()
-		if t := tRaw.Truncate(ctx.Step); t > tNext {
-			if count > 0 {
-				res.Set(tNext, sum/count)
-			}
-			sum, count = 0., 0.
-			tNext = t
-		}
-		if !timeseries.IsNaN(vRaw) {
-			sum += vRaw
-			count++
-		}
-	}
-	if count > 0 {
-		res.Set(tNext, sum/count)
-	}
-	return res
 }
