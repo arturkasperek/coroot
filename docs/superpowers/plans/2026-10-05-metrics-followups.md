@@ -1,6 +1,6 @@
 # Metrics follow-ups (future work)
 
-> **Status: ❌ NOT IMPLEMENTED** (verified against the code and git history on 2026-10-11). None of the items is done, except item 1 (done) and items 2 and 4, closed by decisions (2026-10-29; in 4 the `lastPerQuery` fix and the query marking are done). Original note: not scheduled.
+> **Status: partly done** (2026-10-30). Item 1 done; items 2, 3 and 4 closed by decisions (2026-10-29/30, with the code each needed). Item 5 done 2026-10-30. Open: item 6 (smaller items) and the agent items deferred from the audit.
 
 These are the gaps left after `2026-10-05-clickhouse-promql-metrics.md` (all 12 tasks done). Each item says what is wrong, the evidence, and the first thing to try. Numbers are from the dev cluster (2 shards, 2026-10-05).
 
@@ -10,7 +10,7 @@ These are the gaps left after `2026-10-05-clickhouse-promql-metrics.md` (all 12 
 - **Evidence:** `e2e/storage/promql_compat_test.go` (`TestPromQLCompat`), the audit run: 94 queries identical, 298 empty, 1 `timestamp()` error.
 - **Options:** (a) rewrite the query without `timestamp()` (check what the Mongo replication-lag inspection really needs; maybe `time() - metric/1000` on a gauge), (b) compute it in Go from the raw series, (c) wait for ClickHouse support and re-run the compat test on each upgrade.
 - **Done when:** the Mongo replica-set lag shows on a dev cluster with a Mongo, and `TestPromQLCompat` has a case for it.
-- **Done 2026-10-29 (not committed):** option (a). The query is `time() - mongo_rs_last_applied_timestamp_ms/1000`. The auditor uses it only as the difference between a secondary and the primary of a replica set (`mongoInstanceLag`, `calcMongoPrimaryBaseline`), and in that difference `time()` cancels out: the lag is the difference of the applied optimes, as before (before, the scrape times of the two instances were in it too). `TestPromQLCompat` ("the Mongo replication lag query") runs the constructor's query on a primary and a secondary 40 s behind and checks the difference is 40 at every step; it failed with the old query. Not checked on a real Mongo: the dev cluster has none.
+- **Done 2026-10-29:** option (a). The query is `time() - mongo_rs_last_applied_timestamp_ms/1000`. The auditor uses it only as the difference between a secondary and the primary of a replica set (`mongoInstanceLag`, `calcMongoPrimaryBaseline`), and in that difference `time()` cancels out: the lag is the difference of the applied optimes, as before (before, the scrape times of the two instances were in it too). `TestPromQLCompat` ("the Mongo replication lag query") runs the constructor's query on a primary and a secondary 40 s behind and checks the difference is 40 at every step; it failed with the old query. Not checked on a real Mongo: the dev cluster has none.
 
 ## 2. Data lag of 60–75 s on pages (was ~45 s)
 
@@ -19,8 +19,9 @@ These are the gaps left after `2026-10-05-clickhouse-promql-metrics.md` (all 12 
 - **Options:** (a) evaluate rules incrementally on the points of the last cycle instead of re-reading `ruleHistory` and waiting for lookahead, (b) make `lag` adaptive: shrink it while the agents' remote-write latency is low (measure `now - max(sample time)` per project), (c) accept it and say so in the docs.
 - **Decided 2026-10-29: option (c).** The delay is accepted and documented in `docs/docs/configuration/metrics.md` ("Data delay"). Options (a) and (b) are not planned; reopen only if users ask for fresher pages.
 
-## 3. Page latency under load (target median ≤ 60 ms at 1 h)
+## 3. Page latency under load (target median ≤ 60 ms at 1 h) — closed 2026-10-30
 
+- **Closed 2026-10-30 by decision:** the 60 ms target is dropped. Every range is now under 200 ms (median of the first request on dev with 7 days of data: overview/applications 1 h / 24 h / 7 d 142 / 170 / 189 ms, was 617 ms / 2.1 s / 13.2 s); at 1 h ~100 ms of it is ClickHouse itself, and the 5 s window cache that gave 25-40 ms was removed on purpose for a store with no state. Reopen if pages get slow at a larger scale (more series than the dev cluster).
 - **Problem:** quiet cluster: 33–69 ms at 1 h; with the evaluator running and e2e load: median 142–169 ms, p90 up to 823 ms (`app` 1 h).
 - **Evidence:** measurements in the plan's "Results"; the window cache is 5 s (`world/store.go`, `windowTTL`) and one page loads every query of the window.
 - **Options:** (a) load only the queries a page needs instead of the whole window, (b) a longer window cache with invalidation on a new evaluation cycle, (c) reduce rows read by pruning on `Query` (it is the second sort-key part after the hour), (d) re-measure on a quiet cluster and under a realistic number of series before optimizing: the dev data set is small.
@@ -40,7 +41,7 @@ These are the gaps left after `2026-10-05-clickhouse-promql-metrics.md` (all 12 
     1. A window reads only the queries asked for it (`Query IN (...)` in `pointsSQL`, the set of queries part of the window key): the raw window of a 24 h / 7 d page shrinks ~8x. Option (a) above.
     2. Decode the window with ch-go (columnar, no `reflect`) instead of clickhouse-go's `Scan` into `[]uint32` / `[]float32`: the cost at every range, the 1 h page included (~0.8 M points, ~0.5 s of decoding).
     3. Then re-measure; the 60 ms target at 1 h needs 2 (ClickHouse alone is ~100 ms cold at 1 h, so a cold 1 h page stays above 60 ms; warm pages are ~30 ms already).
-- **Done 2026-10-29 (not committed):** both fixes.
+- **Done 2026-10-29 (`6372ee0`):** both fixes.
   - **Only the queries asked for:** `constructor.Cache` has `QueryRanges(ctx, map[name]QueryRequest)` instead of `QueryRange`: `queryCache` hands every request of a run at once, and `world.Store.QueryRanges` reads each window once (the windows in parallel), a window of at most `maxFilteredQueries` (50) queries with `Query IN (...)` in `pointsSQL` and `seriesSQL`, a larger one every query. The store keeps nothing between calls: the 5 s window cache (`windowTTL`, `sync.Once` per window, shared by concurrent runs) is gone, as is a first version of this fix that told the store the queries in advance (`QueryPlanner`, in `6372ee0`). Tests: `TestPointsSQLReadsOnlyTheListedQueries`, and `TestWorldStoreMatchesFillFuncs` ("a window of a few queries reads those, as a window of every query does", a query with a quote and a backslash in the IN list; "the windows of one read are read together").
   - **Decoding:** a window is read as one row per point instead of an array per series. Measured on a 6 h raw window (2.3 M points): arrays 632 ms, one row per point 254-325 ms. Tried and dropped: ch-go (ClickHouse 26.9 rejects its distributed reads, "Sending a distributed query with unknown (zero) client version", the same as D1 of the PromQL plan; ch-go 0.74 does not build with clickhouse-go 2.17), arrays packed into strings with `reinterpretAsFixedString` (5x faster but loses trailing zero bytes: 2741 series came back with a wrong length).
   - **Result on dev**, same method as above:
@@ -71,7 +72,7 @@ These are the gaps left after `2026-10-05-clickhouse-promql-metrics.md` (all 12 
 - **Done when:** `system.query_log` shows ≤ 0.1 core for the evaluator over 5 minutes on the dev cluster.
 - **Closed 2026-10-29 by decision (code in `7151b75`):** (c) and the `lastPerQuery` fix are done; the 0.1 core target is dropped, (a) is measured not worth it, (b) and (d) stay as ideas. Reopen if the cost matters, e.g. many projects on one ClickHouse (the cost grows with the number of projects).
   - **(c) done:** every query of the evaluator has `log_comment = 'coroot-evaluator'`: the reads through `ch.WithSettings` (it keeps the settings added before; clickhouse-go's own `WithSettings` replaces them, so `TimeSeriesContext` dropped any comment), the writes through `insertSettings` (`world/backend.go`). Checked by `TestWorldEvaluator` ("the evaluator's queries are marked in the query log"). Query to measure: `SELECT count(), sum(ProfileEvents['OSCPUVirtualTimeMicroseconds'])/1e6 FROM clusterAllReplicas(coroot, system.query_log) WHERE log_comment = 'coroot-evaluator' AND type = 'QueryFinish' AND event_time > now() - INTERVAL 5 MINUTE`.
-  - **Bug of (c), found and fixed 2026-10-29 (fix not committed):** `ch.WithSettings` as committed in `7151b75` put clickhouse-go's options into the evaluator's context; clickhouse-go writes `max_execution_time` into the settings of the context it derives from, and the 8 parallel PromQL queries of a cycle did so on one map: `fatal error: concurrent map writes`, 42 Coroot crashes on dev in an hour (and the Tilt port-forward dropping during e2e runs). Now `ch.WithSettings` only records the settings in the context, and `ch.QueryContext` makes clickhouse-go's options per query (`clickhouse.Client.Query` and `QueryRow` call it). Test: `TestSettingsAreSafeForConcurrentQueries` (`go test -race ./ch`; it reported the race and the fatal error on the committed code).
+  - **Bug of (c), found and fixed 2026-10-29 (fix in `6372ee0`):** `ch.WithSettings` as committed in `7151b75` put clickhouse-go's options into the evaluator's context; clickhouse-go writes `max_execution_time` into the settings of the context it derives from, and the 8 parallel PromQL queries of a cycle did so on one map: `fatal error: concurrent map writes`, 42 Coroot crashes on dev in an hour (and the Tilt port-forward dropping during e2e runs). Now `ch.WithSettings` only records the settings in the context, and `ch.QueryContext` makes clickhouse-go's options per query (`clickhouse.Client.Query` and `QueryRow` call it). Test: `TestSettingsAreSafeForConcurrentQueries` (`go test -race ./ch`; it reported the race and the fatal error on the committed code).
   - **`lastPerQuery` done:** it reads only `Timestamp >= now - backfill - 1h` and runs once per cycle (every 15 s per project, on the primary); `EvaluateProject` passes its result to `cycle` and `recordingRules`. Measured on dev with 7 days of world data (today's copied to the 6 days before, as with the default 7 d `METRICS_TTL`):
     - one call, directly: 49 → 17 ms, 57 → 9 M rows, 279 → 57 CPU-ms over the shards;
     - live, 5 minutes: 40 → 20 calls, 12.0 → 1.8 CPU-s, 2.28 G → 0.33 G rows read.
@@ -80,12 +81,24 @@ These are the gaps left after `2026-10-05-clickhouse-promql-metrics.md` (all 12 
   - **(b) if the cost matters:** evaluate the slowly changing metadata queries (`kube_*_info`, `*_labels`, `*_annotations`, `container_info`) every minute instead of every 15 s, filling the steps in between: ~4x less for ~80 queries, ~25-30 % of the evaluator. The connection queries need the schema change discussed on 2026-10-29 (fact and dimension tables instead of PromQL), not tuning.
   - **Not the evaluator, seen while measuring:** the pages' window reads (`Store.read`) take ~13 CPU-s per 5 min, and `Store.LastEvaluated` scans a day of `world_points` every 5 s (`lastEvaluatedTTL`, was `windowTTL`) per replica.
 
-## 5. Large PromQL reads over the TimeSeries table
+## 5. Large PromQL reads over the TimeSeries table — done 2026-10-30
 
 - **Problem:** a selector over 20 k series returning 10 k of them takes 0.96 s for 1 h and 5.1 s for 6 h (`TestBenchMetrics`).
 - **Context:** the evaluator and the PromQL HTTP API (`api/prometheus.go`, dashboards) use this path; pages do not.
 - **Options:** check `EXPLAIN` of `prometheusQueryRange` for index use on `timeSeriesTags`, see whether label matchers are pushed down, try a narrower time pruning of the data table, or steer such dashboards to the `world_*` rollups when the query is one of the evaluated ones.
 - **Done when:** the bench numbers are in the plan's "Results" with a before/after.
+- **Done 2026-10-30:** most of the time was not ClickHouse but the Go side decoding the result, as in item 3. For the 10 k series over 6 h ClickHouse answers in 0.89 s and sends 196 MiB; reading the rows without scanning them took 1.28 s, scanning them 4.4 s: clickhouse-go scans arrays through reflect with an allocation per element (78 % of the CPU profile in `column.(*Array).scanSlice`). Now `promql.Client.queryRange` reads with ch-go, by column (`promql.NewClient(c, lowLevel, step)`, was `promql.New(c, step)`): the TimeSeries table is not `Distributed`, so ch-go's distributed-read problem of item 3 does not apply. The PromQL query goes as a server-side parameter (`{query:String}`), and the settings of the context (the TimeSeries flags, the evaluator's `log_comment`) as ch-go settings (`ch.LowLevelSettings`, test `TestLowLevelSettings`). Also tried: one row per point with clickhouse-go, labels as JSON on the first point (2.95 s); one row per point with label arrays (4.4 s, no gain).
+  - **`TestBenchMetrics`, before → after** (best of 3, from the dev laptop through the port-forward):
+
+    | query | 1 h | 6 h |
+    |---|---|---|
+    | selector, 200 series | 48 → 30 ms | 146 → 69 ms |
+    | rate, 200 series | 47 → 39 ms | 160 → 83 ms |
+    | sum by (namespace) (rate), 20 k series → 12 | 158 → 160 ms | 617 → 487 ms |
+    | selector with matcher, 20 k series → 10 k | 864 → 323 ms | 4.51 → 1.48 s |
+
+  - **Not changed, checked:** time pruning works (on dev a 1 h query reads 100 k rows, 6 h 166 k); the matcher is not pushed down to the samples (the 10 k of 20 k series read all 28.9 M samples of the metric), which is ClickHouse's `prometheusQueryRange`, not Coroot's. What is left of the 1.48 s is ClickHouse (~0.9 s) and the transfer.
+  - **On dev:** the evaluator runs through ch-go (790 PromQL queries in 2 min, no exception, `log_comment` kept). The `/api/v1/query_range` endpoint (API key) was not called by hand; `TestPromQLClientRoundTrip` covers the Prometheus format.
 
 ## 6. Smaller items
 

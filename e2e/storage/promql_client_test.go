@@ -67,7 +67,7 @@ func TestPromQLClientRoundTrip(t *testing.T) {
 	cc, err := clickhouse.NewClient(e.Config, &db.Project{Name: "test"})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = cc.Close() })
-	client := promql.New(cc, 15*timeseries.Second)
+	client := promql.NewClient(cc, e.LL, 15*timeseries.Second)
 
 	from, to := timeseries.TimeFromStandard(start.Add(time.Minute)), timeseries.TimeFromStandard(end.Add(-time.Minute))
 	q := func(query string) []*model.MetricValues {

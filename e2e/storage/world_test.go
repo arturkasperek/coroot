@@ -200,7 +200,7 @@ func TestWorldEvaluator(t *testing.T) {
 	ev := world.NewEvaluator(database, nil, world.Period, world.Backfill)
 	t.Cleanup(ev.Close)
 	require.Eventually(t, func() bool {
-		names, err := promql.New(cc, 15).MetricNames(ctx)
+		names, err := promql.NewClient(cc, e.LL, 15).MetricNames(ctx)
 		return err == nil && names["up"]
 	}, 20*time.Second, 300*time.Millisecond)
 	// a replica may not have all the samples yet: the first cycle waits for them
@@ -258,7 +258,7 @@ func TestWorldEvaluator(t *testing.T) {
 	t.Run("a metric that appears later is evaluated from its first sample", func(t *testing.T) {
 		put("container_restarts_total", map[string]string{"job": "node", "instance": "n1", "container_id": "/k8s/ns/p/c"}, start.Add(timeseries.Minute), n-4, func(i int) float64 { return float64(i / 10) })
 		require.Eventually(t, func() bool {
-			names, err := promql.New(cc, 15).MetricNames(ctx)
+			names, err := promql.NewClient(cc, e.LL, 15).MetricNames(ctx)
 			return err == nil && names["container_restarts_total"]
 		}, 20*time.Second, 300*time.Millisecond)
 		require.Eventually(t, func() bool {

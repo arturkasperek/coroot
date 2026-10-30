@@ -88,7 +88,7 @@ func (e *Evaluator) PromQL(project *db.Project) (*promql.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return promql.New(ps.c, Step), nil
+	return promql.NewClient(ps.c, ps.ll, Step), nil
 }
 
 func (e *Evaluator) cachedStore(id db.ProjectId) *Store {

@@ -47,7 +47,7 @@ ARRAY JOIN range(n) AS sn`, start.Unix(), samples), coch.TimeSeriesSettings))
 	c, err := clickhouse.NewClient(e.Config, &db.Project{Name: "test"})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = c.Close() })
-	client := promql.New(c, 15*timeseries.Second)
+	client := promql.NewClient(c, e.LL, 15*timeseries.Second)
 	to := timeseries.TimeFromStandard(end)
 
 	timed := func(name string, f func() (int, error)) {

@@ -2,7 +2,9 @@ package ch
 
 import (
 	"context"
+	"fmt"
 	"maps"
+	"slices"
 
 	chgo "github.com/ClickHouse/ch-go"
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -49,4 +51,14 @@ func QueryContext(ctx context.Context) context.Context {
 		return ctx
 	}
 	return clickhouse.Context(ctx, clickhouse.WithSettings(maps.Clone(settings)))
+}
+
+// LowLevelSettings are the settings of WithSettings for a ch-go query.
+func LowLevelSettings(ctx context.Context) []chgo.Setting {
+	settings, _ := ctx.Value(settingsKey{}).(clickhouse.Settings)
+	res := make([]chgo.Setting, 0, len(settings))
+	for _, key := range slices.Sorted(maps.Keys(settings)) {
+		res = append(res, chgo.Setting{Key: key, Value: fmt.Sprint(settings[key])})
+	}
+	return res
 }

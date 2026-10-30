@@ -6,7 +6,8 @@ import (
 	"strings"
 	"time"
 
-	chgo "github.com/ClickHouse/clickhouse-go/v2"
+	chgo "github.com/ClickHouse/ch-go"
+	chproto "github.com/ClickHouse/ch-go/proto"
 	"github.com/coroot/coroot/ch"
 	"github.com/coroot/coroot/clickhouse"
 	"github.com/coroot/coroot/model"
@@ -26,13 +27,17 @@ const metricsTable = "metrics"
 
 // Client evaluates PromQL on the metrics table of a project's ClickHouse.
 type Client struct {
-	c    *clickhouse.Client
-	step timeseries.Duration
+	c *clickhouse.Client
+	// lowLevel reads the results of PromQL: ch-go decodes the arrays of
+	// samples by column, clickhouse-go through reflect, ~3x slower on a large
+	// result (see queryRange)
+	lowLevel *ch.LowLevelClient
+	step     timeseries.Duration
 }
 
-// New: step is the scrape interval, what GetStep reports.
-func New(c *clickhouse.Client, step timeseries.Duration) *Client {
-	return &Client{c: c, step: step}
+// NewClient: step is the scrape interval, what GetStep reports.
+func NewClient(c *clickhouse.Client, lowLevel *ch.LowLevelClient, step timeseries.Duration) *Client {
+	return &Client{c: c, lowLevel: lowLevel, step: step}
 }
 
 func (c *Client) GetStep(from, to timeseries.Time) (timeseries.Duration, error) {
@@ -57,35 +62,39 @@ type rawSeries struct {
 // queryRange evaluates query for every step of [from, to]. A series that ends
 // inside the range has NaN points after its end; callers drop them.
 //
-// tags and samples are Array(Tuple(...)) in ClickHouse. clickhouse-go can scan
-// them into [][]any, but not the (DateTime64, Float64) tuple of samples into a
-// typed struct (checked on v2.8.3 and v2.48.0), and [][]any boxes every point.
-// So the query splits them into typed arrays: names and values of the labels,
-// unix times and values of the samples.
+// tags and samples are Array(Tuple(...)) in ClickHouse; the query splits them
+// into typed arrays: names and values of the labels, unix times and values of
+// the samples. They are read with ch-go, by column: clickhouse-go scans arrays
+// through reflect with an allocation per element, which took 3.1 s of 4.5 s for
+// 10k series over 6 h (TestBenchMetrics), against 0.1 s with ch-go.
 func (c *Client) queryRange(ctx context.Context, query string, from, to, step int64) ([]rawSeries, error) {
-	rows, err := c.c.Query(ch.TimeSeriesContext(ctx),
-		`SELECT arrayMap(x -> x.1, tags) AS names, arrayMap(x -> x.2, tags) AS vals,
-		        arrayMap(p -> toUnixTimestamp(p.1), samples) AS ts, arrayMap(p -> p.2, samples) AS vs
-		 FROM prometheusQueryRange(currentDatabase(), '`+metricsTable+`', @query, @from, @to, @step)`,
-		chgo.Named("query", query), chgo.Named("from", from), chgo.Named("to", to), chgo.Named("step", step))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
+	names := chproto.NewArray[string](new(chproto.ColStr))
+	values := chproto.NewArray[string](new(chproto.ColStr))
+	times := chproto.NewArray[uint32](new(chproto.ColUInt32))
+	samples := chproto.NewArray[float64](new(chproto.ColFloat64))
 	var res []rawSeries
-	for rows.Next() {
-		var names, vals []string
-		var s rawSeries
-		if err := rows.Scan(&names, &vals, &s.ts, &s.vs); err != nil {
-			return nil, err
-		}
-		s.tags = make(map[string]string, len(names))
-		for i, n := range names {
-			s.tags[n] = vals[i]
-		}
-		res = append(res, s)
-	}
-	return res, rows.Err()
+	err := c.lowLevel.Do(ctx, chgo.Query{
+		Body: `SELECT arrayMap(x -> x.1, tags) AS names, arrayMap(x -> x.2, tags) AS vals,
+		        arrayMap(p -> toUnixTimestamp(p.1), samples) AS ts, arrayMap(p -> p.2, samples) AS vs
+		 FROM prometheusQueryRange(currentDatabase(), '` + metricsTable + `', {query:String}, {from:Int64}, {to:Int64}, {step:Int64})`,
+		Parameters: chgo.Parameters(map[string]any{"query": query, "from": from, "to": to, "step": step}),
+		Settings:   ch.LowLevelSettings(ch.TimeSeriesContext(ctx)),
+		Result: chproto.Results{
+			{Name: "names", Data: names}, {Name: "vals", Data: values}, {Name: "ts", Data: times}, {Name: "vs", Data: samples},
+		},
+		OnResult: func(ctx context.Context, block chproto.Block) error {
+			for row := 0; row < block.Rows; row++ {
+				labelNames, labelValues := names.Row(row), values.Row(row)
+				s := rawSeries{tags: make(map[string]string, len(labelNames)), ts: times.Row(row), vs: samples.Row(row)}
+				for i, name := range labelNames {
+					s.tags[name] = labelValues[i]
+				}
+				res = append(res, s)
+			}
+			return nil
+		},
+	})
+	return res, err
 }
 
 // QueryRange evaluates query ($RANGE is three steps) and returns the series with
