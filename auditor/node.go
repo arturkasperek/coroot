@@ -20,9 +20,9 @@ func AuditNode(w *model.World, node *model.Node) *model.AuditReport {
 
 	var infoHeader []string
 	var infoRow []*model.TableCell
-	if kv := node.GetKernelVersion(); kv != "" {
+	if kv := node.KernelVersion.Value(); kv != "" {
 		infoHeader = append(infoHeader, "OS")
-		infoRow = append(infoRow, model.NewTableCell(kv).SetTechIcon(string(node.GetOS())))
+		infoRow = append(infoRow, model.NewTableCell(kv).SetTechIcon("linux"))
 	}
 	if cp := node.CloudProvider.Value(); cp != "" {
 		infoHeader = append(infoHeader, "Cloud")

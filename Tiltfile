@@ -71,7 +71,7 @@ if _use_local_node_agent:
         'ghcr.io/coroot/coroot-node-agent',
         _node_agent_dir,
         'docker/node-agent/Dockerfile.dev',
-        ignore=['.git', 'windows'],
+        ignore=['.git'],
     )
 else:
     print('Tilt: node-agent image ghcr.io/coroot/coroot-node-agent:latest (no ../coroot-node-agent)')

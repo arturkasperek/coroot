@@ -32,7 +32,7 @@
 
             <template #item.os="{ item }">
                 <div class="d-flex align-center">
-                    <AppIcon :icon="item.os" />
+                    <AppIcon icon="linux" />
                     <span v-if="item.kernel_version" class="caption grey--text ml-1 truncated" style="max-width: 50ch" :title="item.kernel_version">
                         {{ item.kernel_version }}
                     </span>
