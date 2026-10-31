@@ -1,6 +1,6 @@
 # Metrics follow-ups (future work)
 
-> **Status: partly done** (2026-10-30). Item 1 done; items 2, 3 and 4 closed by decisions (2026-10-29/30, with the code each needed). Item 5 done 2026-10-30. Open: item 6 (smaller items) and the agent items deferred from the audit.
+> **Status: partly done** (2026-10-30). Item 1 done; items 2, 3 and 4 closed by decisions (2026-10-29/30, with the code each needed). Item 5 done 2026-10-30 (samples partitioned by time 2026-10-31). Open: item 6 (smaller items) and the agent items deferred from the audit.
 
 These are the gaps left after `2026-10-05-clickhouse-promql-metrics.md` (all 12 tasks done). Each item says what is wrong, the evidence, and the first thing to try. Numbers are from the dev cluster (2 shards, 2026-10-05).
 
@@ -97,7 +97,18 @@ These are the gaps left after `2026-10-05-clickhouse-promql-metrics.md` (all 12 
     | sum by (namespace) (rate), 20 k series → 12 | 158 → 160 ms | 617 → 487 ms |
     | selector with matcher, 20 k series → 10 k | 864 → 323 ms | 4.51 → 1.48 s |
 
-  - **Not changed, checked:** time pruning works (on dev a 1 h query reads 100 k rows, 6 h 166 k); the matcher is not pushed down to the samples (the 10 k of 20 k series read all 28.9 M samples of the metric), which is ClickHouse's `prometheusQueryRange`, not Coroot's. What is left of the 1.48 s is ClickHouse (~0.9 s) and the transfer.
+  - **Not changed, checked:** what is left of the 1.48 s is ClickHouse (~0.9 s) and the transfer. (A first note here said the matcher is not pushed down to the samples; wrong, see the 2026-10-31 bullet below.)
+  - **2026-10-31, samples partitioned by 5 h:** measured on a copy of the schema. The matcher *is* pushed down: `prometheusQueryRange` reads as many rows as a hand-written `id IN (...)` SQL (1 series of 20 k: 73 k rows of 115 M). It looked otherwise because 50 % of series, sorted by hash, touch nearly every granule. What did not work was the time: with `ORDER BY (id, timestamp)` and `index_granularity = 32768`, a series of 7 days is ~1.2 granules, so the last minutes cost a whole granule per series (the evaluator's 45 s instant queries read up to 579 k rows on dev). And with no partition, `ttl_only_drop_parts` never drops a part (a merged part always holds fresh samples): dev held 19.3 M samples older than the 7-day TTL. Fix in `ch/client.go`: `PARTITION BY toStartOfInterval(toDateTime(timestamp), toIntervalHour(5))` (as ClickHouse's own recent samples table) and `index_granularity = 8192`; test `TestMetricsSamplesPartitionedByTime`. An existing table is not altered (`PARTITION BY` cannot change): recreate it. 7 days × 3000 series (121 M samples), rows read and time:
+
+    | query | before (32768, no partition) | after (5 h partitions, 8192) |
+    |---|---|---|
+    | evaluator, `rate[45s]` instant, 3000 series | 98 M, 168 ms | 3.1 M, 22 ms |
+    | `rate` 1 h | 99 M, 199 ms | 3.1 M, 35 ms |
+    | `rate` 6 h | 102 M, 270 ms | 6.7 M, 140 ms |
+    | `rate` 24 h | 115 M, 545 ms | 20 M, 554 ms |
+    | 10 series, 1 h | 334 k, 14 ms | 104 k, 10 ms |
+
+    Same size on disk (177 → 188 MiB). Also tried: granularity 8192 alone (25 M rows, 73 ms instant), daily partitions (14 M, 41 ms).
   - **On dev:** the evaluator runs through ch-go (790 PromQL queries in 2 min, no exception, `log_comment` kept). The `/api/v1/query_range` endpoint (API key) was not called by hand; `TestPromQLClientRoundTrip` covers the Prometheus format.
 
 ## 6. Smaller items

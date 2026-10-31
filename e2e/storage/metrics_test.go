@@ -4,6 +4,7 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -88,4 +89,28 @@ func TestMetricsWrittenIntoTimeSeries(t *testing.T) {
 	assert.Zero(t, q(`SELECT count() FROM timeSeriesTags(currentDatabase(), 'metrics') WHERE mapContains(tags, 'empty')`), "an empty label is not stored")
 	assert.Equal(t, uint64(41), q(`SELECT count() FROM timeSeriesData(currentDatabase(), 'metrics') WHERE id IN (SELECT id FROM timeSeriesTags(currentDatabase(), 'metrics') WHERE tags['instance'] = 'i3')`))
 	assert.Equal(t, uint64(1), q(`SELECT uniqExact(metric_family_name) FROM timeSeriesMetricFamilies(currentDatabase(), 'metrics') WHERE metric_family_name = 'up'`))
+}
+
+// The samples are partitioned by 5 h: a query of the last minutes reads one
+// partition, and TTL drops whole partitions of old samples.
+func TestMetricsSamplesPartitionedByTime(t *testing.T) {
+	e := chtest.New(t)
+	ctx := context.Background()
+	end := time.Now().UTC().Truncate(time.Minute)
+	// 12 h every 15 s: in 3 or 4 partitions of 5 h
+	require.NoError(t, e.LL.ExecWithSettings(ctx, fmt.Sprintf(`
+INSERT INTO metrics (metric_name, tags, samples)
+SELECT 'up', map('instance', 'i1'), arrayMap(i -> (toDateTime64(%d, 3) + toIntervalSecond(i*15), 1.0), range(2880))`,
+		end.Add(-12*time.Hour).Unix()), coch.TimeSeriesSettings))
+
+	c, err := clickhouse.NewClient(e.Config, &db.Project{Name: "test"})
+	require.NoError(t, err)
+	defer c.Close()
+	require.Eventually(t, func() bool {
+		var partitions uint64
+		require.NoError(t, c.QueryRow(ctx, `
+SELECT uniqExact(partition) FROM system.parts
+WHERE database = currentDatabase() AND table LIKE '.inner_id.samples.%' AND active`).Scan(&partitions))
+		return partitions >= 3
+	}, 20*time.Second, 200*time.Millisecond)
 }

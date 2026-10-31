@@ -591,11 +591,18 @@ GROUP BY Query, SeriesHash, Bucket`,
 	// replica), not on the sharded main cluster, and need the TimeSeries
 	// settings: ClickHouse 26.9 can evaluate PromQL only on a table that holds
 	// all the series on one node. There is no Distributed table for them.
+	//
+	// The samples are partitioned by 5 h, as ClickHouse partitions its own
+	// recent samples table: a query of the last minutes (the evaluator) reads
+	// one partition, a granule of a few minutes of each series, not a granule
+	// of days. And TTL drops a whole partition: unpartitioned, a merged part
+	// always holds fresh samples, so ttl_only_drop_parts never dropped any.
 	timeSeriesTables = []string{
 		`CREATE TABLE IF NOT EXISTS metrics @on_metrics_cluster ENGINE = TimeSeries
 SETTINGS recent_samples_ttl_seconds = 0
 SAMPLES INNER ENGINE = ReplicatedMergeTree('/clickhouse/tables/metrics/{database}/samples', '{replica}')
-  ORDER BY (id, timestamp) TTL toDateTime(timestamp) + toIntervalSecond(@ttl_metrics) SETTINGS index_granularity = 32768, ttl_only_drop_parts = 1
+  PARTITION BY toStartOfInterval(toDateTime(timestamp), toIntervalHour(5))
+  ORDER BY (id, timestamp) TTL toDateTime(timestamp) + toIntervalSecond(@ttl_metrics) SETTINGS index_granularity = 8192, ttl_only_drop_parts = 1
 TAGS INNER ENGINE = ReplicatedAggregatingMergeTree('/clickhouse/tables/metrics/{database}/tags', '{replica}')
   PRIMARY KEY metric_name ORDER BY (metric_name, id)
 METRIC FAMILIES INNER ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/metrics/{database}/families', '{replica}')
