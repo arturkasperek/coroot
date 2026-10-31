@@ -145,9 +145,9 @@ func addCount[K comparable](counts map[K][]float32, key K, points, index int, co
 	data[index] += float32(count)
 }
 
-// chartStep is the step of a chart read from the histogram table, whose rows
+// ChartStep is the step of a chart read from the histogram table, whose rows
 // are per minute: the step of the view rounded up to whole minutes.
-func chartStep(step timeseries.Duration) timeseries.Duration {
+func ChartStep(step timeseries.Duration) timeseries.Duration {
 	if remainder := step % 60; remainder != 0 {
 		step += 60 - remainder
 	}
@@ -177,7 +177,7 @@ type TracesWindow struct {
 // (viewStep) rounded up to whole minutes, the rows of the histogram table.
 func NewTracesWindow(from, to timeseries.Time, live bool, viewStep timeseries.Duration) TracesWindow {
 	duration := to.Sub(from)
-	step := chartStep(viewStep)
+	step := ChartStep(viewStep)
 	if duration <= timeseries.Hour {
 		for _, fine := range tracesWindowFineSteps {
 			step = fine
@@ -380,7 +380,7 @@ func (c *Client) getTrace(ctx context.Context, sq SpanQuery) (*model.Trace, erro
 }
 
 func (c *Client) getSpansHistogram(ctx context.Context, q SpanQuery, filters []string, filterArgs []any, fromMV bool) ([]model.HistogramBucket, error) {
-	step := chartStep(q.Ctx.Step)
+	step := ChartStep(q.Ctx.Step)
 	from := q.Ctx.From
 	to := q.Ctx.To.Add(step)
 

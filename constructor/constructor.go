@@ -251,8 +251,8 @@ func (c *Constructor) queryCache(ctx context.Context, cache Cache, project *db.P
 		addQuery(q.Name, q.Name, q.Query, false, q.FillFunc)
 	}
 	if !c.options[OptionLoadInstanceToInstanceConnections] {
-		for _, query := range qConnectionAggregations {
-			addQuery(query, query, query, false, nil)
+		for query, fillFunc := range qConnectionAggregations {
+			addQuery(query, query, query, false, fillFunc)
 		}
 		addQuery(qRecordingRuleApplicationL7Requests, qRecordingRuleApplicationL7Requests, qRecordingRuleApplicationL7Requests, true, nil)
 		addQuery(qRecordingRuleApplicationL7Histogram, qRecordingRuleApplicationL7Histogram, qRecordingRuleApplicationL7Histogram, true, nil)
