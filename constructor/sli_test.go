@@ -123,7 +123,7 @@ func TestQueryCacheReadsRawSLIsOnlyWhenAsked(t *testing.T) {
 	page := &requestsRecorder{}
 	_, err := New(nil, project, nil, nil).queryCache(context.Background(), page, project, from, to, 600, 15, model.CheckConfigs{}, nil)
 	require.NoError(t, err)
-	assertRequest(t, QueryRequest{Query: sli, From: from.Truncate(600), To: to.Truncate(600), Step: 600, FillFunc: timeseries.FillAvg}, page.requests[sli+sliSuffix],
+	assertRequest(t, QueryRequest{Query: sli, From: from.Ceil(600), To: to.Ceil(600), Step: 600, FillFunc: timeseries.FillAvg}, page.requests[sli+sliSuffix],
 		"an SLI at the page step: the average of each step")
 	assert.NotContains(t, page.requests, sli+sliRawSuffix)
 	assert.NotContains(t, page.requests, sli, "not under the query's own name: rr_connection_l7_requests is also a connection query")

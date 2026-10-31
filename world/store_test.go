@@ -29,6 +29,7 @@ func TestPointsSQLPicksTableByStep(t *testing.T) {
 	assert.Contains(t, r5, "toFloat32(max(Max)) AS M")
 	assert.Contains(t, r5, "toStartOfDay(Timestamp) BETWEEN")
 	assert.Contains(t, r5, "INTERVAL 900 SECOND) + INTERVAL 900 SECOND")
+	assert.Contains(t, r5, "Timestamp >= toDateTime(1789999201) AND Timestamp <= toDateTime(1790003700)", "the whole first bucket: from it, (from-900, from]")
 
 	assert.Contains(t, pointsSQL(from, to, timeseries.Hour, nil), "FROM @@table_world_points_1h@@")
 	assert.Contains(t, pointsSQL(from, to, 2*timeseries.Hour, nil), "FROM @@table_world_points_1h@@")

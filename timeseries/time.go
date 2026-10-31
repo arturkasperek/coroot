@@ -125,6 +125,11 @@ func (t Time) Truncate(d Duration) Time {
 	return t - t%Time(d)
 }
 
+// Ceil rounds t up to a multiple of d: the end of the step (t-d, t] that holds t.
+func (t Time) Ceil(d Duration) Time {
+	return t.Add(d - 1).Truncate(d)
+}
+
 func (t Time) Sub(other Time) Duration {
 	return Duration(t - other)
 }

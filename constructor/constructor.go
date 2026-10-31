@@ -121,7 +121,9 @@ func (c *Constructor) loadProjectWorld(ctx context.Context, cache Cache, project
 		return model.NewWorld(from, to, step, step), nil
 	}
 
-	w := model.NewWorld(from, to, step, rawStep)
+	// the steps of a World are the steps (t-step, t] that hold from and to: the
+	// first holds nothing before the window, the last the newest points
+	w := model.NewWorld(from.Ceil(step), to.Ceil(step), step, rawStep)
 	w.ProjectNamesById[string(project.Id)] = project.Name
 
 	if prof == nil {
@@ -217,8 +219,8 @@ func (c *Constructor) queryCache(ctx context.Context, cache Cache, project *db.P
 	rawFrom = rawFrom.Truncate(rawStep)
 	rawTo := to.Truncate(rawStep)
 
-	from = from.Truncate(step)
-	to = to.Truncate(step)
+	from = from.Ceil(step)
+	to = to.Ceil(step)
 	requests := map[string]QueryRequest{}
 	statsNames := map[string]string{}
 	addRequest := func(name, statsName string, request QueryRequest) {

@@ -89,14 +89,13 @@ func TestWorldStoreMatchesFillFuncs(t *testing.T) {
 				return true
 			}, 15*time.Second, 300*time.Millisecond, "step %d, %s", step, name)
 			wantJSON, _ := want.MarshalJSON()
-			if step < 5*timeseries.Minute {
+			if step == 15 {
 				assert.JSONEq(t, string(wantJSON), string(got), "step %d, %s", step, name)
 				continue
 			}
-			// A rollup holds whole buckets, so its first point is the whole bucket that ends
-			// at from; the chunk cache gave the part of it that lies after from (just the
-			// sample at from). The first point of a chart is an artifact either way: compare
-			// the rest.
+			// The first point is the whole bucket that ends at from (see
+			// TestWorldPageStepsCountTheSameMessages); the chunk cache gave the part of it
+			// that lies after from (just the sample at from): compare the rest.
 			assert.Equal(t, pointsAfterFirst(t, wantJSON), pointsAfterFirst(t, got), "step %d, %s", step, name)
 		}
 	}
@@ -386,4 +385,52 @@ func TestWorldRecordingRules(t *testing.T) {
 	at, v := got[0].Values.LastNotNull()
 	assert.Equal(t, ruleTo2, at)
 	assert.Equal(t, float32(ruleTo2%1000), v)
+}
+
+// A page counts the same log messages at every step: its steps are the buckets
+// (t-step, t] that hold from and to, so the newest messages are in the last one
+// and nothing before the window is in the first. The steps of 5 min and more
+// are read from the rollups.
+func TestWorldPageStepsCountTheSameMessages(t *testing.T) {
+	e := chtest.New(t)
+	c, err := clickhouse.NewClient(e.Config, &db.Project{Name: "test"})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = c.Close() })
+	database := dbtest.New(t)
+	project := &db.Project{Name: "steps"}
+	require.NoError(t, database.SaveProject(project))
+
+	const name = "rr_application_log_messages"
+	// one error every 15 s for 3 h, up to a "now" that is not on any page step
+	to := timeseries.TimeFromStandard(time.Now().UTC().Truncate(time.Hour)).Add(-timeseries.Hour + 7*timeseries.Minute + 45)
+	dataFrom := to.Add(-3 * timeseries.Hour).Add(15)
+	const messages = 3 * 3600 / 15
+	worldInsert(t, e, fmt.Sprintf(`INSERT INTO world_series_distributed VALUES ('%s', 1, map('application','default:ns:Deployment:shop','level','error'), now())`, name))
+	worldInsert(t, e, fmt.Sprintf(`INSERT INTO world_points_distributed SELECT '%s', 1, toDateTime(%d) + number * 15, 1 FROM numbers(%d)`, name, dataFrom, messages))
+
+	count := func(from timeseries.Time, step timeseries.Duration) float32 {
+		t.Helper()
+		metrics, err := constructor.New(database, project, nil, nil).QueryCache(context.Background(), world.NewStore(c), project, from, to, step)
+		require.NoError(t, err)
+		require.Len(t, metrics[name], 1, "step %d", step)
+		return metrics[name][0].Values.Reduce(timeseries.NanSum)
+	}
+	steps := []timeseries.Duration{15, timeseries.Minute, 5 * timeseries.Minute, 10 * timeseries.Minute, 15 * timeseries.Minute, timeseries.Hour}
+
+	t.Run("a window that holds all the messages, up to now", func(t *testing.T) {
+		from := to.Add(-24 * timeseries.Hour)
+		require.Eventually(t, func() bool { return count(from, 15) == messages }, 15*time.Second, 300*time.Millisecond)
+		for _, step := range steps {
+			assert.Equal(t, float32(messages), count(from, step), "step %d", step)
+		}
+	})
+	t.Run("a window that starts in the messages: no more than the step before from", func(t *testing.T) {
+		from := to.Add(-timeseries.Hour - 7*timeseries.Minute)
+		inWindow := float32(to.Sub(from) / 15)
+		for _, step := range steps {
+			got := count(from, step)
+			assert.GreaterOrEqual(t, got, inWindow, "step %d: every message of the window", step)
+			assert.LessOrEqual(t, got, inWindow+float32(step/15), "step %d: at most a step before from", step)
+		}
+	})
 }

@@ -58,6 +58,10 @@ func aggregateFor(f timeseries.FillFunc) aggregate {
 func pointsSQL(from, to timeseries.Time, step timeseries.Duration, queries []string) string {
 	bucket := fmt.Sprintf("toStartOfInterval(Timestamp - INTERVAL 1 SECOND, INTERVAL %[1]d SECOND) + INTERVAL %[1]d SECOND", step)
 	lo := from
+	if step != Step {
+		// the first point is the whole bucket (from-step, from], not the part of it from from
+		lo = from.Add(-step + 1)
+	}
 	window := fmt.Sprintf("Timestamp >= toDateTime(%d) AND Timestamp <= toDateTime(%d)", lo, to) + queryFilter(queries)
 	if step == Step {
 		// the points as they are stored: no bucket, so no GROUP BY over every point (12 times

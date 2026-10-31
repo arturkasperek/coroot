@@ -212,3 +212,10 @@ func TestFillMax(t *testing.T) {
 	FillMax(ts, 0, 15*Second, data)
 	assert.Equal(t, "TimeSeries(0, 4, 30, [1 5 3 4])", ts.String())
 }
+
+func TestTimeCeil(t *testing.T) {
+	assert.Equal(t, Time(600), Time(600).Ceil(600), "on a step: itself")
+	assert.Equal(t, Time(1200), Time(601).Ceil(600))
+	assert.Equal(t, Time(1200), Time(1185).Ceil(600))
+	assert.Equal(t, Time(1200), Time(1185).Ceil(15).Ceil(600))
+}
