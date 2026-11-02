@@ -1,6 +1,6 @@
 # Metrics follow-ups (future work)
 
-> **Status: partly done** (2026-10-30). Item 1 done; items 2, 3 and 4 closed by decisions (2026-10-29/30, with the code each needed). Item 5 done 2026-10-30 (samples partitioned by time 2026-10-31). Item 6 done or closed 2026-10-31. Open: the agent items deferred from the audit.
+> **Status: partly done** (2026-10-30). Item 1 done; items 2, 3 and 4 closed by decisions (2026-10-29/30, with the code each needed). Item 5 done 2026-10-30 (samples partitioned by time 2026-10-31). Item 6 done or closed 2026-10-31. Agent items deferred from the audit: three done 2026-11-02 (`NO_WAKEUP`, TLS loss, the HTTP/1 header copy); the `space_manager` cleanup done 2026-11-02; open: socket-layer capture.
 
 These are the gaps left after `2026-10-05-clickhouse-promql-metrics.md` (all 12 tasks done). Each item says what is wrong, the evidence, and the first thing to try. Numbers are from the dev cluster (2 shards, 2026-10-05).
 
@@ -120,4 +120,12 @@ These are the gaps left after `2026-10-05-clickhouse-promql-metrics.md` (all 12 
 
 ## Not metrics, deferred from the audit
 
-Agent-side items noted earlier and never started: ring buffer `NO_WAKEUP`, the byte-by-byte copy in the HTTP/1 parser, socket-layer capture, TLS loss; and the `space_manager` cleanup of old metrics tables is done only for `world_%` (inner TimeSeries tables rely on their TTL).
+Agent-side items noted earlier. Done 2026-11-02 in the node agent (`coroot-node-agent`):
+
+- **Ring buffer `NO_WAKEUP`:** every ring buffer write uses `RINGBUF_FLAGS` (`BPF_RB_NO_WAKEUP`, `ebpf/ebpf.c`), and `ringMerger` polls both rings every 10 ms (`ringPollInterval`, `ebpftracer/ringmerge.go`) instead of waiting on epoll. Latency benchmark: agent ~26 % of one core, 0 spans lost.
+- **TLS loss:** two causes. The Go TLS uprobes were detached when the last process of a binary exited (they now stay attached for `globalUprobeIdleTTL`); and `trace_exit_read` (`ebpf/l7/l7.c`) used its `active_reads` entry after deleting it: an LRU hash reuses a deleted element at once, so a concurrent read could hand the event another buffer (now copied to `exiting_read` first; the same read-after-delete fixed in `ebpf/tcp/state.c`). e2e: python-tls lost spans in 6 of 10 runs before, 0 of 15 after.
+- **Byte-by-byte copy in the HTTP/1 parser:** the header scan reads the source in 256-byte blocks (`HTTP1_HDR_BLOCK`, `http1_iov_peek` in `ebpf/l7/http1.c`) instead of a map lookup and a `bpf_probe_read` per byte, and stores captured bytes directly. Latency benchmark with timers around the scan: 19.9 → 2.0 us per scan, 174 → 17.5 ns per byte, 25.7 → 4.9 % of all BPF time. Test `TestHttp1WritevHeadersSplitAcrossVectors`.
+
+- **`space_manager` cleanup (coroot, 2026-11-02):** it dropped partitions only of `otel_%`, `profiling_%` and `world_%`, so a full disk never lost metric samples (the TimeSeries inner table `.inner_id.samples.<uuid>`, partitioned by 5 h since 2026-10-31) nor `trace_bodies`, `trace_server_sources` and `trace_addresses`. One condition (`telemetryTables`, `clickhouse/clickhouse.go`) now selects the tables for the space manager and for the usage statistics, which also missed the `trace_*` tables (now counted under traces). The tags and metric families inner tables have `min_time` 0 and stay out. `ALTER TABLE` quotes the names (`.inner_id.…` is not a plain identifier). Test `TestSpaceManagerDropsTheOldestPartitionOfMetricSamplesAndTraceBodies`, `TestAggregateTableStatsGroupsMetricsTables`.
+
+Open: socket-layer capture.

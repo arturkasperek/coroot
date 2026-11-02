@@ -136,6 +136,14 @@ func (c *Client) getClusterTopology(ctx context.Context) ([]ClusterNode, error) 
 	return nodes, rows.Err()
 }
 
+// telemetryTables is a condition on system.parts (as p) that selects the
+// tables of the telemetry Coroot stores: the usage statistics count them and
+// the space manager drops their oldest partitions. The metrics TimeSeries
+// table keeps its data in inner tables named `.inner_id.<kind>.<uuid>`; only
+// the samples are partitioned by time, the tags and metric families have
+// min_time 0 and drop out of both queries.
+const telemetryTables = `(p.table LIKE 'otel_%' OR p.table LIKE 'trace_%' OR p.table LIKE 'profiling_%' OR p.table LIKE 'world_%' OR p.table LIKE '.inner_id.%')`
+
 func (c *Client) GetTableSizes(ctx context.Context) ([]TableInfo, error) {
 	query := `
 		SELECT 
@@ -154,7 +162,7 @@ func (c *Client) GetTableSizes(ctx context.Context) ([]TableInfo, error) {
 		  	AND p.min_time > 0
 			AND p.database = currentDatabase()
 			AND p.engine NOT LIKE '%Distributed%'
-			AND (p.table LIKE 'otel_%' OR p.table LIKE 'profiling_%' OR p.table LIKE 'world_%' OR p.table LIKE '.inner_id.%')
+			AND ` + telemetryTables + `
 		GROUP BY p.database, p.table, t.create_table_query
 		ORDER BY p.table`
 
@@ -485,7 +493,7 @@ func aggregateTableStats(tables []TableInfo) []TableInfo {
 		switch {
 		case strings.HasPrefix(table.Table, "otel_logs"):
 			key = "logs"
-		case strings.HasPrefix(table.Table, "otel_traces"):
+		case strings.HasPrefix(table.Table, "otel_traces"), strings.HasPrefix(table.Table, "trace_"):
 			key = "traces"
 		case strings.HasPrefix(table.Table, "profiling_"):
 			key = "profiling"

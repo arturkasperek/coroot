@@ -79,6 +79,8 @@ func TestConvertIntervalToSeconds(t *testing.T) {
 func TestAggregateTableStatsGroupsMetricsTables(t *testing.T) {
 	tables := []TableInfo{
 		{Table: "otel_logs", BytesOnDisk: 1},
+		{Table: "otel_traces", BytesOnDisk: 2},
+		{Table: "trace_bodies", BytesOnDisk: 4},
 		{Table: "world_points", BytesOnDisk: 10},
 		{Table: "world_points_5m", BytesOnDisk: 20},
 		{Table: ".inner_id.samples.1bf59146", BytesOnDisk: 100},
@@ -89,7 +91,7 @@ func TestAggregateTableStatsGroupsMetricsTables(t *testing.T) {
 	for _, ti := range aggregateTableStats(tables) {
 		got[ti.Table] = int64(ti.BytesOnDisk)
 	}
-	if got["metrics"] != 1130 || got["logs"] != 1 || len(got) != 2 {
+	if got["metrics"] != 1130 || got["logs"] != 1 || got["traces"] != 6 || len(got) != 3 {
 		t.Fatalf("unexpected aggregation: %v", got)
 	}
 }

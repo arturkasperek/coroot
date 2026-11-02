@@ -6,7 +6,9 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
+	"github.com/coroot/coroot/ch"
 	"github.com/coroot/coroot/ch/chtest"
 	"github.com/coroot/coroot/config"
 	"github.com/coroot/coroot/db"
@@ -67,6 +69,43 @@ func TestSpaceManagerKeepsTheOnlyPartitionOfManyParts(t *testing.T) {
 	require.NoError(t, spaceManager.cleanupOldestPartitionsFromDisk(context.Background(), client, "default"))
 
 	require.Equal(t, partitionsBefore, partitionsOf(t, client, environment.Database, "otel_traces"))
+}
+
+// The samples of the metrics TimeSeries table live in its inner table
+// `.inner_id.samples.<uuid>`, partitioned by 5 hours, and the bodies of the
+// traces in trace_bodies: both are dropped by partition like the otel_ tables.
+// The inner tags table is not partitioned by time and is left alone.
+func TestSpaceManagerDropsTheOldestPartitionOfMetricSamplesAndTraceBodies(t *testing.T) {
+	environment := chtest.New(t)
+	spaceManager, client := newTestSpaceManager(t, environment)
+	var samplesTable, tagsTable string
+	require.NoError(t, client.conn.QueryRow(context.Background(),
+		"SELECT name FROM system.tables WHERE database = currentDatabase() AND name LIKE '.inner_id.samples.%'").Scan(&samplesTable))
+	require.NoError(t, client.conn.QueryRow(context.Background(),
+		"SELECT name FROM system.tables WHERE database = currentDatabase() AND name LIKE '.inner_id.tags.%'").Scan(&tagsTable))
+	now := time.Now().UTC().Unix()
+	require.NoError(t, environment.LL.ExecWithSettings(context.Background(), fmt.Sprintf(
+		"INSERT INTO metrics (metric_name, tags, samples) VALUES ('up', map('instance', 'i1'), [(toDateTime64(%d, 3), 1.0), (toDateTime64(%d, 3), 1.0)])",
+		now-10*3600, now), ch.TimeSeriesSettings))
+	for _, daysAgo := range []int{1, 0} {
+		environment.Exec(t, fmt.Sprintf(
+			"INSERT INTO trace_bodies (Hash, Body, LastSeen) VALUES (%d, 'body', now() - INTERVAL %d DAY)", daysAgo, daysAgo))
+	}
+	require.Eventually(t, func() bool {
+		return len(partitionsOf(t, client, environment.Database, samplesTable)) == 2
+	}, 20*time.Second, 200*time.Millisecond)
+	samplesBefore := partitionsOf(t, client, environment.Database, samplesTable)
+	require.Len(t, samplesBefore, 2)
+	bodiesBefore := partitionsOf(t, client, environment.Database, "trace_bodies")
+	require.Len(t, bodiesBefore, 2)
+	tagsBefore := partitionsOf(t, client, environment.Database, tagsTable)
+	require.NotEmpty(t, tagsBefore)
+
+	require.NoError(t, spaceManager.cleanupOldestPartitionsFromDisk(context.Background(), client, "default"))
+
+	require.Equal(t, samplesBefore[1:], partitionsOf(t, client, environment.Database, samplesTable))
+	require.Equal(t, bodiesBefore[1:], partitionsOf(t, client, environment.Database, "trace_bodies"))
+	require.Equal(t, tagsBefore, partitionsOf(t, client, environment.Database, tagsTable))
 }
 
 func TestSpaceManagerDropsTheOldestOfSeveralPartitions(t *testing.T) {

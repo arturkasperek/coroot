@@ -132,8 +132,9 @@ func (sm *SpaceManager) cleanupOldestPartitionsFromDisk(ctx context.Context, cli
 func (sm *SpaceManager) dropPartition(ctx context.Context, client *Client, part PartitionInfo) error {
 	klog.Infof("dropping partition %s from table %s.%s", part.PartitionId, part.Database, part.Table)
 
+	// quoted: the inner tables of the metrics table are `.inner_id.samples.<uuid>`
 	query := fmt.Sprintf(
-		"ALTER TABLE %s.%s DROP PARTITION ID '%s'",
+		"ALTER TABLE `%s`.`%s` DROP PARTITION ID '%s'",
 		part.Database,
 		part.Table,
 		part.PartitionId,
@@ -156,7 +157,7 @@ func (sm *SpaceManager) getPartitionsFromDiskOnServer(ctx context.Context, clien
 			AND p.min_time > 0
 			AND p.disk_name = ?
 			AND p.database IN ?
-			AND (p.table LIKE 'otel_%' OR p.table LIKE 'profiling_%' OR p.table LIKE 'world_%')
+			AND ` + telemetryTables + `
 		GROUP BY p.database, p.table, p.partition_id
 		ORDER BY min(p.min_time) ASC`
 

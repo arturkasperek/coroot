@@ -133,7 +133,7 @@ The space manager checks your disk usage regularly. When disk usage gets too hig
 - Your disk usage threshold is set to 70%
 - Current disk usage reaches 76%
 - The space manager kicks in and deletes the oldest partition from each telemetry table
-- Since partitions are typically 1 day each, this frees up about 1 day worth of data
+- Since partitions are typically 1 day each, this frees up about 1 day worth of data (metric samples are partitioned by 5 hours, so a cleanup drops their oldest 5 hours)
 
 **Important:** Even if your TTL is set to 7 days, the space manager might keep only 6 days of data if disk space is tight. The space manager always prioritizes keeping your system running over keeping data for the full TTL period.
 
