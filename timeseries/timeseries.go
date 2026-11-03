@@ -23,7 +23,6 @@ type TimeSeries struct {
 	from Time
 	step Duration
 	data []float32
-	last float32
 }
 
 func New(from Time, pointsCount int, step Duration) *TimeSeries {
@@ -39,7 +38,6 @@ func NewWithData(from Time, step Duration, data []float32) *TimeSeries {
 		from: from,
 		step: step,
 		data: data,
-		last: data[len(data)-1],
 	}
 	return ts
 }
@@ -71,7 +69,6 @@ func (ts *TimeSeries) MarshalJSON() ([]byte, error) {
 func (ts *TimeSeries) UnmarshalJSON(data []byte) error {
 	if string(data) == "null" {
 		ts.data = nil
-		ts.last = NaN
 		return nil
 	}
 
@@ -90,12 +87,6 @@ func (ts *TimeSeries) UnmarshalJSON(data []byte) error {
 	}
 
 	ts.data = values
-	if len(values) > 0 {
-		ts.last = values[len(values)-1]
-	} else {
-		ts.last = NaN
-	}
-
 	return nil
 }
 
@@ -122,10 +113,8 @@ func (ts *TimeSeries) DecodeMsgpack(dec *msgpack.Decoder) error {
 	}
 	ts.from = m.From
 	ts.step = m.Step
-	ts.last = NaN
 	if len(m.Data) > 0 {
 		ts.data = asFloats32(m.Data)
-		ts.last = ts.data[len(ts.data)-1]
 	}
 	return nil
 }
@@ -153,12 +142,8 @@ func (ts *TimeSeries) Set(t Time, v float32) {
 		return
 	}
 	idx := int((t - ts.from) / Time(ts.step))
-	l := len(ts.data) - 1
-	if idx <= l {
+	if idx < len(ts.data) {
 		ts.data[idx] = v
-		if idx == l {
-			ts.last = v
-		}
 	}
 }
 
@@ -203,7 +188,6 @@ func FillAny(ts *TimeSeries, from Time, step Duration, data []float32) bool {
 	if iDst <= maxIndex {
 		ts.data[iDst] = vv
 	}
-	ts.last = ts.data[maxIndex]
 	return changed
 }
 
@@ -250,7 +234,6 @@ func FillMax(ts *TimeSeries, from Time, step Duration, data []float32) bool {
 	if iDst <= maxIndex {
 		ts.data[iDst] = vv
 	}
-	ts.last = ts.data[maxIndex]
 	return changed
 }
 
@@ -296,7 +279,6 @@ func FillSum(ts *TimeSeries, from Time, step Duration, data []float32) bool {
 	if iDst <= maxIndex {
 		ts.data[iDst] = vv
 	}
-	ts.last = ts.data[maxIndex]
 	return changed
 }
 
@@ -350,7 +332,6 @@ func FillAvg(ts *TimeSeries, from Time, step Duration, data []float32) bool {
 			ts.data[iDst] = vv / cc
 		}
 	}
-	ts.last = ts.data[maxIndex]
 	return changed
 }
 
@@ -391,20 +372,20 @@ func (ts *TimeSeries) IsEmpty() bool {
 }
 
 func (ts *TimeSeries) Last() float32 {
-	if ts.IsEmpty() {
+	if ts.IsEmpty() || len(ts.data) == 0 {
 		return NaN
 	}
-	return ts.last
+	return ts.data[len(ts.data)-1]
 }
 
 func (ts *TimeSeries) TailIsEmpty() bool {
 	if ts.IsEmpty() {
 		return true
 	}
-	if !IsNaN(ts.last) {
+	l := len(ts.data)
+	if l >= 1 && !IsNaN(ts.data[l-1]) {
 		return false
 	}
-	l := len(ts.data)
 	if l >= 2 && !IsNaN(ts.data[l-2]) {
 		return false
 	}
@@ -453,7 +434,6 @@ func (ts *TimeSeries) MapInPlace(f func(t Time, v float32) float32) *TimeSeries 
 		ts.data[i] = f(t, v)
 		t = t.Add(ts.step)
 	}
-	ts.last = ts.data[len(ts.data)-1]
 	return ts
 }
 

@@ -1,6 +1,6 @@
 # Remove the cached `TimeSeries.last` field (future work)
 
-> **Status: ❌ NOT IMPLEMENTED** (verified against the code and git history on 2026-10-11). `TimeSeries.last` is still in `timeseries/timeseries.go`. Original note: not scheduled, low priority.
+> **Status: done** (2026-11-03). The field and its 13 writes are gone; `Last()` and `TailIsEmpty()` read the last element of `data`. `BenchmarkLast` / `BenchmarkTailIsEmpty` (10 000 series of 240 points, Apple M2 Max, 10 runs, benchstat): `Last` 0.91 → 1.38 ns, `TailIsEmpty` 0.70 → 1.34 ns per call. Measurable but not a hot path: even a million calls per page would add ~0.5 ms to a page of ~140 ms. Test `TestLastFollowsTheData` (Set, MapInPlace, the four Fill functions, JSON `[...]` / `[]` / `null`, msgpack, and `NewWithData` with an empty slice, which used to panic on `data[len(data)-1]`). `go test ./...` passes.
 
 ## Problem
 

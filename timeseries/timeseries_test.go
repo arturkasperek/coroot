@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/vmihailenco/msgpack/v5"
 )
 
 func TestFill(t *testing.T) {
@@ -160,6 +161,79 @@ func BenchmarkFillSum(b *testing.B) {
 	for n := 0; n < b.N; n++ {
 		FillSum(New(1800, 180, 60*Second), 15, 15*Second, data)
 	}
+}
+
+// Last and TailIsEmpty read the last point of the data, so every way of
+// changing the data shows in them.
+func TestLastFollowsTheData(t *testing.T) {
+	data := []float32{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
+
+	ts := New(0, 5, 15*Second)
+	assert.True(t, IsNaN(ts.Last()))
+	assert.True(t, ts.TailIsEmpty())
+	ts.Set(60, 7)
+	assert.Equal(t, float32(7), ts.Last())
+	assert.False(t, ts.TailIsEmpty())
+	ts.MapInPlace(func(_ Time, v float32) float32 { return v * 2 })
+	assert.Equal(t, float32(14), ts.Last())
+
+	for name, fill := range map[string]FillFunc{"any": FillAny, "max": FillMax, "sum": FillSum, "avg": FillAvg} {
+		ts = New(0, 5, 30*Second)
+		fill(ts, 0, 15*Second, data)
+		assert.False(t, IsNaN(ts.Last()), name)
+		assert.Equal(t, ts.data[4], ts.Last(), name)
+	}
+
+	assert.True(t, IsNaN(NewWithData(0, 15*Second, nil).Last()))
+	assert.True(t, NewWithData(0, 15*Second, nil).TailIsEmpty())
+
+	ts = New(0, 5, 15*Second)
+	assert.NoError(t, ts.UnmarshalJSON([]byte("[1,2,null,4]")))
+	assert.Equal(t, float32(4), ts.Last())
+	assert.NoError(t, ts.UnmarshalJSON([]byte("[]")))
+	assert.True(t, IsNaN(ts.Last()))
+	assert.True(t, ts.TailIsEmpty())
+	assert.NoError(t, ts.UnmarshalJSON([]byte("null")))
+	assert.True(t, IsNaN(ts.Last()))
+
+	encoded, err := msgpack.Marshal(NewWithData(0, 15*Second, []float32{1, 2, 3}))
+	assert.NoError(t, err)
+	decoded := &TimeSeries{}
+	assert.NoError(t, msgpack.Unmarshal(encoded, decoded))
+	assert.Equal(t, float32(3), decoded.Last())
+}
+
+// lastBenchmarkSeries are many series of a page's 240 points, so Last reads
+// series that are not all in the CPU cache, as an auditor going over a World does.
+func lastBenchmarkSeries() []*TimeSeries {
+	series := make([]*TimeSeries, 10000)
+	for i := range series {
+		series[i] = New(0, 240, 15*Second)
+		series[i].Set(Time(15*239), float32(i))
+	}
+	return series
+}
+
+func BenchmarkLast(b *testing.B) {
+	series := lastBenchmarkSeries()
+	b.ResetTimer()
+	var sum float32
+	for n := 0; n < b.N; n++ {
+		sum += series[n%len(series)].Last()
+	}
+	assert.False(b, IsNaN(sum))
+}
+
+func BenchmarkTailIsEmpty(b *testing.B) {
+	series := lastBenchmarkSeries()
+	b.ResetTimer()
+	empty := 0
+	for n := 0; n < b.N; n++ {
+		if series[n%len(series)].TailIsEmpty() {
+			empty++
+		}
+	}
+	assert.Zero(b, empty)
 }
 
 func TestIncrease(t *testing.T) {
