@@ -41,11 +41,17 @@ type DB interface {
 	GetProjects() (map[string]*db.Project, error)
 }
 
-type Cache interface {
+// ResultsStep is the step of the stored query results, the agents' scrape
+// interval: the evaluator (world) evaluates every query at it, and a World
+// reads its raw points at it.
+const ResultsStep = 15 * timeseries.Second
+
+// Results are the stored results of the queries, evaluated by the evaluator
+// (world): the query text is their key, nothing is evaluated on a read.
+type Results interface {
 	// QueryRanges reads every request of a run at once; the result is by the
 	// requests' names.
 	QueryRanges(ctx context.Context, requests map[string]QueryRequest) (map[string][]*model.MetricValues, error)
-	GetStep(from, to timeseries.Time) (timeseries.Duration, error)
 }
 
 // QueryRequest is one query a run reads, in a time range at a step.
@@ -57,15 +63,15 @@ type QueryRequest struct {
 }
 
 type Constructor struct {
-	db           DB
-	rootProject  *db.Project
-	cacheClients map[db.ProjectId]Cache
-	pricing      *pricing.Manager
-	options      map[Option]bool
+	db               DB
+	rootProject      *db.Project
+	resultsByProject map[db.ProjectId]Results
+	pricing          *pricing.Manager
+	options          map[Option]bool
 }
 
-func New(db DB, project *db.Project, cacheClients map[db.ProjectId]Cache, pricing *pricing.Manager, options ...Option) *Constructor {
-	c := &Constructor{db: db, rootProject: project, cacheClients: cacheClients, pricing: pricing, options: map[Option]bool{}}
+func New(db DB, project *db.Project, resultsByProject map[db.ProjectId]Results, pricing *pricing.Manager, options ...Option) *Constructor {
+	c := &Constructor{db: db, rootProject: project, resultsByProject: resultsByProject, pricing: pricing, options: map[Option]bool{}}
 	for _, o := range options {
 		c.options[o] = true
 	}
@@ -78,11 +84,11 @@ func (c *Constructor) newApplicationId(clusterId string, namespace string, kind 
 
 func (c *Constructor) LoadWorld(ctx context.Context, from, to timeseries.Time, step timeseries.Duration, prof *Profile) (*model.World, error) {
 	if !c.rootProject.Multicluster() {
-		cache, ok := c.cacheClients[c.rootProject.Id]
+		results, ok := c.resultsByProject[c.rootProject.Id]
 		if !ok {
 			return nil, fmt.Errorf("metrics cache is missing for project %s", c.rootProject.Id)
 		}
-		return c.loadProjectWorld(ctx, cache, c.rootProject, from, to, step, prof, nil)
+		return c.loadProjectWorld(ctx, results, c.rootProject, from, to, step, prof, nil)
 	}
 	projects, err := c.db.GetProjects()
 	if err != nil {
@@ -98,11 +104,11 @@ func (c *Constructor) LoadWorld(ctx context.Context, from, to timeseries.Time, s
 	}
 	var worlds []*model.World
 	for _, mp := range memberProjects {
-		cache, ok := c.cacheClients[mp.Id]
+		results, ok := c.resultsByProject[mp.Id]
 		if !ok {
 			return nil, fmt.Errorf("metrics cache is missing for project %s", mp.Id)
 		}
-		w, err := c.loadProjectWorld(ctx, cache, mp, from, to, step, prof, c.rootProject)
+		w, err := c.loadProjectWorld(ctx, results, mp, from, to, step, prof, c.rootProject)
 		if err != nil {
 			return nil, err
 		}
@@ -111,19 +117,13 @@ func (c *Constructor) LoadWorld(ctx context.Context, from, to timeseries.Time, s
 	return mergeWorlds(worlds), nil
 }
 
-func (c *Constructor) loadProjectWorld(ctx context.Context, cache Cache, project *db.Project, from, to timeseries.Time, step timeseries.Duration, prof *Profile, parentProject *db.Project) (*model.World, error) {
+func (c *Constructor) loadProjectWorld(ctx context.Context, results Results, project *db.Project, from, to timeseries.Time, step timeseries.Duration, prof *Profile, parentProject *db.Project) (*model.World, error) {
 	start := time.Now()
-	rawStep, err := cache.GetStep(from, to)
-	if err != nil {
-		return nil, err
-	}
-	if rawStep == 0 {
-		return model.NewWorld(from, to, step, step), nil
-	}
+	var err error
 
 	// the steps of a World are the steps (t-step, t] that hold from and to: the
 	// first holds nothing before the window, the last the newest points
-	w := model.NewWorld(from.Ceil(step), to.Ceil(step), step, rawStep)
+	w := model.NewWorld(from.Ceil(step), to.Ceil(step), step, ResultsStep)
 	w.ProjectNamesById[string(project.Id)] = project.Name
 
 	if prof == nil {
@@ -139,7 +139,7 @@ func (c *Constructor) loadProjectWorld(ctx context.Context, cache Cache, project
 
 	var metrics map[string][]*model.MetricValues
 	prof.stage("query", func() {
-		metrics, err = c.queryCache(ctx, cache, project, from, to, step, rawStep, w.CheckConfigs, prof.Queries)
+		metrics, err = c.queryResults(ctx, results, project, from, to, step, w.CheckConfigs, prof.Queries)
 	})
 	if err != nil {
 		return nil, err
@@ -195,29 +195,22 @@ func (c *Constructor) loadProjectWorld(ctx context.Context, cache Cache, project
 	return w, nil
 }
 
-func (c *Constructor) QueryCache(ctx context.Context, cache Cache, project *db.Project, from, to timeseries.Time, step timeseries.Duration) (map[string][]*model.MetricValues, error) {
-	rawStep, err := cache.GetStep(from, to)
-	if err != nil {
-		return nil, err
-	}
-	if rawStep == 0 {
-		return nil, nil
-	}
+func (c *Constructor) QueryResults(ctx context.Context, results Results, project *db.Project, from, to timeseries.Time, step timeseries.Duration) (map[string][]*model.MetricValues, error) {
 	checkConfigs, err := c.db.GetCheckConfigs(project.Id)
 	if err != nil {
 		return nil, err
 	}
-	return c.queryCache(ctx, cache, project, from, to, step, rawStep, checkConfigs, nil)
+	return c.queryResults(ctx, results, project, from, to, step, checkConfigs, nil)
 }
 
-func (c *Constructor) queryCache(ctx context.Context, cache Cache, project *db.Project, from, to timeseries.Time, step, rawStep timeseries.Duration, checkConfigs model.CheckConfigs, stats map[string]QueryStats) (map[string][]*model.MetricValues, error) {
+func (c *Constructor) queryResults(ctx context.Context, results Results, project *db.Project, from, to timeseries.Time, step timeseries.Duration, checkConfigs model.CheckConfigs, stats map[string]QueryStats) (map[string][]*model.MetricValues, error) {
 	loadRawSLIs := c.options[OptionLoadRawSLIs]
 	rawFrom := from
 	if t := to.Add(-model.MaxAlertRuleWindow); t.Before(rawFrom) {
 		rawFrom = t
 	}
-	rawFrom = rawFrom.Truncate(rawStep)
-	rawTo := to.Truncate(rawStep)
+	rawFrom = rawFrom.Truncate(ResultsStep)
+	rawTo := to.Truncate(ResultsStep)
 
 	from = from.Ceil(step)
 	to = to.Ceil(step)
@@ -238,7 +231,7 @@ func (c *Constructor) queryCache(ctx context.Context, cache Cache, project *db.P
 		// an SLI is a rate: its average over a step of the World
 		addRequest(name+sliSuffix, statsName, QueryRequest{Query: query, From: from, To: to, Step: step, FillFunc: timeseries.FillAvg})
 		if loadRawSLIs {
-			addRequest(name+sliRawSuffix, statsName+sliRawSuffix, QueryRequest{Query: query, From: rawFrom, To: rawTo, Step: rawStep})
+			addRequest(name+sliRawSuffix, statsName+sliRawSuffix, QueryRequest{Query: query, From: rawFrom, To: rawTo, Step: ResultsStep})
 		}
 	}
 
@@ -275,7 +268,7 @@ func (c *Constructor) queryCache(ctx context.Context, cache Cache, project *db.P
 	}
 
 	start := time.Now()
-	res, err := cache.QueryRanges(ctx, requests)
+	res, err := results.QueryRanges(ctx, requests)
 	if stats != nil {
 		// the requests are read together: each one took the time of the whole read
 		queryTime := float32(time.Since(start).Seconds())

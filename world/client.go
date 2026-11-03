@@ -20,7 +20,7 @@ type Status struct {
 }
 
 // Client is the world of one project: what the constructor reads (it satisfies
-// constructor.Cache) and what the pages need to know about its freshness.
+// constructor.Results) and what the pages need to know about its freshness.
 type Client struct {
 	e  *Evaluator
 	id db.ProjectId
@@ -51,8 +51,6 @@ func (c *Client) QueryRanges(ctx context.Context, requests map[string]constructo
 	}
 	return st.QueryRanges(ctx, requests)
 }
-
-func (c *Client) GetStep(from, to timeseries.Time) (timeseries.Duration, error) { return Step, nil }
 
 // GetTo is the end of the stored results: a page ends there. Zero when there is nothing yet.
 // The primary instance knows it from its last cycle; the others ask the store.
@@ -88,7 +86,7 @@ func (e *Evaluator) PromQL(project *db.Project) (*promql.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return promql.NewClient(ps.c, ps.ll, Step), nil
+	return promql.NewClient(ps.c, ps.ll, constructor.ResultsStep), nil
 }
 
 func (e *Evaluator) cachedStore(id db.ProjectId) *Store {

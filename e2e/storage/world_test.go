@@ -410,7 +410,7 @@ func TestWorldPageStepsCountTheSameMessages(t *testing.T) {
 
 	count := func(from timeseries.Time, step timeseries.Duration) float32 {
 		t.Helper()
-		metrics, err := constructor.New(database, project, nil, nil).QueryCache(context.Background(), world.NewStore(c), project, from, to, step)
+		metrics, err := constructor.New(database, project, nil, nil).QueryResults(context.Background(), world.NewStore(c), project, from, to, step)
 		require.NoError(t, err)
 		require.Len(t, metrics[name], 1, "step %d", step)
 		return metrics[name][0].Values.Reduce(timeseries.NanSum)

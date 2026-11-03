@@ -116,7 +116,7 @@ func labelMap(mv *model.MetricValues) map[string]string {
 // exist: three quarters of the constructor's queries read metrics that nobody
 // sends, and ClickHouse charges a fixed ~14 CPU-ms per PromQL query.
 func cycle(ctx context.Context, b backend, queries []constructor.Query, now timeseries.Time, backfill timeseries.Duration, seen *seriesCache, last map[string]timeseries.Time) (Result, error) {
-	to := now.Add(-lag * Step).Truncate(Step)
+	to := now.Add(-lag * constructor.ResultsStep).Truncate(constructor.ResultsStep)
 	res := Result{To: to}
 
 	names, err := b.metricNames(ctx)
@@ -146,8 +146,8 @@ func cycle(ctx context.Context, b backend, queries []constructor.Query, now time
 			continue
 		}
 		from := to.Add(-backfill)
-		if l, ok := last[q.Query]; ok && l.Add(Step) > from {
-			from = l.Add(Step)
+		if l, ok := last[q.Query]; ok && l.Add(constructor.ResultsStep) > from {
+			from = l.Add(constructor.ResultsStep)
 		}
 		if from > to {
 			continue
@@ -166,7 +166,7 @@ func cycle(ctx context.Context, b backend, queries []constructor.Query, now time
 		go func(t task) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			mvs, err := b.queryRange(ctx, t.q, t.from, to, Step)
+			mvs, err := b.queryRange(ctx, t.q, t.from, to, constructor.ResultsStep)
 			lock.Lock()
 			defer lock.Unlock()
 			if err != nil {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/coroot/coroot/api/views/overview"
+	"github.com/coroot/coroot/constructor"
 	"github.com/coroot/coroot/db"
 	"github.com/coroot/coroot/model"
 	"github.com/coroot/coroot/utils"
@@ -78,7 +79,7 @@ type LicenseManager interface {
 	CheckLicense() *License
 }
 
-func (api *Api) WithContext(p *db.Project, cacheStatus *world.Status, w *model.World, data any) DataWithContext {
+func (api *Api) WithContext(p *db.Project, resultsStatus *world.Status, w *model.World, data any) DataWithContext {
 	if p == nil {
 		return DataWithContext{}
 	}
@@ -88,7 +89,7 @@ func (api *Api) WithContext(p *db.Project, cacheStatus *world.Status, w *model.W
 	}
 	res := DataWithContext{
 		Context: Context{
-			Status:         renderStatus(p, cacheStatus, w),
+			Status:         renderStatus(p, resultsStatus, w),
 			Search:         renderSearch(w),
 			Incidents:      renderIncidents(w),
 			Alerts:         alerts,
@@ -133,7 +134,7 @@ func gitOpsStatus(w *model.World, present bool, count func(*model.World) int) *G
 	return &GitOpsStatus{Issues: count(w)}
 }
 
-func renderStatus(p *db.Project, cacheStatus *world.Status, w *model.World) Status {
+func renderStatus(p *db.Project, resultsStatus *world.Status, w *model.World) Status {
 	res := Status{
 		Status: model.OK,
 	}
@@ -147,12 +148,12 @@ func renderStatus(p *db.Project, cacheStatus *world.Status, w *model.World) Stat
 	res.Metrics.Status = model.OK
 	res.Metrics.Message = "ok"
 	switch {
-	case cacheStatus != nil && cacheStatus.Error != "":
+	case resultsStatus != nil && resultsStatus.Error != "":
 		res.Metrics.Status = model.WARNING
 		res.Metrics.Message = "An error has occurred while evaluating metrics:"
-		res.Metrics.Error = cacheStatus.Error
-	case cacheStatus != nil && cacheStatus.LagMax > 5*world.Step:
-		lag := utils.FormatDuration(cacheStatus.LagAvg, 1)
+		res.Metrics.Error = resultsStatus.Error
+	case resultsStatus != nil && resultsStatus.LagMax > 5*constructor.ResultsStep:
+		lag := utils.FormatDuration(resultsStatus.LagAvg, 1)
 		res.Metrics.Status = model.WARNING
 		res.Metrics.Message = fmt.Sprintf("The metrics lag is %s, likely due to a restart or upgrade. Synchronization is in progress.", lag)
 		res.Metrics.Action = "wait"

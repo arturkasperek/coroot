@@ -76,26 +76,22 @@ func (c *Collector) refreshApplicationDirectory(project *db.Project, entry *proj
 }
 
 // buildApplicationDirectory loads the recent world of a project from the
-// metrics cache, as the agent config endpoint does; nil when there is nothing
+// stored metrics, as the agent config endpoint does; nil when there is nothing
 // to load yet.
 func (c *Collector) buildApplicationDirectory(project *db.Project) (*ApplicationDirectory, error) {
 	if project.Multicluster() {
 		return nil, nil
 	}
-	cacheClient := c.evaluator.Client(project.Id)
-	to, err := cacheClient.GetTo()
+	results := c.evaluator.Client(project.Id)
+	to, err := results.GetTo()
 	if err != nil || to.IsZero() {
 		return nil, err
 	}
 	from := to.Add(-applicationDirectoryWindow)
-	step, err := cacheClient.GetStep(from, to)
-	if err != nil {
-		return nil, err
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), applicationDirectoryLoadTimeout)
 	defer cancel()
-	ctr := constructor.New(c.db, project, map[db.ProjectId]constructor.Cache{project.Id: cacheClient}, nil)
-	world, err := ctr.LoadWorld(ctx, from, to, step, nil)
+	ctr := constructor.New(c.db, project, map[db.ProjectId]constructor.Results{project.Id: results}, nil)
+	world, err := ctr.LoadWorld(ctx, from, to, constructor.ResultsStep, nil)
 	if err != nil {
 		return nil, err
 	}

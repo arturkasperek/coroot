@@ -46,8 +46,8 @@ const ruleChunk = timeseries.Hour
 // messages per application) for the steps they are missing, from the World that
 // the stored results of the queries make, and stores them like any other query.
 func (e *Evaluator) recordingRules(ctx context.Context, project *db.Project, ps *projectState, evaluatedTo timeseries.Time, last map[string]timeseries.Time, res *Result) error {
-	to := evaluatedTo.Add(-ruleLookahead * Step) // the last step the rules are computed for
-	res.To = to                                  // and so the last one a page can use
+	to := evaluatedTo.Add(-ruleLookahead * constructor.ResultsStep) // the last step the rules are computed for
+	res.To = to                                                     // and so the last one a page can use
 	names := make([]string, 0, len(constructor.RecordingRules))
 	for name := range constructor.RecordingRules {
 		names = append(names, name)
@@ -62,25 +62,25 @@ func (e *Evaluator) recordingRules(ctx context.Context, project *db.Project, ps 
 	// no rows, so the rows cannot tell how far the rules were computed: a marker does.
 	from := to.Add(-e.backfill)
 	if l, ok := last[marker]; ok {
-		from = l.Add(Step)
+		from = l.Add(constructor.ResultsStep)
 	}
-	from = from.Truncate(Step)
+	from = from.Truncate(constructor.ResultsStep)
 	if from > to {
 		return nil
 	}
-	cacheClients := map[db.ProjectId]constructor.Cache{project.Id: ps.store}
+	resultsByProject := map[db.ProjectId]constructor.Results{project.Id: ps.store}
 	for chunkFrom := from; chunkFrom <= to; chunkFrom = chunkFrom.Add(ruleChunk) {
-		chunkTo := chunkFrom.Add(ruleChunk - Step)
+		chunkTo := chunkFrom.Add(ruleChunk - constructor.ResultsStep)
 		if chunkTo > to {
 			chunkTo = to
 		}
-		ctr := constructor.New(e.db, project, cacheClients, nil,
+		ctr := constructor.New(e.db, project, resultsByProject, nil,
 			constructor.OptionLoadInstanceToInstanceConnections, constructor.OptionLoadContainerLogs)
-		worldTo := chunkTo.Add(ruleLookahead * Step)
+		worldTo := chunkTo.Add(ruleLookahead * constructor.ResultsStep)
 		if worldTo > evaluatedTo {
 			worldTo = evaluatedTo
 		}
-		world, err := ctr.LoadWorld(ctx, chunkFrom.Add(-ruleHistory), worldTo, Step, nil)
+		world, err := ctr.LoadWorld(ctx, chunkFrom.Add(-ruleHistory), worldTo, constructor.ResultsStep, nil)
 		if err != nil {
 			return fmt.Errorf("load world: %w", err)
 		}
@@ -89,8 +89,8 @@ func (e *Evaluator) recordingRules(ctx context.Context, project *db.Project, ps 
 			// a rule that has rows is continued after them, whatever the marker says: a rule
 			// added later is backfilled, the others are not written twice
 			notBefore := chunkFrom // the steps of the history are context, not results
-			if l, ok := last[name]; ok && l.Add(Step) > notBefore {
-				notBefore = l.Add(Step)
+			if l, ok := last[name]; ok && l.Add(constructor.ResultsStep) > notBefore {
+				notBefore = l.Add(constructor.ResultsStep)
 			}
 			for _, mv := range constructor.RecordingRules[name](e.db, project, world) {
 				appendSeries(&out, ps.seen, name, mv, chunkTo, notBefore, chunkTo)

@@ -54,8 +54,8 @@ func Start(database *db.DB, evaluator *world.Evaluator, pricing *pricing.Manager
 	}()
 
 	go func() {
-		// multi-cluster projects are skipped in the cache updater, so we need to check Incidents and Deployments by a ticker
-		ticker := time.NewTicker(world.Step.ToStandard()).C
+		// multi-cluster projects are skipped by the evaluator, so we need to check Incidents and Deployments by a ticker
+		ticker := time.NewTicker(constructor.ResultsStep.ToStandard()).C
 
 		for {
 			select {
@@ -103,34 +103,22 @@ func handleProjectUpdate(database *db.DB, evaluator *world.Evaluator, pricing *p
 		return
 	}
 
-	cacheClients := map[db.ProjectId]constructor.Cache{}
-
-	var (
-		step     timeseries.Duration
-		from, to timeseries.Time
-	)
+	resultsByProject := map[db.ProjectId]constructor.Results{}
+	var from, to timeseries.Time
 
 	if !project.Multicluster() {
-		cacheClient := evaluator.Client(project.Id)
-		cacheTo, err := cacheClient.GetTo()
+		results := evaluator.Client(project.Id)
+		resultsTo, err := results.GetTo()
 		if err != nil {
 			klog.Errorln(err)
 			return
 		}
-		if cacheTo.IsZero() {
+		if resultsTo.IsZero() {
 			return
 		}
-		to = cacheTo
+		to = resultsTo
 		from = to.Add(-timeseries.Hour)
-		st, err := cacheClient.GetStep(from, to)
-		if err != nil {
-			klog.Errorln(err)
-			return
-		}
-		if st > step {
-			step = st
-		}
-		cacheClients[project.Id] = cacheClient
+		resultsByProject[project.Id] = results
 	} else {
 		projects, err := database.GetProjects()
 		if err != nil {
@@ -143,33 +131,25 @@ func handleProjectUpdate(database *db.DB, evaluator *world.Evaluator, pricing *p
 				klog.Warningln("member project not found:", mp)
 				return
 			}
-			cacheClient := evaluator.Client(p.Id)
-			cacheTo, err := cacheClient.GetTo()
+			results := evaluator.Client(p.Id)
+			resultsTo, err := results.GetTo()
 			if err != nil {
 				klog.Errorln(err)
 				return
 			}
-			if cacheTo.IsZero() || cacheTo.Before(from) {
+			if resultsTo.IsZero() || resultsTo.Before(from) {
 				return
 			}
-			st, err := cacheClient.GetStep(from, to)
-			if err != nil {
-				klog.Errorln(err)
-				return
-			}
-			if st > step {
-				step = st
-			}
-			if to.IsZero() || cacheTo.Before(to) {
-				to = cacheTo
+			if to.IsZero() || resultsTo.Before(to) {
+				to = resultsTo
 				from = to.Add(-timeseries.Hour)
 			}
-			cacheClients[p.Id] = cacheClient
+			resultsByProject[p.Id] = results
 		}
 	}
 
-	ctr := constructor.New(database, project, cacheClients, pricing, constructor.OptionLoadRawSLIs)
-	world, err := ctr.LoadWorld(context.TODO(), from, to, step, nil)
+	ctr := constructor.New(database, project, resultsByProject, pricing, constructor.OptionLoadRawSLIs)
+	world, err := ctr.LoadWorld(context.TODO(), from, to, constructor.ResultsStep, nil)
 	if err != nil {
 		klog.Errorln("failed to load world:", err)
 		return
@@ -195,7 +175,7 @@ func handleProjectUpdate(database *db.DB, evaluator *world.Evaluator, pricing *p
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			alerts.Check(project, world, from, to, step)
+			alerts.Check(project, world, from, to, constructor.ResultsStep)
 		}()
 	}
 	wg.Wait()

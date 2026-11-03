@@ -17,9 +17,6 @@ import (
 	"github.com/coroot/coroot/timeseries"
 )
 
-// Step is the resolution of the stored points: the agents' scrape interval.
-const Step = 15 * timeseries.Second
-
 type aggregate int
 
 const (
@@ -58,12 +55,12 @@ func aggregateFor(f timeseries.FillFunc) aggregate {
 func pointsSQL(from, to timeseries.Time, step timeseries.Duration, queries []string) string {
 	bucket := fmt.Sprintf("toStartOfInterval(Timestamp - INTERVAL 1 SECOND, INTERVAL %[1]d SECOND) + INTERVAL %[1]d SECOND", step)
 	lo := from
-	if step != Step {
+	if step != constructor.ResultsStep {
 		// the first point is the whole bucket (from-step, from], not the part of it from from
 		lo = from.Add(-step + 1)
 	}
 	window := fmt.Sprintf("Timestamp >= toDateTime(%d) AND Timestamp <= toDateTime(%d)", lo, to) + queryFilter(queries)
-	if step == Step {
+	if step == constructor.ResultsStep {
 		// the points as they are stored: no bucket, so no GROUP BY over every point (12 times
 		// cheaper than bucketing 15 s points into 15 s buckets)
 		return fmt.Sprintf(`SELECT Query, SeriesHash, toUInt32(Timestamp) AS T, Value AS L
@@ -117,7 +114,7 @@ func queryFilter(queries []string) string {
 const maxFilteredQueries = 50
 
 // Store reads the results of the constructor's queries; it satisfies
-// constructor.Cache.
+// constructor.Results.
 type Store struct {
 	c *clickhouse.Client
 
@@ -147,10 +144,6 @@ const lastEvaluatedTTL = 5 * time.Second
 
 func NewStore(c *clickhouse.Client) *Store {
 	return &Store{c: c}
-}
-
-func (s *Store) GetStep(from, to timeseries.Time) (timeseries.Duration, error) {
-	return Step, nil
 }
 
 // LastEvaluated is the end of the stored results: the step up to which the
@@ -329,7 +322,7 @@ func (s *Store) read(ctx context.Context, w window, queries map[string]bool) (ma
 		return nil, err
 	}
 	defer rows.Close()
-	raw := w.step == Step // one value per point: last, average, sum and max are the same
+	raw := w.step == constructor.ResultsStep // one value per point: last, average, sum and max are the same
 	var q string
 	var h uint64
 	var t uint32

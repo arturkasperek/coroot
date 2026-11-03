@@ -62,35 +62,23 @@ func (api *Api) RCA(w http.ResponseWriter, r *http.Request, u *db.User) {
 		rca.Error = err.Error()
 		return
 	}
-	cacheClient := api.evaluator.Client(project.Id)
-	cacheTo, err := cacheClient.GetTo()
+	results := api.evaluator.Client(project.Id)
+	resultsTo, err := results.GetTo()
 	if err != nil {
 		klog.Errorln(err)
 		rca.Status = "Failed"
 		rca.Error = err.Error()
 		return
 	}
-	if cacheTo.IsZero() || cacheTo.Before(from) {
+	if resultsTo.IsZero() || resultsTo.Before(from) {
 		rca.Status = "Failed"
 		rca.Error = "Metric cache is empty"
 		return
 	}
-	cacheStep, err := cacheClient.GetStep(from, to)
-	if err != nil {
-		klog.Errorln(err)
-		rca.Status = "Failed"
-		rca.Error = err.Error()
-		return
+	if resultsTo.Before(to) {
+		to = resultsTo
 	}
-	if cacheStep == 0 {
-		rca.Status = "Failed"
-		rca.Error = "Metric cache is empty"
-		return
-	}
-	if cacheTo.Before(to) {
-		to = cacheTo
-	}
-	step := increaseStepForBigDurations(from, to, cacheStep)
+	step := increaseStepForBigDurations(from, to, constructor.ResultsStep)
 
 	rcaRequest := cloud.RCARequest{
 		Ctx:                         timeseries.NewContext(from, to, step),
@@ -99,7 +87,7 @@ func (api *Api) RCA(w http.ResponseWriter, r *http.Request, u *db.User) {
 		CustomApplications:          project.Settings.CustomApplications,
 		CustomCloudPricing:          project.Settings.CustomCloudPricing,
 	}
-	rcaRequest.Ctx.RawStep = cacheStep
+	rcaRequest.Ctx.RawStep = constructor.ResultsStep
 	if incident != nil {
 		rcaRequest.Ctx.From, rcaRequest.Ctx.To = api.IncidentTimeContext(projectId, incident, to)
 	}
@@ -117,8 +105,8 @@ func (api *Api) RCA(w http.ResponseWriter, r *http.Request, u *db.User) {
 		return
 	}
 
-	ctr := constructor.New(api.db, project, map[db.ProjectId]constructor.Cache{project.Id: cacheClient}, api.pricing, constructor.OptionLoadRawSLIs)
-	if rcaRequest.Metrics, err = ctr.QueryCache(r.Context(), cacheClient, project, rcaRequest.Ctx.From, rcaRequest.Ctx.To, rcaRequest.Ctx.Step); err != nil {
+	ctr := constructor.New(api.db, project, map[db.ProjectId]constructor.Results{project.Id: results}, api.pricing, constructor.OptionLoadRawSLIs)
+	if rcaRequest.Metrics, err = ctr.QueryResults(r.Context(), results, project, rcaRequest.Ctx.From, rcaRequest.Ctx.To, rcaRequest.Ctx.Step); err != nil {
 		klog.Errorln(err)
 		rca.Status = "Failed"
 		rca.Error = err.Error()
@@ -227,9 +215,9 @@ func (api *Api) IncidentRCA(ctx context.Context, project *db.Project, world *mod
 		return
 	}
 
-	cacheClient := api.evaluator.Client(project.Id)
-	ctr := constructor.New(api.db, project, map[db.ProjectId]constructor.Cache{project.Id: cacheClient}, api.pricing, constructor.OptionLoadRawSLIs)
-	if rcaRequest.Metrics, err = ctr.QueryCache(ctx, cacheClient, project, rcaRequest.Ctx.From, rcaRequest.Ctx.To, rcaRequest.Ctx.Step); err != nil {
+	results := api.evaluator.Client(project.Id)
+	ctr := constructor.New(api.db, project, map[db.ProjectId]constructor.Results{project.Id: results}, api.pricing, constructor.OptionLoadRawSLIs)
+	if rcaRequest.Metrics, err = ctr.QueryResults(ctx, results, project, rcaRequest.Ctx.From, rcaRequest.Ctx.To, rcaRequest.Ctx.Step); err != nil {
 		klog.Errorln(err)
 		rca.Status = "Failed"
 		rca.Error = err.Error()

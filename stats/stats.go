@@ -418,25 +418,20 @@ func (c *Collector) collect() Stats {
 			}
 		}
 
-		cacheClient := c.evaluator.Client(p.Id)
-		cacheTo, err := cacheClient.GetTo()
+		results := c.evaluator.Client(p.Id)
+		resultsTo, err := results.GetTo()
 		if err != nil {
 			klog.Errorln(err)
 			continue
 		}
-		if cacheTo.IsZero() || cacheTo.Before(now.Add(-worldWindow)) {
+		if resultsTo.IsZero() || resultsTo.Before(now.Add(-worldWindow)) {
 			continue
 		}
 		t := time.Now()
-		to := cacheTo
+		to := resultsTo
 		from := to.Add(-worldWindow)
-		step, err := cacheClient.GetStep(from, to)
-		if err != nil {
-			klog.Errorln(err)
-			continue
-		}
-		ctr := constructor.New(c.db, p, map[db.ProjectId]constructor.Cache{p.Id: cacheClient}, c.pricing)
-		w, err := ctr.LoadWorld(context.Background(), from, to, step, &stats.Performance.Constructor)
+		ctr := constructor.New(c.db, p, map[db.ProjectId]constructor.Results{p.Id: results}, c.pricing)
+		w, err := ctr.LoadWorld(context.Background(), from, to, constructor.ResultsStep, &stats.Performance.Constructor)
 		if err != nil {
 			klog.Errorln("failed to load world:", err)
 			continue

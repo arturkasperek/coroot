@@ -1,6 +1,6 @@
 # Rename `constructor.Cache` and its plumbing (future work)
 
-> **Status: ❌ NOT IMPLEMENTED** (verified against the code and git history on 2026-10-11). `constructor.Cache`, `QueryCache` and `GetStep` are still there. Original note: not scheduled, cosmetic.
+> **Status: done** (2026-11-03). `constructor.Cache` is `constructor.Results`; `QueryCache` / `queryCache` are `QueryResults` / `queryResults`; the field and the variables are `resultsByProject`, `results`, `resultsStatus`, `resultsTo`. `GetStep` is gone from the interface, `world.Client` and `world.Store`: the step of the stored results is the constant `constructor.ResultsStep` (15 s), which replaces `world.Step` (the constructor cannot import `world`, which imports it). The multi-cluster branches took the largest member step, always the same constant. `promql.Client.GetStep` stays: it is that client's own scrape step (used by the MCP metrics tool), not part of the interface. Error and UI strings that say "cache" were left as they are (step 1). Test renamed to `TestQueryResultsReadsRawSLIsOnlyWhenAsked`.
 
 ## Problem
 

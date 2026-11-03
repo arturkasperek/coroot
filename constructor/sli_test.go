@@ -100,7 +100,7 @@ func TestLoadSLIs(t *testing.T) {
 	})
 }
 
-// requestsRecorder is a Cache that records what a run asks for.
+// requestsRecorder is a Results that records what a run asks for.
 type requestsRecorder struct {
 	requests map[string]QueryRequest
 }
@@ -110,18 +110,14 @@ func (r *requestsRecorder) QueryRanges(ctx context.Context, requests map[string]
 	return nil, nil
 }
 
-func (r *requestsRecorder) GetStep(from, to timeseries.Time) (timeseries.Duration, error) {
-	return 15, nil
-}
-
-func TestQueryCacheReadsRawSLIsOnlyWhenAsked(t *testing.T) {
+func TestQueryResultsReadsRawSLIsOnlyWhenAsked(t *testing.T) {
 	project := &db.Project{Id: "p"}
 	// a page of 24 h at 10 min ending at 100000
 	from, to := timeseries.Time(100000-24*3600), timeseries.Time(100000)
 	sli := qRecordingRuleApplicationL7InboundRequests
 
 	page := &requestsRecorder{}
-	_, err := New(nil, project, nil, nil).queryCache(context.Background(), page, project, from, to, 600, 15, model.CheckConfigs{}, nil)
+	_, err := New(nil, project, nil, nil).queryResults(context.Background(), page, project, from, to, 600, model.CheckConfigs{}, nil)
 	require.NoError(t, err)
 	assertRequest(t, QueryRequest{Query: sli, From: from.Ceil(600), To: to.Ceil(600), Step: 600, FillFunc: timeseries.FillAvg}, page.requests[sli+sliSuffix],
 		"an SLI at the page step: the average of each step")
@@ -129,7 +125,7 @@ func TestQueryCacheReadsRawSLIsOnlyWhenAsked(t *testing.T) {
 	assert.NotContains(t, page.requests, sli, "not under the query's own name: rr_connection_l7_requests is also a connection query")
 
 	watchers := &requestsRecorder{}
-	_, err = New(nil, project, nil, nil, OptionLoadRawSLIs).queryCache(context.Background(), watchers, project, from, to, 600, 15, model.CheckConfigs{}, nil)
+	_, err = New(nil, project, nil, nil, OptionLoadRawSLIs).queryResults(context.Background(), watchers, project, from, to, 600, model.CheckConfigs{}, nil)
 	require.NoError(t, err)
 	assert.Contains(t, watchers.requests, sli+sliSuffix)
 	assertRequest(t, QueryRequest{Query: sli, From: from.Truncate(15), To: to.Truncate(15), Step: 15, FillFunc: timeseries.FillAny}, watchers.requests[sli+sliRawSuffix],

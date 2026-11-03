@@ -47,26 +47,20 @@ func (c *Collector) Config(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "project not found", http.StatusNotFound)
 		return
 	}
-	cacheClient := c.evaluator.Client(project.Id)
-	cacheTo, err := cacheClient.GetTo()
+	results := c.evaluator.Client(project.Id)
+	resultsTo, err := results.GetTo()
 	if err != nil {
 		klog.Errorln(err)
 		http.Error(w, "", http.StatusInternalServerError)
 		return
 	}
-	if cacheTo.IsZero() {
+	if resultsTo.IsZero() {
 		return
 	}
-	to := cacheTo
+	to := resultsTo
 	from := to.Add(-timeseries.Hour)
-	step, err := cacheClient.GetStep(from, to)
-	if err != nil {
-		klog.Errorln(err)
-		http.Error(w, "", http.StatusInternalServerError)
-		return
-	}
-	ctr := constructor.New(c.db, project, map[db.ProjectId]constructor.Cache{project.Id: cacheClient}, nil)
-	world, err := ctr.LoadWorld(r.Context(), from, to, step, nil)
+	ctr := constructor.New(c.db, project, map[db.ProjectId]constructor.Results{project.Id: results}, nil)
+	world, err := ctr.LoadWorld(r.Context(), from, to, constructor.ResultsStep, nil)
 	if err != nil {
 		klog.Errorln(err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)

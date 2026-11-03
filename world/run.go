@@ -84,7 +84,7 @@ func (e *Evaluator) state(project *db.Project) (*projectState, error) {
 	}
 	ps = &projectState{
 		ll: ll, c: c,
-		b:     &chBackend{ll: ll, c: c, prom: promql.NewClient(c, ll, Step)},
+		b:     &chBackend{ll: ll, c: c, prom: promql.NewClient(c, ll, constructor.ResultsStep)},
 		store: NewStore(c),
 		seen:  newSeriesCache(),
 	}
