@@ -18,7 +18,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var logsFrom = time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC)
+// logsFrom is midnight a week ago: the seeded logs (up to ~3.5 days of them)
+// are in the past and well inside the logs TTL of chtest (30 days). A fixed date
+// made these tests fail once it was older than the TTL: the merges of OPTIMIZE
+// FINAL dropped every row.
+var logsFrom = time.Now().UTC().Truncate(24 * time.Hour).Add(-7 * 24 * time.Hour)
 
 // seedLogs inserts n logs one second apart. Row i says one of a few things; one
 // row carries a unique order id and one a word that only occurs inside a longer

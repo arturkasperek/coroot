@@ -73,6 +73,20 @@ func NewEmpty(t *testing.T) string {
 		t.Fatalf("create database %s: %v", name, err)
 	}
 	t.Cleanup(func() {
+		// The test closed its connections just before (Open's cleanup runs
+		// first), but their sessions take a moment to end. A session that
+		// DROP ... WITH (FORCE) terminates breaks the dev port-forward to
+		// Postgres ("lost connection to pod"), and with it the connections of
+		// every other test running at that moment ("driver: bad connection").
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			var sessions int
+			err := admin.QueryRow("SELECT count(*) FROM pg_stat_activity WHERE datname = $1", name).Scan(&sessions)
+			if err != nil || sessions == 0 {
+				break
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
 		_, _ = admin.Exec("DROP DATABASE IF EXISTS " + name + " WITH (FORCE)")
 	})
 
