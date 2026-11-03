@@ -84,12 +84,10 @@ func (c *Client) Ping(ctx context.Context) error {
 }
 
 func (c *Client) Query(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
-	query = ch.ReplaceTables(query)
 	return c.conn.Query(ch.QueryContext(ctx), query, args...)
 }
 
 func (c *Client) QueryRow(ctx context.Context, query string, args ...interface{}) driver.Row {
-	query = ch.ReplaceTables(query)
 	return c.conn.QueryRow(ch.QueryContext(ctx), query, args...)
 }
 

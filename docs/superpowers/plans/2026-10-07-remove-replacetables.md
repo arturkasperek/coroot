@@ -1,6 +1,6 @@
 # Remove `ReplaceTables` and the `@@table_X@@` placeholders (future work)
 
-> **Status: ❌ NOT IMPLEMENTED** (verified against the code and git history on 2026-10-11). `ch.ReplaceTables` and the `@@table_X@@` placeholders are still used. Original note: not scheduled, low priority.
+> **Status: done** (2026-11-03). Every query names `X_distributed` directly (106 placeholders in 23 files, production and tests, rewritten in one pass); `ch.ReplaceTables` and its calls in `LowLevelClient.Do` and `clickhouse.Client.Query` / `QueryRow` are gone. Coroot connects only to a ClickHouse cluster (`ch.NewLowLevelClient` fails without one), so the placeholder always meant the Distributed table. The table list of step 2 below was out of date (no `trace_bodies`, `trace_server_sources`, `trace_addresses`, added later): the rewrite took every name in the code instead. Guard: `TestNoTablePlaceholdersInQueries` (`ch/table_names_test.go`) fails on a placeholder in any `.go` file.
 
 ## Problem
 

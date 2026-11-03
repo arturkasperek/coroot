@@ -68,7 +68,7 @@ func TestLogsListSQLDateAscUsesTimestampCutoff(t *testing.T) {
 	q := logsListSQL("Timestamp ASC", "SeverityText = 'INFO'", "100")
 	assert.Contains(t, q, "ORDER BY Timestamp ASC")
 	assert.Contains(t, q, "Timestamp <= (")
-	assert.Contains(t, q, "SELECT Timestamp FROM @@table_otel_logs@@ WHERE SeverityText = 'INFO' ORDER BY Timestamp ASC LIMIT 100")
+	assert.Contains(t, q, "SELECT Timestamp FROM otel_logs_distributed WHERE SeverityText = 'INFO' ORDER BY Timestamp ASC LIMIT 100")
 	assert.NotContains(t, q, "Timestamp >= (")
 }
 
@@ -77,19 +77,19 @@ func TestLogsListSQLDateAscCutoffSelectsOnlyTimestamp(t *testing.T) {
 	assert.Equal(t, 1, strings.Count(q, "Body"))
 	assert.Equal(t, 1, strings.Count(q, "ResourceAttributes"))
 	assert.Equal(t, 1, strings.Count(q, "LogAttributes"))
-	assert.Contains(t, q, "SELECT Timestamp FROM @@table_otel_logs@@ WHERE Timestamp BETWEEN @from AND @to ORDER BY Timestamp ASC LIMIT 100")
+	assert.Contains(t, q, "SELECT Timestamp FROM otel_logs_distributed WHERE Timestamp BETWEEN @from AND @to ORDER BY Timestamp ASC LIMIT 100")
 }
 
 func TestSpanListUsesCutoffForDateDescAndAsc(t *testing.T) {
-	extra, order := timestampLimitCutoff("", "@@table_otel_traces@@", "ServiceName = 'api'", "100")
+	extra, order := timestampLimitCutoff("", "otel_traces_distributed", "ServiceName = 'api'", "100")
 	assert.Contains(t, extra, "Timestamp >= (")
 	assert.Equal(t, "Timestamp DESC", order)
 
-	extra, order = timestampLimitCutoff("Timestamp ASC", "@@table_otel_traces@@", "ServiceName = 'api'", "100")
+	extra, order = timestampLimitCutoff("Timestamp ASC", "otel_traces_distributed", "ServiceName = 'api'", "100")
 	assert.Contains(t, extra, "Timestamp <= (")
 	assert.Equal(t, "Timestamp ASC", order)
 
-	extra, order = timestampLimitCutoff("Duration DESC", "@@table_otel_traces@@", "ServiceName = 'api'", "100")
+	extra, order = timestampLimitCutoff("Duration DESC", "otel_traces_distributed", "ServiceName = 'api'", "100")
 	assert.Equal(t, "", extra)
 	assert.Equal(t, "Duration DESC", order)
 }

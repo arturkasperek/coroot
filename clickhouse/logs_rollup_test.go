@@ -72,7 +72,7 @@ func TestLogRollupFacetSQL(t *testing.T) {
 		assert.True(t, ok, name)
 		rollup, ok := rollupFacetCountSQL(name)
 		assert.True(t, ok, name)
-		assert.Contains(t, rollup, "@@table_otel_logs_rollup@@", name)
+		assert.Contains(t, rollup, "otel_logs_rollup_distributed", name)
 		assert.Contains(t, rollup, "sum(Count)", name)
 		assert.NotContains(t, rollup, "count(1)", name)
 		// the same shape, so the Go side scans both the same way

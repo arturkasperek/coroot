@@ -26,19 +26,19 @@ func facetCountSQL(name string) (string, *string, bool) {
 	attr := name
 	switch name {
 	case "Severity":
-		return "SELECT multiIf(SeverityNumber=0, 0, intDiv(SeverityNumber, 4)+1), count(1) FROM @@table_otel_logs@@ WHERE %s GROUP BY 1", &attr, true
+		return "SELECT multiIf(SeverityNumber=0, 0, intDiv(SeverityNumber, 4)+1), count(1) FROM otel_logs_distributed WHERE %s GROUP BY 1", &attr, true
 	case "service.name":
-		return "SELECT ServiceName, count(1) FROM @@table_otel_logs@@ WHERE %s GROUP BY ServiceName HAVING ServiceName != '' ORDER BY count(1) DESC, ServiceName LIMIT 1000", &attr, true
+		return "SELECT ServiceName, count(1) FROM otel_logs_distributed WHERE %s GROUP BY ServiceName HAVING ServiceName != '' ORDER BY count(1) DESC, ServiceName LIMIT 1000", &attr, true
 	case "host.name":
-		return "SELECT if(LogAttributes[@attr] != '', LogAttributes[@attr], ResourceAttributes[@attr]) AS v, count(1) FROM @@table_otel_logs@@ WHERE %s GROUP BY v HAVING v != '' ORDER BY count(1) DESC, v LIMIT 1000", &attr, true
+		return "SELECT if(LogAttributes[@attr] != '', LogAttributes[@attr], ResourceAttributes[@attr]) AS v, count(1) FROM otel_logs_distributed WHERE %s GROUP BY v HAVING v != '' ORDER BY count(1) DESC, v LIMIT 1000", &attr, true
 	case "Cluster":
-		return "SELECT count(1) FROM @@table_otel_logs@@ WHERE %s", &attr, true
+		return "SELECT count(1) FROM otel_logs_distributed WHERE %s", &attr, true
 	case "Source":
-		return "SELECT if(startsWith(ServiceName, '/'), 'agent', 'otel'), count(1) FROM @@table_otel_logs@@ WHERE %s GROUP BY 1", &attr, true
+		return "SELECT if(startsWith(ServiceName, '/'), 'agent', 'otel'), count(1) FROM otel_logs_distributed WHERE %s GROUP BY 1", &attr, true
 	case "Namespace":
-		return "SELECT Namespace, count(1) FROM @@table_otel_logs@@ WHERE %s GROUP BY 1", &attr, true
+		return "SELECT Namespace, count(1) FROM otel_logs_distributed WHERE %s GROUP BY 1", &attr, true
 	case "Application":
-		return "SELECT Application AS v, count(1) FROM @@table_otel_logs@@ WHERE %s GROUP BY v HAVING v != '' ORDER BY count(1) DESC, v LIMIT 1000", &attr, true
+		return "SELECT Application AS v, count(1) FROM otel_logs_distributed WHERE %s GROUP BY v HAVING v != '' ORDER BY count(1) DESC, v LIMIT 1000", &attr, true
 	default:
 		return "", nil, false
 	}
@@ -47,7 +47,7 @@ func facetCountSQL(name string) (string, *string, bool) {
 // rollupFacetCountSQL is facetCountSQL over otel_logs_rollup. The host.name
 // facet is the one attribute the rollup keeps.
 func rollupFacetCountSQL(name string) (string, bool) {
-	const from = " FROM @@table_otel_logs_rollup@@ WHERE %s"
+	const from = " FROM otel_logs_rollup_distributed WHERE %s"
 	switch name {
 	case "Severity":
 		return "SELECT multiIf(SeverityNumber=0, 0, intDiv(SeverityNumber, 4)+1), sum(Count)" + from + " GROUP BY 1", true

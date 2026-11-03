@@ -153,7 +153,7 @@ func (s *serverSpanSources) prune(now time.Time) {
 // trace_server_sources.
 func loadServerSpanSources(ctx context.Context, client *clickhouse.Client) ([]serverSpanSource, error) {
 	rows, err := client.Query(ctx, fmt.Sprintf(
-		"SELECT Server, Protocol, FromAgent, max(LastSeen) FROM @@table_trace_server_sources@@ "+
+		"SELECT Server, Protocol, FromAgent, max(LastSeen) FROM trace_server_sources_distributed "+
 			"WHERE LastSeen > now() - INTERVAL %d SECOND GROUP BY Server, Protocol, FromAgent",
 		int(serverSpanMemory.Seconds())))
 	if err != nil {

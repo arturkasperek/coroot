@@ -67,7 +67,7 @@ func TestTraceStatusClasses(t *testing.T) {
 	defer client.Close()
 
 	t.Run("the expression", func(t *testing.T) {
-		rows, err := client.Query(ctx, "SELECT SpanName, "+ch.TraceStatusClassExpression+" FROM @@table_otel_traces@@")
+		rows, err := client.Query(ctx, "SELECT SpanName, "+ch.TraceStatusClassExpression+" FROM otel_traces_distributed")
 		require.NoError(t, err)
 		defer rows.Close()
 		classes := map[string]string{}

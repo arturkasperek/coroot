@@ -14,7 +14,7 @@ func TestPointsSQLPicksTableByStep(t *testing.T) {
 
 	// the stored resolution: the points as they are, no bucket and no aggregate
 	raw := pointsSQL(from, to, 15, nil)
-	assert.Contains(t, raw, "FROM @@table_world_points@@")
+	assert.Contains(t, raw, "FROM world_points_distributed")
 	assert.Contains(t, raw, "toStartOfHour(Timestamp) BETWEEN toStartOfHour(toDateTime(1790000100))")
 	assert.Contains(t, raw, "Timestamp >= toDateTime(1790000100) AND Timestamp <= toDateTime(1790003700)")
 	assert.Contains(t, raw, "SELECT Query, SeriesHash, toUInt32(Timestamp) AS T, Value AS L")
@@ -23,7 +23,7 @@ func TestPointsSQLPicksTableByStep(t *testing.T) {
 	assert.NotContains(t, raw, "GROUP BY")
 
 	r5 := pointsSQL(from, to, 15*timeseries.Minute, nil)
-	assert.Contains(t, r5, "FROM @@table_world_points_5m@@")
+	assert.Contains(t, r5, "FROM world_points_5m_distributed")
 	assert.Contains(t, r5, "toFloat32(argMaxMerge(Last)) AS L")
 	assert.Contains(t, r5, "toFloat32(sum(Sum)/sum(Cnt)) AS A")
 	assert.Contains(t, r5, "toFloat32(max(Max)) AS M")
@@ -31,12 +31,12 @@ func TestPointsSQLPicksTableByStep(t *testing.T) {
 	assert.Contains(t, r5, "INTERVAL 900 SECOND) + INTERVAL 900 SECOND")
 	assert.Contains(t, r5, "Timestamp >= toDateTime(1789999201) AND Timestamp <= toDateTime(1790003700)", "the whole first bucket: from it, (from-900, from]")
 
-	assert.Contains(t, pointsSQL(from, to, timeseries.Hour, nil), "FROM @@table_world_points_1h@@")
-	assert.Contains(t, pointsSQL(from, to, 2*timeseries.Hour, nil), "FROM @@table_world_points_1h@@")
+	assert.Contains(t, pointsSQL(from, to, timeseries.Hour, nil), "FROM world_points_1h_distributed")
+	assert.Contains(t, pointsSQL(from, to, 2*timeseries.Hour, nil), "FROM world_points_1h_distributed")
 
 	// a step that is not a multiple of 5 min buckets the raw points
 	r2 := pointsSQL(from, to, 2*timeseries.Minute, nil)
-	assert.Contains(t, r2, "FROM @@table_world_points@@")
+	assert.Contains(t, r2, "FROM world_points_distributed")
 	assert.Contains(t, r2, "INTERVAL 120 SECOND")
 
 	// bucketed: one row per point with the four aggregates, right-closed buckets

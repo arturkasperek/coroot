@@ -32,7 +32,7 @@ func init() {
 }
 
 func (c *Client) GetServicesFromTraces(ctx context.Context, from timeseries.Time) ([]string, error) {
-	rows, err := c.Query(ctx, "SELECT DISTINCT ServiceName FROM @@table_otel_traces_service_name@@ WHERE LastSeen >= @from",
+	rows, err := c.Query(ctx, "SELECT DISTINCT ServiceName FROM otel_traces_service_name_distributed WHERE LastSeen >= @from",
 		clickhouse.DateNamed("from", from.ToStandard(), clickhouse.NanoSeconds),
 	)
 	if err != nil {
@@ -80,11 +80,11 @@ func (c *Client) GetRootSpansCounts(ctx context.Context, q SpanQuery, window Tra
 	var query string
 	if fromMV {
 		query = "SELECT toStartOfInterval(Timestamp, INTERVAL @step second), StatusClass, Bucket, sum(Total)"
-		query += " FROM @@table_otel_traces_histogram@@"
+		query += " FROM otel_traces_histogram_distributed"
 	} else {
 		filterArgs = append(filterArgs, clickhouse.Named("buckets", HistogramBuckets[:len(HistogramBuckets)-1]))
 		query = "SELECT toStartOfInterval(Timestamp, INTERVAL @step second), " + ch.TraceStatusClassExpression + ", roundDown(Duration/1000000, @buckets), count(1)"
-		query += " FROM @@table_otel_traces@@"
+		query += " FROM otel_traces_distributed"
 	}
 	query += " WHERE " + strings.Join(filters, " AND ")
 	query += " GROUP BY 1, 2, 3"
@@ -272,7 +272,7 @@ func (c *Client) GetParentSpans(ctx context.Context, spans []*model.TraceSpan) (
 	}
 	var minTs, maxTs time.Time
 	err := c.QueryRow(ctx,
-		"SELECT min(Start), max(End)+1 FROM @@table_otel_traces_trace_id_ts@@ WHERE TraceId IN (@traceIds)",
+		"SELECT min(Start), max(End)+1 FROM otel_traces_trace_id_ts_distributed WHERE TraceId IN (@traceIds)",
 		clickhouse.Named("traceIds", maps.Keys(traceIds)),
 	).Scan(&minTs, &maxTs)
 	if err != nil {
@@ -296,7 +296,7 @@ func (c *Client) GetParentSpans(ctx context.Context, spans []*model.TraceSpan) (
 func (c *Client) GetSpansByTraceId(ctx context.Context, traceId string, withBodies bool) ([]*model.TraceSpan, error) {
 	var minTs, maxTs time.Time
 	err := c.QueryRow(ctx,
-		"SELECT min(Start), max(End)+1 FROM @@table_otel_traces_trace_id_ts@@ WHERE TraceId = @traceId",
+		"SELECT min(Start), max(End)+1 FROM otel_traces_trace_id_ts_distributed WHERE TraceId = @traceId",
 		clickhouse.Named("traceId", traceId),
 	).Scan(&minTs, &maxTs)
 	if err != nil {
@@ -394,11 +394,11 @@ func (c *Client) getSpansHistogram(ctx context.Context, q SpanQuery, filters []s
 	var query string
 	if fromMV {
 		query = "SELECT toStartOfInterval(Timestamp, INTERVAL @step second), Bucket, sum(Total), sum(Failed)"
-		query += " FROM @@table_otel_traces_histogram@@"
+		query += " FROM otel_traces_histogram_distributed"
 	} else {
 		filterArgs = append(filterArgs, clickhouse.Named("buckets", HistogramBuckets[:len(HistogramBuckets)-1]))
 		query = "SELECT toStartOfInterval(Timestamp, INTERVAL @step second), roundDown(Duration/1000000, @buckets), count(1), countIf(StatusCode = 'STATUS_CODE_ERROR')"
-		query += " FROM @@table_otel_traces@@"
+		query += " FROM otel_traces_distributed"
 	}
 	query += " WHERE " + strings.Join(filters, " AND ")
 	query += " GROUP BY 1, 2"
@@ -473,7 +473,7 @@ func (c *Client) getTraceSpanStats(ctx context.Context, q SpanQuery, filters []s
 	var query string
 	if fromMV {
 		query = "SELECT ServiceName, SpanName, Bucket, sum(Total), sum(Failed)"
-		query += " FROM @@table_otel_traces_histogram@@"
+		query += " FROM otel_traces_histogram_distributed"
 	} else {
 		filterArgs = append(filterArgs, clickhouse.Named("buckets", HistogramBuckets[:len(HistogramBuckets)-1]))
 		durFilter, durFilterArgs := q.SelectionFilter()
@@ -482,7 +482,7 @@ func (c *Client) getTraceSpanStats(ctx context.Context, q SpanQuery, filters []s
 			filterArgs = append(filterArgs, durFilterArgs...)
 		}
 		query = "SELECT ServiceName, SpanName, roundDown(Duration/1000000, @buckets), count(1), countIf(StatusCode = 'STATUS_CODE_ERROR')"
-		query += " FROM @@table_otel_traces@@"
+		query += " FROM otel_traces_distributed"
 	}
 	query += " WHERE " + strings.Join(filters, " AND ")
 	query += " GROUP BY 1, 2, 3"
@@ -593,7 +593,7 @@ func (c *Client) borrowClientBodies(ctx context.Context, spans []*model.TraceSpa
 	}
 	rows, err := c.Query(ctx, `
 SELECT RequestKey, Timestamp, SpanAttributes['http.method'], SpanAttributes['http.target'], RequestBodyHash, ResponseBodyHash
-FROM @@table_otel_traces@@
+FROM otel_traces_distributed
 WHERE RequestKey IN (@keys) AND SpanKind = 'SPAN_KIND_CLIENT' AND Timestamp BETWEEN @from AND @to`,
 		clickhouse.Named("keys", maps.Keys(keys)),
 		clickhouse.DateNamed("from", from.Add(-clientSpanWindow), clickhouse.NanoSeconds),
@@ -660,7 +660,7 @@ func (c *Client) loadBodies(ctx context.Context, spans []*model.TraceSpan) error
 		return nil
 	}
 	rows, err := c.Query(ctx,
-		"SELECT Hash, any(Body) FROM @@table_trace_bodies@@ WHERE Hash IN (@hashes) GROUP BY Hash",
+		"SELECT Hash, any(Body) FROM trace_bodies_distributed WHERE Hash IN (@hashes) GROUP BY Hash",
 		clickhouse.Named("hashes", maps.Keys(hashes)),
 	)
 	if err != nil {
@@ -704,13 +704,13 @@ func (c *Client) querySpans(ctx context.Context, q SpanQuery, orderBy string, fi
 
 	cond := strings.Join(filters, " AND ")
 	query := "SELECT " + spanColumns(q.WithBodies)
-	query += " FROM @@table_otel_traces@@"
+	query += " FROM otel_traces_distributed"
 	query += " WHERE " + cond
 	limit := ""
 	if q.Limit > 0 {
 		limit = fmt.Sprint(q.Limit)
 	}
-	extra, orderBy := timestampLimitCutoff(orderBy, "@@table_otel_traces@@", cond, limit)
+	extra, orderBy := timestampLimitCutoff(orderBy, "otel_traces_distributed", cond, limit)
 	if extra != "" {
 		query += " AND " + extra
 	}
@@ -791,7 +791,7 @@ func (c *Client) getTraces(ctx context.Context, from, to timeseries.Time, filter
 	remaining := limit
 	for _, b := range sliceBounds {
 		query := "SELECT count(1), groupArray(distinct TraceId)"
-		query += " FROM (SELECT TraceId FROM @@table_otel_traces@@ WHERE " + cond
+		query += " FROM (SELECT TraceId FROM otel_traces_distributed WHERE " + cond
 		query += " AND Timestamp >= @sliceFrom AND Timestamp < @sliceTo ORDER BY Timestamp DESC LIMIT " + fmt.Sprint(remaining) + ")"
 		args := append(append([]any{}, filterArgs...),
 			clickhouse.DateNamed("sliceFrom", b[0].ToStandard(), clickhouse.NanoSeconds),
@@ -835,7 +835,7 @@ func (c *Client) getTraces(ctx context.Context, from, to timeseries.Time, filter
 func (c *Client) getTraceSpans(ctx context.Context, from, to timeseries.Time, traceIds []string, res map[string]*model.Trace) error {
 	var minTs, maxTs time.Time
 	err := c.QueryRow(ctx,
-		"SELECT min(Start), max(End)+1 FROM @@table_otel_traces_trace_id_ts@@ WHERE TraceId IN (@traceIds)",
+		"SELECT min(Start), max(End)+1 FROM otel_traces_trace_id_ts_distributed WHERE TraceId IN (@traceIds)",
 		clickhouse.Named("traceIds", traceIds),
 	).Scan(&minTs, &maxTs)
 	if err != nil {
@@ -845,7 +845,7 @@ func (c *Client) getTraceSpans(ctx context.Context, from, to timeseries.Time, tr
 		minTs, maxTs = from.ToStandard(), to.ToStandard().Add(time.Second)
 	}
 	query := "SELECT " + spanColumns(false) + `
-FROM @@table_otel_traces@@
+FROM otel_traces_distributed
 WHERE Timestamp BETWEEN @from AND @to AND TraceId IN @traceIds`
 	rows, err := c.Query(ctx, query,
 		clickhouse.DateNamed("from", minTs, clickhouse.NanoSeconds),

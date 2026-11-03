@@ -77,7 +77,7 @@ func TestLogSearchAgainstClickHouse(t *testing.T) {
 	truth := func(cond string) int {
 		t.Helper()
 		var got uint64
-		require.NoError(t, c.QueryRow(ctx, "SELECT count() FROM @@table_otel_logs@@ WHERE "+cond).Scan(&got))
+		require.NoError(t, c.QueryRow(ctx, "SELECT count() FROM otel_logs_distributed WHERE "+cond).Scan(&got))
 		return int(got)
 	}
 	timeouts := truth("positionCaseInsensitiveUTF8(Body, 'timeout') > 0")
@@ -190,11 +190,11 @@ func TestLogRollupMatchesRawTable(t *testing.T) {
 	ctx := context.Background()
 
 	var rollupRows, rawRows uint64
-	require.NoError(t, c.QueryRow(ctx, "SELECT sum(Count) FROM @@table_otel_logs_rollup@@").Scan(&rollupRows))
-	require.NoError(t, c.QueryRow(ctx, "SELECT count() FROM @@table_otel_logs@@").Scan(&rawRows))
+	require.NoError(t, c.QueryRow(ctx, "SELECT sum(Count) FROM otel_logs_rollup_distributed").Scan(&rollupRows))
+	require.NoError(t, c.QueryRow(ctx, "SELECT count() FROM otel_logs_distributed").Scan(&rawRows))
 	require.Equal(t, rawRows, rollupRows, "the materialized view sees every insert")
 	var rollupSize uint64
-	require.NoError(t, c.QueryRow(ctx, "SELECT count() FROM @@table_otel_logs_rollup@@").Scan(&rollupSize))
+	require.NoError(t, c.QueryRow(ctx, "SELECT count() FROM otel_logs_rollup_distributed").Scan(&rollupSize))
 	require.Less(t, rollupSize, rawRows/2, "the rollup is much smaller than the raw table")
 
 	windows := []struct {

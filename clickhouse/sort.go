@@ -56,9 +56,9 @@ func timestampLimitCutoff(orderBy, table, cond, limit string) (extra, order stri
 
 func logsListSQL(orderBy, cond, limit string) string {
 	q := "SELECT ServiceName, Timestamp, multiIf(SeverityNumber=0, 0, intDiv(SeverityNumber, 4)+1), Body, TraceId, ResourceAttributes, LogAttributes"
-	q += " FROM @@table_otel_logs@@"
+	q += " FROM otel_logs_distributed"
 	q += " WHERE " + cond
-	extra, orderBy := timestampLimitCutoff(orderBy, "@@table_otel_logs@@", cond, limit)
+	extra, orderBy := timestampLimitCutoff(orderBy, "otel_logs_distributed", cond, limit)
 	if extra != "" {
 		q += " AND " + extra
 	}

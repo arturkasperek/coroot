@@ -102,7 +102,6 @@ func (c *LowLevelClient) ExecWithSettings(ctx context.Context, query string, set
 }
 
 func (c *LowLevelClient) Do(ctx context.Context, q ch.Query) (err error) {
-	q.Body = ReplaceTables(q.Body)
 	return c.pool.Do(ctx, q)
 }
 
@@ -664,20 +663,6 @@ METRIC FAMILIES INNER ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/
 		ENGINE = Distributed(@cluster, currentDatabase(), world_points_1h, cityHash64(Query, SeriesHash))`,
 	}
 )
-
-// ReplaceTables points @@table_X@@ at the Distributed table X_distributed.
-func ReplaceTables(query string) string {
-	tbls := []string{
-		"otel_logs", "otel_logs_service_name_severity_text", "otel_logs_rollup",
-		"otel_traces", "otel_traces_trace_id_ts", "otel_traces_service_name", "otel_traces_histogram", "trace_bodies", "trace_server_sources", "trace_addresses",
-		"profiling_stacks", "profiling_samples", "profiling_profiles",
-		"world_series", "world_points", "world_points_5m", "world_points_1h",
-	}
-	for _, t := range tbls {
-		query = strings.ReplaceAll(query, "@@table_"+t+"@@", t+"_distributed")
-	}
-	return query
-}
 
 func GetConfigFromRemoteCoroot(cfg *db.IntegrationClickhouse) (*db.IntegrationClickhouse, error) {
 	tr := &http.Transport{}

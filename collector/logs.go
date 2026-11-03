@@ -188,7 +188,7 @@ func (b *LogsBatch) save() {
 		chproto.InputColumn{Name: "LogAttributes", Data: b.LogAttributes},
 		chproto.InputColumn{Name: "Body", Data: b.Body},
 	}
-	err := b.exec(ch.Query{Body: input.Into("@@table_otel_logs@@"), Input: input})
+	err := b.exec(ch.Query{Body: input.Into("otel_logs_distributed"), Input: input})
 	if err != nil {
 		klog.Errorln(err)
 	}

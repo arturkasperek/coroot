@@ -64,19 +64,19 @@ func pointsSQL(from, to timeseries.Time, step timeseries.Duration, queries []str
 		// the points as they are stored: no bucket, so no GROUP BY over every point (12 times
 		// cheaper than bucketing 15 s points into 15 s buckets)
 		return fmt.Sprintf(`SELECT Query, SeriesHash, toUInt32(Timestamp) AS T, Value AS L
-FROM @@table_world_points@@
+FROM world_points_distributed
 WHERE toStartOfHour(Timestamp) BETWEEN toStartOfHour(toDateTime(%d)) AND toStartOfHour(toDateTime(%d)) AND %s`, lo, to, window)
 	}
 	var src, last, avg, sum, max, prune string
 	switch {
 	case step >= timeseries.Hour && step%timeseries.Hour == 0:
-		src, last, avg, sum, max = "@@table_world_points_1h@@", "argMaxMerge(Last)", "sum(Sum)/sum(Cnt)", "sum(Sum)", "max(Max)"
+		src, last, avg, sum, max = "world_points_1h_distributed", "argMaxMerge(Last)", "sum(Sum)/sum(Cnt)", "sum(Sum)", "max(Max)"
 		prune = fmt.Sprintf("toStartOfDay(Timestamp) BETWEEN toStartOfDay(toDateTime(%d)) AND toStartOfDay(toDateTime(%d))", lo, to)
 	case step >= 5*timeseries.Minute && step%(5*timeseries.Minute) == 0:
-		src, last, avg, sum, max = "@@table_world_points_5m@@", "argMaxMerge(Last)", "sum(Sum)/sum(Cnt)", "sum(Sum)", "max(Max)"
+		src, last, avg, sum, max = "world_points_5m_distributed", "argMaxMerge(Last)", "sum(Sum)/sum(Cnt)", "sum(Sum)", "max(Max)"
 		prune = fmt.Sprintf("toStartOfDay(Timestamp) BETWEEN toStartOfDay(toDateTime(%d)) AND toStartOfDay(toDateTime(%d))", lo, to)
 	default:
-		src, last, avg, sum, max = "@@table_world_points@@", "argMax(Value, Timestamp)", "avg(Value)", "sum(Value)", "max(Value)"
+		src, last, avg, sum, max = "world_points_distributed", "argMax(Value, Timestamp)", "avg(Value)", "sum(Value)", "max(Value)"
 		prune = fmt.Sprintf("toStartOfHour(Timestamp) BETWEEN toStartOfHour(toDateTime(%d)) AND toStartOfHour(toDateTime(%d))", lo, to)
 	}
 	return fmt.Sprintf(`SELECT Query, SeriesHash, toUInt32(%s) AS T, toFloat32(%s) AS L, toFloat32(%s) AS A, toFloat32(%s) AS S, toFloat32(%s) AS M
@@ -90,7 +90,7 @@ func seriesSQL(queries []string) string {
 	if len(queries) > 0 {
 		where = " WHERE true" + queryFilter(queries)
 	}
-	return `SELECT Query, SeriesHash, Labels FROM @@table_world_series@@ FINAL` + where
+	return `SELECT Query, SeriesHash, Labels FROM world_series_distributed FINAL` + where
 }
 
 var sqlStringEscaper = strings.NewReplacer(`\`, `\\`, `'`, `\'`)
@@ -162,11 +162,11 @@ func (s *Store) LastEvaluated(ctx context.Context) (timeseries.Time, error) {
 
 	var t uint32
 	for _, where := range []string{"WHERE Timestamp > now() - INTERVAL 1 DAY", ""} {
-		if err := s.c.QueryRow(ctx, "SELECT toUInt32(maxIf(Timestamp, startsWith(Query, 'rr_world_computed_'))) FROM @@table_world_points@@ "+where).Scan(&t); err != nil {
+		if err := s.c.QueryRow(ctx, "SELECT toUInt32(maxIf(Timestamp, startsWith(Query, 'rr_world_computed_'))) FROM world_points_distributed "+where).Scan(&t); err != nil {
 			return 0, err
 		}
 		if t == 0 {
-			if err := s.c.QueryRow(ctx, "SELECT toUInt32(max(Timestamp)) FROM @@table_world_points@@ "+where).Scan(&t); err != nil {
+			if err := s.c.QueryRow(ctx, "SELECT toUInt32(max(Timestamp)) FROM world_points_distributed "+where).Scan(&t); err != nil {
 				return 0, err
 			}
 		}

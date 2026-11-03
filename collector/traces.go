@@ -547,7 +547,7 @@ func (b *TracesBatch) saveBodies() {
 		{Name: "Body", Data: bodies},
 		{Name: "LastSeen", Data: lastSeen},
 	}
-	if err := b.exec(ch.Query{Body: input.Into("@@table_trace_bodies@@"), Input: input}); err != nil {
+	if err := b.exec(ch.Query{Body: input.Into("trace_bodies_distributed"), Input: input}); err != nil {
 		klog.Errorln(err)
 		b.bodies = map[uint64]string{}
 		return // not remembered as written: the next batch that has them writes them
@@ -632,7 +632,7 @@ func (b *TracesBatch) write() {
 		{Name: "Links.TraceState", Data: b.LinksTraceState},
 		{Name: "Links.Attributes", Data: b.LinksAttributes},
 	}
-	err := b.exec(ch.Query{Body: input.Into("@@table_otel_traces@@"), Input: input})
+	err := b.exec(ch.Query{Body: input.Into("otel_traces_distributed"), Input: input})
 	if err != nil {
 		klog.Errorln(err)
 	}

@@ -61,14 +61,14 @@ func TestTraceFacetSelectSQL(t *testing.T) {
 	q, ok := traceFacetSelectSQL("ServiceName", false)
 	require.True(t, ok)
 	assert.Contains(t, q, "SELECT ServiceName, count(1)")
-	assert.Contains(t, q, "@@table_otel_traces@@")
+	assert.Contains(t, q, "otel_traces_distributed")
 	assert.Contains(t, q, "HAVING ServiceName != ''")
 	assert.Contains(t, q, "LIMIT 1000")
 
 	q, ok = traceFacetSelectSQL("SpanName", true)
 	require.True(t, ok)
 	assert.Contains(t, q, "SELECT SpanName, sum(Total)")
-	assert.Contains(t, q, "@@table_otel_traces_histogram@@")
+	assert.Contains(t, q, "otel_traces_histogram_distributed")
 
 	_, ok = traceFacetSelectSQL("TraceId", false)
 	assert.False(t, ok)
@@ -77,8 +77,8 @@ func TestTraceFacetSelectSQL(t *testing.T) {
 	require.True(t, ok)
 	assert.Contains(t, q, "SELECT "+traceNamespaceExpr+" AS Namespace")
 	assert.NotContains(t, q, "ResourceAttributes")
-	assert.Contains(t, q, "@@table_otel_traces@@")
-	assert.NotContains(t, q, "@@table_otel_traces_histogram@@")
+	assert.Contains(t, q, "otel_traces_distributed")
+	assert.NotContains(t, q, "otel_traces_histogram_distributed")
 
 	_, ok = traceFacetSelectSQL("Namespace", true)
 	assert.False(t, ok)
@@ -87,8 +87,8 @@ func TestTraceFacetSelectSQL(t *testing.T) {
 	require.True(t, ok)
 	assert.Contains(t, q, "SELECT ApiRoute AS ApiRoute")
 	assert.NotContains(t, q, "SpanAttributes")
-	assert.Contains(t, q, "@@table_otel_traces@@")
-	assert.NotContains(t, q, "@@table_otel_traces_histogram@@")
+	assert.Contains(t, q, "otel_traces_distributed")
+	assert.NotContains(t, q, "otel_traces_histogram_distributed")
 
 	_, ok = traceFacetSelectSQL("ApiRoute", true)
 	assert.False(t, ok)
@@ -127,8 +127,8 @@ func TestTraceFacetCountsStayOnOtelTracesWhenHistogramExists(t *testing.T) {
 	for _, field := range []string{"ServiceName", "SpanName", "Namespace", "ApiRoute"} {
 		query, _, ok := buildTraceFacetQuery(q, field, false)
 		require.True(t, ok, field)
-		assert.Contains(t, query, "@@table_otel_traces@@", field)
-		assert.NotContains(t, query, "@@table_otel_traces_histogram@@", field)
+		assert.Contains(t, query, "otel_traces_distributed", field)
+		assert.NotContains(t, query, "otel_traces_histogram_distributed", field)
 	}
 }
 
@@ -158,7 +158,7 @@ func TestTraceSourceFacet(t *testing.T) {
 	t.Run("the facet tells agent spans from OpenTelemetry spans", func(t *testing.T) {
 		query, _, ok := buildTraceFacetQuery(q, "Source", false)
 		require.True(t, ok)
-		assert.Contains(t, query, "SELECT if(startsWith(ServiceName, '/'), 'agent', 'otel') AS Source, count(1) FROM @@table_otel_traces@@")
+		assert.Contains(t, query, "SELECT if(startsWith(ServiceName, '/'), 'agent', 'otel') AS Source, count(1) FROM otel_traces_distributed")
 		assert.Contains(t, query, "ParentSpanId = ''")
 	})
 	t.Run("it does not filter on itself", func(t *testing.T) {

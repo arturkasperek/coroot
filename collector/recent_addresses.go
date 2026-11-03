@@ -118,7 +118,7 @@ func (a *recentAddresses) record(directory *ApplicationDirectory, address, appli
 // trace_addresses, each with the application that had it last.
 func loadRecentAddresses(ctx context.Context, client *clickhouse.Client) ([]recentAddressRow, error) {
 	rows, err := client.Query(ctx, fmt.Sprintf(
-		"SELECT Address, argMax(Application, LastSeen), max(LastSeen) FROM @@table_trace_addresses@@ "+
+		"SELECT Address, argMax(Application, LastSeen), max(LastSeen) FROM trace_addresses_distributed "+
 			"WHERE LastSeen > now() - INTERVAL %d SECOND GROUP BY Address",
 		int(recentAddressMemory.Seconds())))
 	if err != nil {

@@ -16,7 +16,7 @@ import (
 )
 
 func (c *Client) GetServicesFromLogs(ctx context.Context, from timeseries.Time) ([]string, error) {
-	rows, err := c.Query(ctx, "SELECT DISTINCT ServiceName FROM @@table_otel_logs_service_name_severity_text@@ WHERE LastSeen >= @from",
+	rows, err := c.Query(ctx, "SELECT DISTINCT ServiceName FROM otel_logs_service_name_severity_text_distributed WHERE LastSeen >= @from",
 		clickhouse.DateNamed("from", from.ToStandard(), clickhouse.NanoSeconds),
 	)
 	if err != nil {
@@ -55,7 +55,7 @@ func (c *Client) GetLogSources(ctx context.Context, from timeseries.Time) (otelS
 func (c *Client) GetLogsHistogram(ctx context.Context, query LogQuery) ([]model.LogHistogramBucket, error) {
 	if where, args, ok := query.rollupFilters(nil); ok && query.Ctx.Step >= 60 && query.Ctx.Step%60 == 0 {
 		q := fmt.Sprintf("SELECT multiIf(SeverityNumber=0, 0, intDiv(SeverityNumber, 4)+1), toStartOfInterval(Minute, INTERVAL %d second), sum(Count)", query.Ctx.Step)
-		q += " FROM @@table_otel_logs_rollup@@ WHERE " + strings.Join(where, " AND ") + " GROUP BY 1, 2"
+		q += " FROM otel_logs_rollup_distributed WHERE " + strings.Join(where, " AND ") + " GROUP BY 1, 2"
 		return c.queryLogsHistogram(ctx, query, q, args)
 	}
 	q, args := rawLogsHistogramSQL(query)
@@ -65,7 +65,7 @@ func (c *Client) GetLogsHistogram(ctx context.Context, query LogQuery) ([]model.
 func rawLogsHistogramSQL(query LogQuery) (string, []any) {
 	where, args := query.filters(nil)
 	q := fmt.Sprintf("SELECT multiIf(SeverityNumber=0, 0, intDiv(SeverityNumber, 4)+1), toStartOfInterval(Timestamp, INTERVAL %d second), count(1)", query.Ctx.Step)
-	q += " FROM @@table_otel_logs@@ WHERE " + strings.Join(where, " AND ") + " GROUP BY 1, 2"
+	q += " FROM otel_logs_distributed WHERE " + strings.Join(where, " AND ") + " GROUP BY 1, 2"
 	return q, args
 }
 
@@ -154,7 +154,7 @@ func (c *Client) GetLogFilters(ctx context.Context, query LogQuery, name string)
 		q = "SELECT DISTINCT arrayJoin([LogAttributes[@attr], ResourceAttributes[@attr]])"
 		args = append(args, clickhouse.Named("attr", name))
 	}
-	q += " FROM @@table_otel_logs@@"
+	q += " FROM otel_logs_distributed"
 	q += " WHERE " + strings.Join(where, " AND ")
 	q += " " + orderBy + " LIMIT 1000" + settings
 	rows, err := c.Query(ctx, q, args...)

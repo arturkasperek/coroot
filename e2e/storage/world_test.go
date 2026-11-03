@@ -216,13 +216,13 @@ func TestWorldEvaluator(t *testing.T) {
 	assert.Equal(t, 3*n, res.Points, "every sample up to now (now+30 minus two steps)")
 
 	count := func(query string) uint64 {
-		return q(`SELECT count() FROM @@table_world_points@@ WHERE Query = '` + query + `'`)
+		return q(`SELECT count() FROM world_points_distributed WHERE Query = '` + query + `'`)
 	}
 	assert.Equal(t, uint64(res.Points), count("up"))
-	assert.Equal(t, uint64(3), q(`SELECT uniqExact(SeriesHash) FROM @@table_world_points@@ WHERE Query = 'up'`))
+	assert.Equal(t, uint64(3), q(`SELECT uniqExact(SeriesHash) FROM world_points_distributed WHERE Query = 'up'`))
 	// the labels are the ones the query declares
-	assert.Equal(t, uint64(0), q(`SELECT countIf(mapContains(Labels, 'namespace')) FROM @@table_world_series@@ FINAL WHERE Query = 'up'`))
-	assert.Equal(t, uint64(3), q(`SELECT countIf(mapContains(Labels, 'job') AND mapContains(Labels, 'instance')) FROM @@table_world_series@@ FINAL WHERE Query = 'up'`))
+	assert.Equal(t, uint64(0), q(`SELECT countIf(mapContains(Labels, 'namespace')) FROM world_series_distributed FINAL WHERE Query = 'up'`))
+	assert.Equal(t, uint64(3), q(`SELECT countIf(mapContains(Labels, 'job') AND mapContains(Labels, 'instance')) FROM world_series_distributed FINAL WHERE Query = 'up'`))
 
 	t.Run("the evaluator's queries are marked in the query log", func(t *testing.T) {
 		require.NoError(t, e.LL.Exec(ctx, "SYSTEM FLUSH LOGS @on_cluster"))
@@ -240,8 +240,8 @@ func TestWorldEvaluator(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, 3*2, res2.Points)
 		assert.Zero(t, res2.Series, "the labels of a series are written once")
-		assert.Equal(t, q(`SELECT count() FROM @@table_world_points@@ WHERE Query = 'up'`),
-			q(`SELECT uniqExact(SeriesHash, Timestamp) FROM @@table_world_points@@ WHERE Query = 'up'`))
+		assert.Equal(t, q(`SELECT count() FROM world_points_distributed WHERE Query = 'up'`),
+			q(`SELECT uniqExact(SeriesHash, Timestamp) FROM world_points_distributed WHERE Query = 'up'`))
 	})
 
 	t.Run("an evaluator that restarts continues where the data is", func(t *testing.T) {
@@ -266,7 +266,7 @@ func TestWorldEvaluator(t *testing.T) {
 		res4, err := ev.EvaluateProject(ctx, project, now.Add(60))
 		require.NoError(t, err)
 		assert.Equal(t, 1, res4.Queries, "only the new query; up is up to date")
-		first := q(`SELECT toUInt64(toUInt32(min(Timestamp))) FROM @@table_world_points@@ WHERE Query = 'container_restarts_total % 10000000'`)
+		first := q(`SELECT toUInt64(toUInt32(min(Timestamp))) FROM world_points_distributed WHERE Query = 'container_restarts_total % 10000000'`)
 		assert.Equal(t, uint64(start.Add(timeseries.Minute)), first, "from the first sample, not from now")
 	})
 }
@@ -327,10 +327,10 @@ func TestWorldRecordingRules(t *testing.T) {
 		}
 		assert.Equal(t, [2]timeseries.Time{chunkFrom.Add(-history), wantTo}, w, "chunk %d", i)
 	}
-	points := q(`SELECT count() FROM @@table_world_points@@ WHERE Query = 'rr_e2e_test'`)
+	points := q(`SELECT count() FROM world_points_distributed WHERE Query = 'rr_e2e_test'`)
 	assert.Equal(t, uint64(2*240+1), points, "every step of the backfill, once")
 	assert.Equal(t, points, uint64(res.Points))
-	assert.Equal(t, uint64(1), q(`SELECT count() FROM @@table_world_series@@ FINAL WHERE Query = 'rr_e2e_test'`))
+	assert.Equal(t, uint64(1), q(`SELECT count() FROM world_series_distributed FINAL WHERE Query = 'rr_e2e_test'`))
 	last, err := world.NewStore(cc).LastEvaluated(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, ruleTo, last, "the store says where the rules end")
@@ -341,9 +341,9 @@ func TestWorldRecordingRules(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, windows, 1)
 	assert.Equal(t, [2]timeseries.Time{ruleTo.Add(15).Add(-history), now}, windows[0])
-	assert.Equal(t, points+2, q(`SELECT count() FROM @@table_world_points@@ WHERE Query = 'rr_e2e_test'`))
-	assert.Equal(t, q(`SELECT count() FROM @@table_world_points@@ WHERE Query = 'rr_e2e_test'`),
-		q(`SELECT uniqExact(SeriesHash, Timestamp) FROM @@table_world_points@@ WHERE Query = 'rr_e2e_test'`))
+	assert.Equal(t, points+2, q(`SELECT count() FROM world_points_distributed WHERE Query = 'rr_e2e_test'`))
+	assert.Equal(t, q(`SELECT count() FROM world_points_distributed WHERE Query = 'rr_e2e_test'`),
+		q(`SELECT uniqExact(SeriesHash, Timestamp) FROM world_points_distributed WHERE Query = 'rr_e2e_test'`))
 	ruleTo2 := now.Add(-30)
 
 	t.Run("a restarted evaluator does not compute or write the rules again", func(t *testing.T) {
@@ -353,7 +353,7 @@ func TestWorldRecordingRules(t *testing.T) {
 		_, err := ev2.EvaluateProject(ctx, project, now.Add(30))
 		require.NoError(t, err)
 		assert.Empty(t, windows, "the marker tells how far the rules were computed, even for the rules that left no rows")
-		assert.Equal(t, points+2, q(`SELECT count() FROM @@table_world_points@@ WHERE Query = 'rr_e2e_test'`))
+		assert.Equal(t, points+2, q(`SELECT count() FROM world_points_distributed WHERE Query = 'rr_e2e_test'`))
 	})
 
 	t.Run("a rule that is added later is backfilled and the others are not written twice", func(t *testing.T) {
@@ -369,11 +369,11 @@ func TestWorldRecordingRules(t *testing.T) {
 		t.Cleanup(func() { delete(constructor.RecordingRules, "rr_e2e_test2") })
 		ev3 := world.NewEvaluator(database, nil, world.Period, 2*timeseries.Hour)
 		t.Cleanup(ev3.Close)
-		before := q(`SELECT count() FROM @@table_world_points@@ WHERE Query = 'rr_e2e_test'`)
+		before := q(`SELECT count() FROM world_points_distributed WHERE Query = 'rr_e2e_test'`)
 		_, err := ev3.EvaluateProject(ctx, project, now.Add(30))
 		require.NoError(t, err)
-		assert.Equal(t, before, q(`SELECT count() FROM @@table_world_points@@ WHERE Query = 'rr_e2e_test'`), "the rule that has rows is not written again")
-		assert.Equal(t, uint64(2*240+1), q(`SELECT count() FROM @@table_world_points@@ WHERE Query = 'rr_e2e_test2'`), "the new rule has the whole backfill")
+		assert.Equal(t, before, q(`SELECT count() FROM world_points_distributed WHERE Query = 'rr_e2e_test'`), "the rule that has rows is not written again")
+		assert.Equal(t, uint64(2*240+1), q(`SELECT count() FROM world_points_distributed WHERE Query = 'rr_e2e_test2'`), "the new rule has the whole backfill")
 	})
 
 	// read back through the store, with the labels of the rule

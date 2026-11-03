@@ -38,7 +38,7 @@ func (b *chBackend) metricNames(ctx context.Context) (map[string]bool, error) {
 // the hour, so older parts are skipped): an older point never changes what a
 // cycle evaluates, which goes back at most the backfill.
 func (b *chBackend) lastPerQuery(ctx context.Context, since timeseries.Time) (map[string]timeseries.Time, error) {
-	rows, err := b.c.Query(ctx, "SELECT Query, toUInt32(max(Timestamp)) FROM @@table_world_points@@ WHERE Timestamp >= toDateTime(@since) GROUP BY Query",
+	rows, err := b.c.Query(ctx, "SELECT Query, toUInt32(max(Timestamp)) FROM world_points_distributed WHERE Timestamp >= toDateTime(@since) GROUP BY Query",
 		clickhousego.Named("since", uint32(since)))
 	if err != nil {
 		return nil, err
@@ -77,7 +77,7 @@ func (b *chBackend) write(ctx context.Context, bt batch) error {
 			{Name: "Query", Data: query}, {Name: "SeriesHash", Data: hash},
 			{Name: "Labels", Data: labels}, {Name: "LastSeen", Data: lastSeen},
 		}
-		if err := b.ll.Do(ctx, chgo.Query{Body: input.Into("@@table_world_series@@"), Input: input, Settings: insertSettings}); err != nil {
+		if err := b.ll.Do(ctx, chgo.Query{Body: input.Into("world_series_distributed"), Input: input, Settings: insertSettings}); err != nil {
 			return err
 		}
 	}
@@ -95,5 +95,5 @@ func (b *chBackend) write(ctx context.Context, bt batch) error {
 		{Name: "Query", Data: query}, {Name: "SeriesHash", Data: hash},
 		{Name: "Timestamp", Data: ts}, {Name: "Value", Data: value},
 	}
-	return b.ll.Do(ctx, chgo.Query{Body: input.Into("@@table_world_points@@"), Input: input, Settings: insertSettings})
+	return b.ll.Do(ctx, chgo.Query{Body: input.Into("world_points_distributed"), Input: input, Settings: insertSettings})
 }

@@ -42,7 +42,7 @@ func TestTraceApiRoute(t *testing.T) {
 	client, err := clickhouse.NewClient(e.Config, &db.Project{Name: "test"})
 	require.NoError(t, err)
 	defer client.Close()
-	rows, err := client.Query(context.Background(), "SELECT SpanName, ApiRoute FROM @@table_otel_traces@@")
+	rows, err := client.Query(context.Background(), "SELECT SpanName, ApiRoute FROM otel_traces_distributed")
 	require.NoError(t, err)
 	defer rows.Close()
 	apiRoutes := map[string]string{}

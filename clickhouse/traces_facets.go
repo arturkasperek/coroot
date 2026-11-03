@@ -78,7 +78,7 @@ func traceFacetSelectSQL(field string, fromMV bool) (string, bool) {
 			return "", false
 		}
 		return fmt.Sprintf(
-			"SELECT %s AS %s, count(1) FROM @@table_otel_traces@@ WHERE %%s GROUP BY 1 HAVING %s != '' ORDER BY 2 DESC, 1 LIMIT %d",
+			"SELECT %s AS %s, count(1) FROM otel_traces_distributed WHERE %%s GROUP BY 1 HAVING %s != '' ORDER BY 2 DESC, 1 LIMIT %d",
 			expr, field, field, maxTraceFacetValues,
 		), true
 	}
@@ -89,12 +89,12 @@ func traceFacetSelectSQL(field string, fromMV bool) (string, bool) {
 	}
 	if fromMV {
 		return fmt.Sprintf(
-			"SELECT %s, sum(Total) FROM @@table_otel_traces_histogram@@ WHERE %%s GROUP BY 1 HAVING %s != '' ORDER BY 2 DESC, 1 LIMIT %d",
+			"SELECT %s, sum(Total) FROM otel_traces_histogram_distributed WHERE %%s GROUP BY 1 HAVING %s != '' ORDER BY 2 DESC, 1 LIMIT %d",
 			field, field, maxTraceFacetValues,
 		), true
 	}
 	return fmt.Sprintf(
-		"SELECT %s, count(1) FROM @@table_otel_traces@@ WHERE %%s GROUP BY 1 HAVING %s != '' ORDER BY 2 DESC, 1 LIMIT %d",
+		"SELECT %s, count(1) FROM otel_traces_distributed WHERE %%s GROUP BY 1 HAVING %s != '' ORDER BY 2 DESC, 1 LIMIT %d",
 		field, field, maxTraceFacetValues,
 	), true
 }

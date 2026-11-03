@@ -161,7 +161,7 @@ func (b *ProfilesBatch) save() {
 		chproto.InputColumn{Name: "LastSeen", Data: b.End},
 		chproto.InputColumn{Name: "Stack", Data: b.Stack},
 	}
-	err := b.exec(ch.Query{Body: stacksInput.Into("@@table_profiling_stacks@@"), Input: stacksInput})
+	err := b.exec(ch.Query{Body: stacksInput.Into("profiling_stacks_distributed"), Input: stacksInput})
 	if err != nil {
 		klog.Errorln(err)
 	}
@@ -175,7 +175,7 @@ func (b *ProfilesBatch) save() {
 		chproto.InputColumn{Name: "StackHash", Data: b.StackHash},
 		chproto.InputColumn{Name: "Value", Data: b.Value},
 	}
-	err = b.exec(ch.Query{Body: samplesInput.Into("@@table_profiling_samples@@"), Input: samplesInput})
+	err = b.exec(ch.Query{Body: samplesInput.Into("profiling_samples_distributed"), Input: samplesInput})
 	if err != nil {
 		klog.Errorln(err)
 	}

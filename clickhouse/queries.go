@@ -7,7 +7,7 @@ const (
 SELECT
     StackHash AS hash,
     sum(Value) AS value
-FROM @@table_profiling_samples@@
+FROM profiling_samples_distributed
 WHERE
     ServiceName IN (@services) AND
     Type = @type AND
@@ -25,7 +25,7 @@ SELECT
 	StackHash AS hash,
 	sum(CASE WHEN End < @middle THEN Value ELSE 0 END) AS base,
 	sum(CASE WHEN Start > @middle THEN Value ELSE 0 END) AS comp
-FROM @@table_profiling_samples@@
+FROM profiling_samples_distributed
 WHERE
     ServiceName IN (@services) AND
     Type = @type AND
@@ -42,7 +42,7 @@ LIMIT 5000
 SELECT
     Hash AS hash,
     any(Stack) AS stack
-FROM @@table_profiling_stacks@@
+FROM profiling_stacks_distributed
 WHERE
     ServiceName IN (@services) AND
     LastSeen > @from AND
@@ -52,7 +52,7 @@ GROUP BY Hash
 	qProfiles = `
 SELECT 
     count(distinct Start) / greatest(1, count(distinct Labels['container.id'], Labels['namespace'], Labels['pod'])) AS profiles
-FROM @@table_profiling_samples@@
+FROM profiling_samples_distributed
 WHERE 
     ServiceName IN (@services) AND 
     Type = @type AND 
@@ -64,7 +64,7 @@ WHERE
 )
 
 var (
-	qProfileTypes = "SELECT DISTINCT ServiceName, Type FROM @@table_profiling_profiles@@ WHERE LastSeen >= @from"
+	qProfileTypes = "SELECT DISTINCT ServiceName, Type FROM profiling_profiles_distributed WHERE LastSeen >= @from"
 	qProfile      = fmt.Sprintf("WITH samples AS (%s), stacks AS (%s) SELECT value, stack FROM stacks JOIN samples USING(hash)", qSamples, qStacks)
 	qProfileAvg   = fmt.Sprintf("WITH samples AS (%s), stacks AS (%s), profiles AS (%s) SELECT toInt64(value/profiles), stack FROM stacks JOIN samples USING(hash), profiles", qSamples, qStacks, qProfiles)
 	qProfileDiff  = fmt.Sprintf("WITH samples AS (%s), stacks AS (%s) SELECT base, comp, stack FROM stacks JOIN samples USING(hash)", qSamplesDiff, qStacks)

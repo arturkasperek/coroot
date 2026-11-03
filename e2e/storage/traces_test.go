@@ -106,19 +106,19 @@ func TestTraceBodiesRoundTrip(t *testing.T) {
 	})
 	t.Run("bodies never stay in SpanAttributes", func(t *testing.T) {
 		var leaked uint64
-		require.NoError(t, c.QueryRow(ctx, "SELECT countIf(mapContains(SpanAttributes, 'http.request.body') OR mapContains(SpanAttributes, 'http.response.body')) FROM @@table_otel_traces@@").Scan(&leaked))
+		require.NoError(t, c.QueryRow(ctx, "SELECT countIf(mapContains(SpanAttributes, 'http.request.body') OR mapContains(SpanAttributes, 'http.response.body')) FROM otel_traces_distributed").Scan(&leaked))
 		assert.Zero(t, leaked)
 	})
 	t.Run("a body over the cap is cut", func(t *testing.T) {
 		var n uint64
-		require.NoError(t, c.QueryRow(ctx, "SELECT max(length(Body)) FROM @@table_trace_bodies@@").Scan(&n))
+		require.NoError(t, c.QueryRow(ctx, "SELECT max(length(Body)) FROM trace_bodies_distributed").Scan(&n))
 		assert.Equal(t, uint64(16*1024), n)
 	})
 	t.Run("a body is found by one of its words, and its spans by its hash", func(t *testing.T) {
 		var n uint64
 		require.NoError(t, c.QueryRow(ctx, `
-SELECT count() FROM @@table_otel_traces@@
-WHERE RequestBodyHash GLOBAL IN (SELECT Hash FROM @@table_trace_bodies@@ WHERE hasToken(Body, '715688382'))`).Scan(&n))
+SELECT count() FROM otel_traces_distributed
+WHERE RequestBodyHash GLOBAL IN (SELECT Hash FROM trace_bodies_distributed WHERE hasToken(Body, '715688382'))`).Scan(&n))
 		assert.Equal(t, uint64(1), n)
 	})
 }
@@ -192,7 +192,7 @@ func TestTraceBodyStoredOnce(t *testing.T) {
 	require.NoError(t, err)
 	defer c.Close()
 	var rows uint64
-	require.NoError(t, c.QueryRow(ctx, "SELECT count() FROM @@table_trace_bodies@@").Scan(&rows))
+	require.NoError(t, c.QueryRow(ctx, "SELECT count() FROM trace_bodies_distributed").Scan(&rows))
 	assert.Equal(t, uint64(1), rows, "one row for the body of five spans")
 
 	for n := byte(1); n <= 5; n++ {
@@ -292,7 +292,7 @@ func TestServerSpanSourcesSurviveARestart(t *testing.T) {
 
 	var server, protocol string
 	var counted uint8
-	require.NoError(t, c.QueryRow(ctx, "SELECT Server, Protocol, Counted FROM @@table_otel_traces@@ WHERE TraceId = '"+fmt.Sprintf("%032x", 2)+"'").Scan(&server, &protocol, &counted))
+	require.NoError(t, c.QueryRow(ctx, "SELECT Server, Protocol, Counted FROM otel_traces_distributed WHERE TraceId = '"+fmt.Sprintf("%032x", 2)+"'").Scan(&server, &protocol, &counted))
 	assert.Equal(t, "payments", server)
 	assert.Equal(t, "http", protocol)
 	assert.Equal(t, uint8(0), counted, "the server's span counts the request")
@@ -335,6 +335,6 @@ func TestRecentAddressesAreSharedByReplicas(t *testing.T) {
 	other.Close()
 
 	var server string
-	require.NoError(t, c.QueryRow(ctx, "SELECT Server FROM @@table_otel_traces@@ WHERE TraceId = '"+fmt.Sprintf("%032x", 2)+"'").Scan(&server))
+	require.NoError(t, c.QueryRow(ctx, "SELECT Server FROM otel_traces_distributed WHERE TraceId = '"+fmt.Sprintf("%032x", 2)+"'").Scan(&server))
 	assert.Equal(t, "shop/catalog", server)
 }
