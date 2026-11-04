@@ -24,11 +24,6 @@ const config = {
     locales: ['en'],
   },
 
-  scripts: [
-    {src: '/js/st.js'},
-    {src: 'https://plausible.io/js/script.js', defer: true, "data-domain": "docs.coroot.com"}
-  ],
-
   presets: [
     [
       'classic',
