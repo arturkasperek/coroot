@@ -135,7 +135,7 @@ func (c *Client) getClusterTopology(ctx context.Context) ([]ClusterNode, error) 
 }
 
 // telemetryTables is a condition on system.parts (as p) that selects the
-// tables of the telemetry Coroot stores: the usage statistics count them and
+// tables of the telemetry Coroot stores: the ClickHouse page sums their sizes and
 // the space manager drops their oldest partitions. The metrics TimeSeries
 // table keeps its data in inner tables named `.inner_id.<kind>.<uuid>`; only
 // the samples are partitioned by time, the tags and metric families have

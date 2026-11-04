@@ -455,25 +455,3 @@ func (db *DB) GetPreviousIncidentNotifications(n IncidentNotification) ([]Incide
 	}
 	return res, nil
 }
-
-func (db *DB) GetSentIncidentNotificationsStat(from timeseries.Time) map[IntegrationType]int {
-	rows, err := db.db.Query("SELECT destination, count(*) FROM incident_notification WHERE timestamp >= $1 AND sent_at > 0 GROUP BY destination", from)
-	if err != nil {
-		klog.Errorln(err)
-		return nil
-	}
-	defer func() {
-		_ = rows.Close()
-	}()
-	res := map[IntegrationType]int{}
-	var destination IntegrationType
-	var count int
-	for rows.Next() {
-		if err := rows.Scan(&destination, &count); err != nil {
-			klog.Errorln(err)
-			return nil
-		}
-		res[destination] = count
-	}
-	return res
-}

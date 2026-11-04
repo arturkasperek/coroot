@@ -117,16 +117,8 @@ func (h *MCPHandler) currentProject(ctx context.Context) (*db.Project, error) {
 	return h.Api.db.GetProject(projectId)
 }
 
-func (h *MCPHandler) AddTool(tool mcp.Tool, handler mcpserver.ToolHandlerFunc) {
-	name := tool.Name
-	h.Server.AddTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		h.Api.stats.RegisterMCPCall(name)
-		return handler(ctx, req)
-	})
-}
-
 func (h *MCPHandler) registerTools() {
-	h.AddTool(
+	h.Server.AddTool(
 		mcp.NewTool("list_projects",
 			mcp.WithDescription("List Coroot projects (clusters) the current user can access. Returns a {name: id} map. Call before select_project (which takes the id)."),
 			mcp.WithReadOnlyHintAnnotation(true),
@@ -136,7 +128,7 @@ func (h *MCPHandler) registerTools() {
 		),
 		h.toolListProjects,
 	)
-	h.AddTool(
+	h.Server.AddTool(
 		mcp.NewTool("select_project",
 			mcp.WithDescription("Set the active project (cluster) for subsequent tool calls in this session."),
 			mcp.WithString("project_id",
@@ -150,7 +142,7 @@ func (h *MCPHandler) registerTools() {
 		),
 		h.toolSelectProject,
 	)
-	h.AddTool(
+	h.Server.AddTool(
 		mcp.NewTool("list_applications",
 			mcp.WithDescription("List applications in the selected project. Returns id, namespace, application category (e.g. application, monitoring, control-plane), detected types (postgres, java, nginx, ...), overall status (ok|warning|critical), and a list of failing inspections (CPU, Memory, SLO, Postgres, Logs, ...) with their statuses. Use this to triage which apps to drill into via get_application_status."),
 			mcp.WithReadOnlyHintAnnotation(true),
@@ -160,7 +152,7 @@ func (h *MCPHandler) registerTools() {
 		),
 		h.toolListApplications,
 	)
-	h.AddTool(
+	h.Server.AddTool(
 		mcp.NewTool("list_alerts",
 			mcp.WithDescription("List alerts for the selected project. Use state to choose: 'firing' (active triage, default), 'resolved' (most-recent resolved history), or 'any' (mixed, sorted by opened time)."),
 			mcp.WithString("state", mcp.Description("'firing' | 'resolved' | 'any'. Default: 'firing'.")),
@@ -173,7 +165,7 @@ func (h *MCPHandler) registerTools() {
 		),
 		h.toolListAlerts,
 	)
-	h.AddTool(
+	h.Server.AddTool(
 		mcp.NewTool("list_incidents",
 			mcp.WithDescription("List SLO incident summaries (severity, opened/resolved time, burn rates, impact). Use get_incident_details for full RCA + propagation map."),
 			mcp.WithString("state", mcp.Description("'open' | 'resolved' | 'any'. Default: 'any' (open first, then most-recent resolved).")),
@@ -187,7 +179,7 @@ func (h *MCPHandler) registerTools() {
 		),
 		h.toolListIncidents,
 	)
-	h.AddTool(
+	h.Server.AddTool(
 		mcp.NewTool("resolve_alerts",
 			mcp.WithDescription("Manually resolve one or more alerts. Triggers configured downstream notifications (Slack, PagerDuty, ...). Use only after confirming the underlying issue is fixed — alerts whose conditions still hold will re-fire on the next evaluation cycle."),
 			mcp.WithArray("ids",
@@ -202,7 +194,7 @@ func (h *MCPHandler) registerTools() {
 		),
 		h.toolResolveAlerts,
 	)
-	h.AddTool(
+	h.Server.AddTool(
 		mcp.NewTool("get_incident_details",
 			mcp.WithDescription("Get full incident: summary + RCA (root cause, fixes) + propagation map showing how the failure spread across applications."),
 			mcp.WithString("key", mcp.Required(), mcp.Description("Incident key from list_incidents.")),
@@ -213,7 +205,7 @@ func (h *MCPHandler) registerTools() {
 		),
 		h.toolGetIncidentDetails,
 	)
-	h.AddTool(
+	h.Server.AddTool(
 		mcp.NewTool("get_application_status",
 			mcp.WithDescription("Get health status of an application: overall status, per-inspection (CPU, Memory, SLO, Postgres, ...) status with failing checks, upstream dependencies with status / connectivity / RTT / request latency, and downstream clients (apps that call this one) with their status only."),
 			mcp.WithString("app_id",
@@ -227,7 +219,7 @@ func (h *MCPHandler) registerTools() {
 		),
 		h.toolGetApplicationStatus,
 	)
-	h.AddTool(
+	h.Server.AddTool(
 		mcp.NewTool("list_nodes",
 			mcp.WithDescription("List nodes (hosts/VMs) in the selected project: name, cluster, status (up/down/no-agent), OS/kernel, instance type, CPU/memory utilization %, network throughput, GPUs. Mirrors the UI's Nodes view."),
 			mcp.WithReadOnlyHintAnnotation(true),
@@ -237,7 +229,7 @@ func (h *MCPHandler) registerTools() {
 		),
 		h.toolListNodes,
 	)
-	h.AddTool(
+	h.Server.AddTool(
 		mcp.NewTool("get_node_details",
 			mcp.WithDescription("Per-node audit report (CPU/memory/disk/network inspections + their checks). Use after list_nodes to drill into a specific host."),
 			mcp.WithString("name", mcp.Required(), mcp.Description("Node name from list_nodes.")),
@@ -248,7 +240,7 @@ func (h *MCPHandler) registerTools() {
 		),
 		h.toolGetNodeDetails,
 	)
-	h.AddTool(
+	h.Server.AddTool(
 		mcp.NewTool("traces_summary",
 			mcp.WithDescription("Per-endpoint distributed-trace summary: requests/sec, error rate, p50/p95/p99 latency. The 'full picture' for triage. Pass service+span to focus on one endpoint (the UI's drill-down)."),
 			mcp.WithString("service", mcp.Description("Filter to one service.name (e.g. 'checkout').")),
@@ -262,7 +254,7 @@ func (h *MCPHandler) registerTools() {
 		),
 		h.toolTracesSummary,
 	)
-	h.AddTool(
+	h.Server.AddTool(
 		mcp.NewTool("traces_errors",
 			mcp.WithDescription("Top error reasons across distributed traces — grouped by endpoint, with a sample trace_id and the error message for each. Use after traces_summary identifies a high-error endpoint."),
 			mcp.WithString("service", mcp.Description("Filter to one service.name.")),
@@ -276,7 +268,7 @@ func (h *MCPHandler) registerTools() {
 		),
 		h.toolTracesErrors,
 	)
-	h.AddTool(
+	h.Server.AddTool(
 		mcp.NewTool("traces_outliers",
 			mcp.WithDescription("Latency explorer: returns a flamegraph of where time is spent in the SLOW tail vs the rest. Selection = traces with duration in [dur_from..dur_to] (or just dur_from for 'slower than'); baseline = the rest. Use to explain why p99 is high."),
 			mcp.WithString("service", mcp.Description("Filter to one service.name.")),
@@ -292,7 +284,7 @@ func (h *MCPHandler) registerTools() {
 		),
 		h.toolTracesOutliers,
 	)
-	h.AddTool(
+	h.Server.AddTool(
 		mcp.NewTool("get_trace",
 			mcp.WithDescription("Fetch a single distributed trace by id. Returns the full span tree with attributes and events. Use trace_ids returned by traces_errors / traces_summary samples."),
 			mcp.WithString("trace_id", mcp.Required(), mcp.Description("Trace id (e.g. from traces_errors.sample_trace_id).")),
@@ -305,7 +297,7 @@ func (h *MCPHandler) registerTools() {
 		),
 		h.toolGetTrace,
 	)
-	h.AddTool(
+	h.Server.AddTool(
 		mcp.NewTool("list_metric_names",
 			mcp.WithDescription("List metric names available in the project's metrics backend (Prometheus or ClickHouse-as-Prometheus). Use this to discover what metrics exist before querying with query_metrics. Returns at most `limit` distinct names. Cheap — runs `group by (__name__) ({__name__=~match})` over a recent 5-minute window."),
 			mcp.WithString("match", mcp.Description("RE2 regex applied to the metric name (must match a non-empty value). Default: '.+' (all metrics). Examples: 'redis.*', 'container_net_.*', 'kube_pod_.*'.")),
@@ -317,7 +309,7 @@ func (h *MCPHandler) registerTools() {
 		),
 		h.toolListMetricNames,
 	)
-	h.AddTool(
+	h.Server.AddTool(
 		mcp.NewTool("query_metrics",
 			mcp.WithDescription("Run a PromQL range query against the project's metrics backend. Returns time series with their labels and a value summary (last/min/max/avg + sparkline). Use this to inspect raw metric values, label distributions, or to verify Coroot's detection/aggregation logic. Discover metric names with list_metric_names first."),
 			mcp.WithString("query", mcp.Required(), mcp.Description("PromQL expression. Examples: 'up', 'rate(container_net_tcp_active_connections[1m])', 'group by (instance) ({__name__=\"redis_up\"})'.")),
@@ -332,7 +324,7 @@ func (h *MCPHandler) registerTools() {
 		),
 		h.toolQueryMetrics,
 	)
-	h.AddTool(
+	h.Server.AddTool(
 		mcp.NewTool("query_logs",
 			mcp.WithDescription("Query log entries from ClickHouse, scoped to one application or across the whole project. Supports time range, severity filter, full-text search, and log-pattern filter. Returned entries are sorted newest-first and each includes the originating service so cluster-wide queries remain attributable."),
 			mcp.WithString("app_id", mcp.Description("Application id from list_applications (4-part 'cluster_id:namespace:Kind:name', e.g. 'hwvop6p7:default:Deployment:checkout'). Omit to search across all applications in the project.")),

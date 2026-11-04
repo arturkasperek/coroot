@@ -21,7 +21,6 @@ import (
 	"github.com/coroot/coroot/db"
 	"github.com/coroot/coroot/grpc"
 	"github.com/coroot/coroot/rbac"
-	"github.com/coroot/coroot/stats"
 	"github.com/coroot/coroot/utils"
 	"github.com/coroot/coroot/watchers"
 	"github.com/coroot/coroot/world"
@@ -120,9 +119,7 @@ func main() {
 		klog.Exitln(err)
 	}
 
-	statsCollector := stats.NewCollector(cfg.DisableUsageStatistics, instanceUuid, version, Edition, database, evaluator, pricing, globalClickhouse)
-
-	a := api.NewApi(cfg, evaluator, database, coll, statsCollector, pricing, rbac.NewStaticRoleManager(), nil, globalClickhouse, deploymentUuid, instanceUuid, nil)
+	a := api.NewApi(cfg, evaluator, database, coll, pricing, rbac.NewStaticRoleManager(), nil, globalClickhouse, deploymentUuid, instanceUuid, nil)
 	err = a.AuthInit(cfg.Auth.AnonymousRole, cfg.Auth.BootstrapAdminPassword)
 	if err != nil {
 		klog.Exitln(err)
@@ -133,7 +130,6 @@ func main() {
 	watchers.Start(database, evaluator, pricing, incidents, !cfg.DoNotCheckForDeployments, globalClickhouse, cfg.ClickHouseSpaceManager, nil, nil)
 
 	router := mux.NewRouter()
-	router.Use(statsCollector.MiddleWare)
 	router.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {}).Methods(http.MethodGet)
 
 	router.HandleFunc("/v1/metrics", coll.Metrics)
@@ -213,20 +209,6 @@ func main() {
 
 	r.HandleFunc("/api/clickhouse-config", a.ApiKeyAuth(a.ClickhouseConfig)).Methods(http.MethodGet)
 	r.HandleFunc("/api/clickhouse-connect", a.ClickhouseConnect).Methods(http.MethodConnect)
-
-	r.HandleFunc("/stats", func(w http.ResponseWriter, r *http.Request) {
-		if a.GetUser(r) == nil {
-			return
-		}
-		statsCollector.RegisterRequest(r)
-	}).Methods(http.MethodPost)
-	r.HandleFunc("/stats", func(w http.ResponseWriter, r *http.Request) {
-		if a.GetUser(r) == nil {
-			http.Redirect(w, r, cfg.UrlBasePath+"login", http.StatusFound)
-			return
-		}
-		statsCollector.Stats(r, w)
-	}).Methods(http.MethodGet)
 
 	if cfg.DeveloperMode {
 		// the dev build names its files without a content hash (static/js/app.js),

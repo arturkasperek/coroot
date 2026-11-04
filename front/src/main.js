@@ -33,13 +33,12 @@ const router = new VueRouter({
         { path: '/sso/saml', name: 'saml', component: Saml, meta: { anonymous: true } },
         { path: '/auth/mcp-consent', name: 'mcp-consent', component: MCPConsent },
         { path: '/p/settings/:tab?', name: 'project_new', component: Project, props: true },
-        { path: '/p/:projectId/settings/:tab?', name: 'project_settings', component: Project, props: true, meta: { stats: { params: ['tab'] } } },
+        { path: '/p/:projectId/settings/:tab?', name: 'project_settings', component: Project, props: true },
         {
             path: '/p/:projectId/:view?/:id?/:report?',
             name: 'overview',
             component: Overview,
             props: true,
-            meta: { stats: { params: ['view', 'report'] } },
         },
         { path: '/', name: 'index', component: App },
         { path: '*', redirect: { name: 'index' } },
@@ -60,53 +59,7 @@ const router = new VueRouter({
     },
 });
 
-const api = new Api(router, vuetify, config.base_path);
-
-router.afterEach((to) => {
-    if (to.matched[0]) {
-        let p = to.matched[0].path;
-        if (to.meta.stats && to.meta.stats.params) {
-            to.meta.stats.params.forEach((name) => {
-                const value = to.params[name];
-                p = p.replace(':' + name, value || '');
-            });
-        }
-        p = p.replaceAll('?', '');
-        if (!to.params['id']) {
-            p = p.replace(':id', '');
-        }
-        if (to.params.view === 'traces' && to.query.query) {
-            try {
-                const q = JSON.parse(to.query.query);
-                const selection = q.ts_from || q.ts_to || q.dur_from || q.dur_to;
-                p += `${q.view || ''}:${q.diff ? 'diff' : ''}:${selection ? 'selection' : ''}:${q.service_name ? 'service' : ''}:${q.span_name ? 'span' : ''}:${q.trace_id ? 'id' : ''}:${q.include_aux ? 'aux' : ''}`;
-            } catch {
-                //
-            }
-        }
-        if (to.params.view === 'applications' && to.params.report === 'Profiling' && to.query.query) {
-            try {
-                const q = JSON.parse(to.query.query);
-                p += `${q.type || ''}:${q.mode || ''}:${Number(q.from) || Number(q.to) ? 'ts' : ''}`;
-            } catch {
-                //
-            }
-        }
-        if (to.params.view === 'applications' && to.params.report === 'Tracing' && to.query.trace) {
-            const [type, id, ts, dur] = to.query.trace.split(':');
-            p += `${type}:${id ? 'id' : ''}:${ts !== '-' ? 'ts' : ''}:${dur}`;
-        }
-        if (to.params.view === 'applications' && to.params.report === 'Logs' && to.query.query) {
-            try {
-                const q = JSON.parse(to.query.query);
-                p += `${q.source || ''}:${q.view || ''}:${q.severity || ''}:${q.hash ? 'hash' : ''}:${q.search ? 'search' : ''}`;
-            } catch {
-                //
-            }
-        }
-        api.stats('route-open', { path: p });
-    }
-});
+const api = new Api(router, config.base_path);
 
 Vue.prototype.$events = events;
 Vue.prototype.$format = format;

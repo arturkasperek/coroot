@@ -28,7 +28,6 @@ import (
 	"github.com/coroot/coroot/notifications"
 	"github.com/coroot/coroot/promql"
 	"github.com/coroot/coroot/rbac"
-	"github.com/coroot/coroot/stats"
 	"github.com/coroot/coroot/timeseries"
 	"github.com/coroot/coroot/utils"
 	"github.com/coroot/coroot/world"
@@ -49,7 +48,6 @@ type Api struct {
 	evaluator        *world.Evaluator
 	db               *db.DB
 	collector        *collector.Collector
-	stats            *stats.Collector
 	pricing          *pricing.Manager
 	roles            rbac.RoleManager
 	globalClickHouse *db.IntegrationClickhouse
@@ -64,7 +62,7 @@ type Api struct {
 	loadWorld LoadWorldF
 }
 
-func NewApi(cfg *config.Config, evaluator *world.Evaluator, db *db.DB, collector *collector.Collector, stats *stats.Collector, pricing *pricing.Manager, roles rbac.RoleManager, licenseMgr LicenseManager,
+func NewApi(cfg *config.Config, evaluator *world.Evaluator, db *db.DB, collector *collector.Collector, pricing *pricing.Manager, roles rbac.RoleManager, licenseMgr LicenseManager,
 	globalClickHouse *db.IntegrationClickhouse,
 	deploymentUuid, instanceUuid string, loadWorld LoadWorldF) *Api {
 
@@ -73,7 +71,6 @@ func NewApi(cfg *config.Config, evaluator *world.Evaluator, db *db.DB, collector
 		evaluator:        evaluator,
 		db:               db,
 		collector:        collector,
-		stats:            stats,
 		pricing:          pricing,
 		roles:            roles,
 		globalClickHouse: globalClickHouse,

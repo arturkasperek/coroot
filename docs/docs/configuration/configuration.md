@@ -36,7 +36,6 @@ For instance, the `projects` parameter (a list of predefined projects) can only 
 | --profiles-ttl                       | PROFILES_TTL                       | 7d            | Profiles Time-To-Live (TTL).                                                                                                                                                        |                                                                                                    
 | --metrics-ttl                        | METRICS_TTL                        | 7d            | Metrics Time-To-Live (TTL).                                                                                                                                                        |                                                                                                    
 | --pg-connection-string               | PG_CONNECTION_STRING               |               | PostgreSQL connection string (required).                                                                                                                                         |
-| --disable-usage-statistics           | DISABLE_USAGE_STATISTICS           | false         | Disable usage statistics.                                                                                                                                                       |
 | --read-only                          | READ_ONLY                          | false         | Enable read-only mode where configuration changes don't take effect.                                                                                                            |
 | --do-not-check-slo                   | DO_NOT_CHECK_SLO                   | false         | Do not check Service Level Objective (SLO) compliance.                                                                                                                          |
 | --do-not-check-for-deployments       | DO_NOT_CHECK_FOR_DEPLOYMENTS       | false         | Do not check for new deployments.                                                                                                                                               |
@@ -115,7 +114,6 @@ auth:
 
 do_not_check_for_deployments: false # Do not check for new deployments.
 do_not_check_for_updates: false     # Do not check for new versions.
-disable_usage_statistics: false     # Disable anonymous usage statistics.
 disableBuiltinAlerts: false       # Disable all built-in alerting rules for all projects on startup.
 
 license_key: # License key for Coroot Enterprise Edition.

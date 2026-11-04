@@ -1,6 +1,4 @@
 import axios from 'axios';
-import * as storage from '@/utils/storage';
-import { v4 } from 'uuid';
 
 const defaultErrorMessage = 'Something went wrong, please try again later.';
 const timeoutErrorMessage = 'Request timed out.';
@@ -8,8 +6,6 @@ const timeoutErrorMessage = 'Request timed out.';
 export default class Api {
     axios = null;
     router = null;
-    vuetify = null;
-    deviceId = '';
     basePath = '';
 
     context = {
@@ -24,31 +20,14 @@ export default class Api {
         member_projects: [],
     };
 
-    constructor(router, vuetify, basePath) {
+    constructor(router, basePath) {
         this.router = router;
-        this.vuetify = vuetify.framework;
-        this.deviceId = storage.local('device-id');
-        if (!this.deviceId) {
-            this.deviceId = v4();
-            storage.local('device-id', this.deviceId);
-        }
         this.basePath = basePath;
         this.axios = axios.create({
             baseURL: this.basePath + 'api/',
             timeout: 60000,
             timeoutErrorMessage: timeoutErrorMessage,
         });
-    }
-
-    stats(type, data) {
-        const event = {
-            ...data,
-            type,
-            device_id: this.deviceId,
-            device_size: this.vuetify.breakpoint.name,
-            theme: storage.local('theme') || '',
-        };
-        navigator.sendBeacon(this.basePath + 'stats', JSON.stringify(event));
     }
 
     request(req, cb) {
